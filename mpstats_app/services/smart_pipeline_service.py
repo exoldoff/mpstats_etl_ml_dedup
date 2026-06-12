@@ -4,6 +4,7 @@ import calendar
 from datetime import date, datetime
 import hashlib
 import json
+import logging
 from pathlib import Path
 import re
 import shutil
@@ -31,6 +32,7 @@ from mpstats_app.services.category_catalog_service import CategoryCatalogService
 
 
 FINAL_STATUSES = {"saved_to_db", "skipped", "no_data"}
+LOGGER = logging.getLogger(__name__)
 
 
 DEFAULT_PIPELINE_SETTINGS: dict[str, Any] = {
@@ -124,6 +126,16 @@ def file_sha1(path: Path) -> str:
 
 def file_timestamp(path: Path) -> datetime | None:
     return datetime.fromtimestamp(path.stat().st_mtime) if path.is_file() else None
+
+
+def file_size_mb(path: Path | str | None) -> float | None:
+    """Return file size in MB for timing logs, or None when the file is absent."""
+    if path is None:
+        return None
+    candidate = Path(path)
+    if not candidate.is_file():
+        return None
+    return round(candidate.stat().st_size / (1024 * 1024), 3)
 
 
 class SmartPipelineService:
@@ -620,6 +632,47 @@ class SmartPipelineService:
         )
         self._finish_operation_progress(run_id, status=status)
 
+    def _log_task_timing(
+        self,
+        task: dict[str, Any],
+        *,
+        stage: str,
+        duration_sec: float,
+        **metrics: Any,
+    ) -> None:
+        """Write one structured timing log for a pipeline task stage.
+
+        The payload intentionally uses plain scalars so it is readable in the
+        local app logs and easy to copy into a spreadsheet for diagnosis.
+        """
+        payload: dict[str, Any] = {
+            "stage": stage,
+            "task_id": str(task.get("id") or ""),
+            "run_id": str(task.get("run_id") or ""),
+            "project": task.get("project_name"),
+            "marketplace": task.get("marketplace"),
+            "marketplace_code": task.get("marketplace_code"),
+            "category": task.get("category_name"),
+            "category_key": task.get("category_key"),
+            "year": int(task["year"]) if task.get("year") is not None else None,
+            "month": int(task["month"]) if task.get("month") is not None else None,
+            "duration_sec": round(duration_sec, 6),
+        }
+        for key, value in metrics.items():
+            if value is not None:
+                payload[key] = value
+        for label, key in (
+            ("raw", "raw_file_path"),
+            ("processed", "processed_file_path"),
+            ("classified", "classified_file_path"),
+        ):
+            path_value = task.get(key)
+            if path_value:
+                size_mb = file_size_mb(path_value)
+                if size_mb is not None:
+                    payload[f"{label}_file_size_mb"] = size_mb
+        LOGGER.info("MPStats pipeline task timing: %s", json.dumps(payload, ensure_ascii=False, default=str))
+
     def _execute_task(
         self,
         task: dict[str, Any],
@@ -630,6 +683,8 @@ class SmartPipelineService:
         force_reprocess: bool = False,
     ) -> bool:
         task_id = str(task["id"])
+        task_started = time.perf_counter()
+        task_status = "success"
         try:
             self._check_control(str(task["run_id"]))
             if force_reprocess:
@@ -658,13 +713,23 @@ class SmartPipelineService:
             self._save_task(task_id, settings=settings)
             return True
         except _PipelineInterrupted:
+            task_status = "interrupted"
             raise
         except Exception as exc:
+            task_status = "failed"
             self.repository.update_download_task(
                 task_id,
                 {"status": "failed", "error_message": str(exc)},
             )
             return False
+        finally:
+            latest_task = self.repository.get_download_task(task_id) or task
+            self._log_task_timing(
+                latest_task,
+                stage="total",
+                duration_sec=time.perf_counter() - task_started,
+                status=task_status,
+            )
 
     def _prepare_reprocess_task(self, task_id: str) -> None:
         task = self.repository.get_download_task(task_id)
@@ -692,225 +757,341 @@ class SmartPipelineService:
     def _download_task(self, task: dict[str, Any], *, settings: dict[str, Any]) -> None:
         task_id = str(task["id"])
         run_id = str(task["run_id"])
-        self._check_control(run_id)
+        stage_started = time.perf_counter()
+        stage_status = "success"
         raw_path = Path(str(task["raw_file_path"]))
-        if raw_path.exists() and not settings.get("overwrite_raw"):
-            self.repository.update_download_task(task_id, {"status": "downloaded", "download_status": "downloaded", "error_message": None})
-            return
-        source_type = normalize_source_type(task.get("source_type"))
-        cookie = self.repository.get_setting("mpstats_cookie") or ""
-        api_token = self.repository.get_setting("mpstats_api_token") or ""
-        if source_type == SOURCE_TYPE_SUBJECT:
-            if not api_token.strip():
-                raise ValueError("MPStats API token пустой. Сохрани token перед выгрузкой по предмету.")
-        elif not cookie.strip():
-            raise ValueError("Cookie MPStats пустой. Сохрани доступ перед запуском.")
-        self.repository.update_pipeline_run(str(task["run_id"]), {"current_step": f"Скачивание {task['category_name']} {ym(int(task['year']), int(task['month']))}"})
-        self.repository.update_download_task(task_id, {"status": "downloading", "download_status": "downloading", "error_message": None})
-        raw_path.parent.mkdir(parents=True, exist_ok=True)
-        if settings.get("overwrite_raw") and raw_path.exists():
-            raw_path.unlink()
-        export_settings = ExportSettings(
-            export_months_by_year={int(task["year"]): (int(task["month"]),)},
-            save_dir=raw_path.parent,
-            skip_if_exists=not bool(settings.get("overwrite_raw")),
-            extract_zip=True,
-            cookie=cookie,
-            tasks=[self._task_to_export_task(task)],
-            api_token=api_token,
-        )
-        session = build_api_session(api_token) if source_type == SOURCE_TYPE_SUBJECT else build_session(cookie)
-        last_error: Exception | None = None
-        for attempt in range(int(settings.get("retry_count") or 0) + 1):
+        try:
             self._check_control(run_id)
-            try:
-                downloaded = export_one_month(
-                    session,
-                    export_settings,
-                    export_settings.tasks[0],
-                    year=int(task["year"]),
-                    month=int(task["month"]),
-                    max_wait_sec=int(settings.get("timeout_seconds") or 300),
-                    request_timeout=int(settings.get("timeout_seconds") or 300),
-                )
-                if downloaded != raw_path:
-                    shutil.move(str(downloaded), raw_path)
-                break
-            except Exception as exc:
-                last_error = exc
-                if attempt >= int(settings.get("retry_count") or 0):
-                    raise
-                self._sleep_with_control(run_id, float(settings.get("pause_between_requests") or 0.0))
-        if last_error and not raw_path.exists():
-            raise last_error
-        if not raw_path.exists() or raw_path.stat().st_size == 0:
-            self.repository.update_download_task(task_id, {"status": "no_data", "download_status": "no_data"})
-            return
-        self.repository.update_download_task(task_id, {"status": "downloaded", "download_status": "downloaded", "raw_file_path": str(raw_path)})
-        pause = float(settings.get("pause_between_requests") or 0.0)
-        if pause:
-            self._sleep_with_control(run_id, pause)
+            if raw_path.exists() and not settings.get("overwrite_raw"):
+                stage_status = "skipped_existing"
+                self.repository.update_download_task(task_id, {"status": "downloaded", "download_status": "downloaded", "error_message": None})
+                return
+            source_type = normalize_source_type(task.get("source_type"))
+            cookie = self.repository.get_setting("mpstats_cookie") or ""
+            api_token = self.repository.get_setting("mpstats_api_token") or ""
+            if source_type == SOURCE_TYPE_SUBJECT:
+                if not api_token.strip():
+                    raise ValueError("MPStats API token пустой. Сохрани token перед выгрузкой по предмету.")
+            elif not cookie.strip():
+                raise ValueError("Cookie MPStats пустой. Сохрани доступ перед запуском.")
+            self.repository.update_pipeline_run(str(task["run_id"]), {"current_step": f"Скачивание {task['category_name']} {ym(int(task['year']), int(task['month']))}"})
+            self.repository.update_download_task(task_id, {"status": "downloading", "download_status": "downloading", "error_message": None})
+            raw_path.parent.mkdir(parents=True, exist_ok=True)
+            if settings.get("overwrite_raw") and raw_path.exists():
+                raw_path.unlink()
+            export_settings = ExportSettings(
+                export_months_by_year={int(task["year"]): (int(task["month"]),)},
+                save_dir=raw_path.parent,
+                skip_if_exists=not bool(settings.get("overwrite_raw")),
+                extract_zip=True,
+                cookie=cookie,
+                tasks=[self._task_to_export_task(task)],
+                api_token=api_token,
+            )
+            session = build_api_session(api_token) if source_type == SOURCE_TYPE_SUBJECT else build_session(cookie)
+            last_error: Exception | None = None
+            for attempt in range(int(settings.get("retry_count") or 0) + 1):
+                self._check_control(run_id)
+                try:
+                    downloaded = export_one_month(
+                        session,
+                        export_settings,
+                        export_settings.tasks[0],
+                        year=int(task["year"]),
+                        month=int(task["month"]),
+                        max_wait_sec=int(settings.get("timeout_seconds") or 300),
+                        request_timeout=int(settings.get("timeout_seconds") or 300),
+                    )
+                    if downloaded != raw_path:
+                        shutil.move(str(downloaded), raw_path)
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if attempt >= int(settings.get("retry_count") or 0):
+                        raise
+                    self._sleep_with_control(run_id, float(settings.get("pause_between_requests") or 0.0))
+            if last_error and not raw_path.exists():
+                raise last_error
+            if not raw_path.exists() or raw_path.stat().st_size == 0:
+                stage_status = "no_data"
+                self.repository.update_download_task(task_id, {"status": "no_data", "download_status": "no_data"})
+                return
+            self.repository.update_download_task(task_id, {"status": "downloaded", "download_status": "downloaded", "raw_file_path": str(raw_path)})
+            pause = float(settings.get("pause_between_requests") or 0.0)
+            if pause:
+                self._sleep_with_control(run_id, pause)
+        except _PipelineInterrupted:
+            stage_status = "interrupted"
+            raise
+        except Exception:
+            stage_status = "failed"
+            raise
+        finally:
+            latest_task = self.repository.get_download_task(task_id) or task
+            self._log_task_timing(
+                latest_task,
+                stage="download",
+                duration_sec=time.perf_counter() - stage_started,
+                status=stage_status,
+            )
 
     def _process_task(self, task_id: str, *, settings: dict[str, Any]) -> None:
         task = self.repository.get_download_task(task_id)
         if not task:
             raise KeyError(task_id)
-        self._check_control(str(task["run_id"]))
+        stage_started = time.perf_counter()
+        stage_status = "success"
+        input_rows: int | None = None
+        output_rows: int | None = None
+        input_columns: int | None = None
+        output_columns: int | None = None
         processed_path = Path(str(task["processed_file_path"]))
-        if processed_path.exists() and not settings.get("overwrite_processed"):
-            rows = int(task.get("rows_count") or 0) or count_semicolon_csv_rows(processed_path)
+        raw_path = Path(str(task["raw_file_path"]))
+        try:
+            self._check_control(str(task["run_id"]))
+            if processed_path.exists() and not settings.get("overwrite_processed"):
+                stage_status = "skipped_existing"
+                rows = int(task.get("rows_count") or 0) or count_semicolon_csv_rows(processed_path)
+                output_rows = rows
+                self.repository.update_download_task(
+                    task_id,
+                    {"status": "processed", "process_status": "processed", "processed_file_path": str(processed_path), "rows_count": rows},
+                )
+                return
+            if not raw_path.exists():
+                raise FileNotFoundError(f"Raw-файл не найден: {raw_path}")
+            self.repository.update_pipeline_run(str(task["run_id"]), {"current_step": f"Обработка {task['category_name']} {ym(int(task['year']), int(task['month']))}"})
+            self.repository.update_download_task(task_id, {"status": "processing", "process_status": "processing", "error_message": None})
+            raw_df = read_csv_auto(raw_path, low_memory=False)
+            input_rows = len(raw_df)
+            input_columns = len(raw_df.columns)
+            if raw_df.empty:
+                stage_status = "no_data"
+                output_rows = 0
+                self.repository.update_download_task(task_id, {"status": "no_data", "process_status": "no_data", "rows_count": 0})
+                return
+            for column in ("Дата", "Маркетплейс", "Категория"):
+                if column in raw_df.columns:
+                    raw_df = raw_df.drop(columns=[column])
+            raw_df.insert(0, "Дата", f"01.{int(task['month']):02d}.{int(task['year'])}")
+            raw_df.insert(1, "Маркетплейс", task["marketplace"])
+            raw_df.insert(2, "Категория", task["category_name"])
+            marketplace_type = {"oz": "ozon", "wb": "wb", "ym": "ym"}[str(task["marketplace_code"])]
+            standardized = standardize_dataframe(raw_df, marketplace_type)
+            parsed = parse_weights_dataframe(standardized, max_weight_kg=float(settings.get("max_weight_kg") or 40.0))
+            output_rows = len(parsed)
+            output_columns = len(parsed.columns)
+            processed_path.parent.mkdir(parents=True, exist_ok=True)
+            write_semicolon_csv(parsed, processed_path)
             self.repository.update_download_task(
                 task_id,
-                {"status": "processed", "process_status": "processed", "processed_file_path": str(processed_path), "rows_count": rows},
+                {"status": "processed", "process_status": "processed", "processed_file_path": str(processed_path), "rows_count": len(parsed)},
             )
-            return
-        raw_path = Path(str(task["raw_file_path"]))
-        if not raw_path.exists():
-            raise FileNotFoundError(f"Raw-файл не найден: {raw_path}")
-        self.repository.update_pipeline_run(str(task["run_id"]), {"current_step": f"Обработка {task['category_name']} {ym(int(task['year']), int(task['month']))}"})
-        self.repository.update_download_task(task_id, {"status": "processing", "process_status": "processing", "error_message": None})
-        raw_df = read_csv_auto(raw_path, low_memory=False)
-        if raw_df.empty:
-            self.repository.update_download_task(task_id, {"status": "no_data", "process_status": "no_data", "rows_count": 0})
-            return
-        for column in ("Дата", "Маркетплейс", "Категория"):
-            if column in raw_df.columns:
-                raw_df = raw_df.drop(columns=[column])
-        raw_df.insert(0, "Дата", f"01.{int(task['month']):02d}.{int(task['year'])}")
-        raw_df.insert(1, "Маркетплейс", task["marketplace"])
-        raw_df.insert(2, "Категория", task["category_name"])
-        marketplace_type = {"oz": "ozon", "wb": "wb", "ym": "ym"}[str(task["marketplace_code"])]
-        standardized = standardize_dataframe(raw_df, marketplace_type)
-        parsed = parse_weights_dataframe(standardized, max_weight_kg=float(settings.get("max_weight_kg") or 40.0))
-        processed_path.parent.mkdir(parents=True, exist_ok=True)
-        write_semicolon_csv(parsed, processed_path)
-        self.repository.update_download_task(
-            task_id,
-            {"status": "processed", "process_status": "processed", "processed_file_path": str(processed_path), "rows_count": len(parsed)},
-        )
+        except _PipelineInterrupted:
+            stage_status = "interrupted"
+            raise
+        except Exception:
+            stage_status = "failed"
+            raise
+        finally:
+            latest_task = self.repository.get_download_task(task_id) or task
+            self._log_task_timing(
+                latest_task,
+                stage="process",
+                duration_sec=time.perf_counter() - stage_started,
+                status=stage_status,
+                input_rows=input_rows,
+                output_rows=output_rows,
+                input_columns=input_columns,
+                output_columns=output_columns,
+                processed_columns=output_columns,
+            )
 
     def _classify_task(self, task_id: str, *, settings: dict[str, Any], force_reclassify: bool = False) -> None:
         task = self.repository.get_download_task(task_id)
         if not task:
             raise KeyError(task_id)
-        self._check_control(str(task["run_id"]))
+        stage_started = time.perf_counter()
+        stage_status = "success"
+        input_rows: int | None = None
+        output_rows: int | None = None
+        input_columns: int | None = None
+        output_columns: int | None = None
+        classification_timings: dict[str, Any] | None = None
         classified_path = Path(str(task["classified_file_path"]))
-        if classified_path.exists() and not force_reclassify and not settings.get("overwrite_processed"):
-            rows = int(task.get("rows_count") or 0) or count_semicolon_csv_rows(classified_path)
+        processed_path = Path(str(task["processed_file_path"]))
+        try:
+            self._check_control(str(task["run_id"]))
+            if classified_path.exists() and not force_reclassify and not settings.get("overwrite_processed"):
+                stage_status = "skipped_existing"
+                rows = int(task.get("rows_count") or 0) or count_semicolon_csv_rows(classified_path)
+                output_rows = rows
+                self.repository.update_download_task(
+                    task_id,
+                    {"status": "classified", "classify_status": "classified", "classified_file_path": str(classified_path), "rows_count": rows},
+                )
+                return
+            if not processed_path.exists():
+                if force_reclassify:
+                    raise FileNotFoundError(f"Processed-файл для повторной классификации не найден: {processed_path}")
+                if classified_path.exists():
+                    stage_status = "skipped_existing"
+                    return
+                raise FileNotFoundError(f"Processed-файл не найден: {processed_path}")
+            self.repository.update_pipeline_run(str(task["run_id"]), {"current_step": f"Классификация {task['category_name']} {ym(int(task['year']), int(task['month']))}"})
+            self.repository.update_download_task(task_id, {"status": "classifying", "classify_status": "classifying", "error_message": None})
+            classified_df, _, result = classify_file(
+                processed_path,
+                classified_path,
+                rules_path=self.settings.rules_path,
+                write_xlsx=False,
+                manual_overrides_path=self.settings.manual_overrides_path,
+                slice_category=str(task["category_name"]),
+            )
+            output_rows = result.rows
+            output_columns = len(classified_df.columns)
+            detail = result.details[0] if result.details else {}
+            input_rows = int(detail["input_rows"]) if detail.get("input_rows") is not None else None
+            input_columns = int(detail["input_columns"]) if detail.get("input_columns") is not None else None
+            classification_timings = detail.get("timings") if isinstance(detail.get("timings"), dict) else None
             self.repository.update_download_task(
                 task_id,
-                {"status": "classified", "classify_status": "classified", "classified_file_path": str(classified_path), "rows_count": rows},
+                {
+                    "status": "classified",
+                    "classify_status": "classified",
+                    "classified_file_path": str(classified_path),
+                    "rows_count": result.rows,
+                },
             )
-            return
-        processed_path = Path(str(task["processed_file_path"]))
-        if not processed_path.exists():
-            if force_reclassify:
-                raise FileNotFoundError(f"Processed-файл для повторной классификации не найден: {processed_path}")
-            if classified_path.exists():
-                return
-            raise FileNotFoundError(f"Processed-файл не найден: {processed_path}")
-        self.repository.update_pipeline_run(str(task["run_id"]), {"current_step": f"Классификация {task['category_name']} {ym(int(task['year']), int(task['month']))}"})
-        self.repository.update_download_task(task_id, {"status": "classifying", "classify_status": "classifying", "error_message": None})
-        _, _, result = classify_file(
-            processed_path,
-            classified_path,
-            rules_path=self.settings.rules_path,
-            write_xlsx=False,
-            manual_overrides_path=self.settings.manual_overrides_path,
-        )
-        self.repository.update_download_task(
-            task_id,
-            {
-                "status": "classified",
-                "classify_status": "classified",
-                "classified_file_path": str(classified_path),
-                "rows_count": result.rows,
-            },
-        )
+        except _PipelineInterrupted:
+            stage_status = "interrupted"
+            raise
+        except Exception:
+            stage_status = "failed"
+            raise
+        finally:
+            latest_task = self.repository.get_download_task(task_id) or task
+            self._log_task_timing(
+                latest_task,
+                stage="classify",
+                duration_sec=time.perf_counter() - stage_started,
+                status=stage_status,
+                input_rows=input_rows,
+                output_rows=output_rows,
+                input_columns=input_columns,
+                output_columns=output_columns,
+                processed_columns=input_columns,
+                classified_columns=output_columns,
+                classification_timings=classification_timings,
+            )
 
     def _save_task(self, task_id: str, *, settings: dict[str, Any]) -> None:
         task = self.repository.get_download_task(task_id)
         if not task:
             raise KeyError(task_id)
-        self._check_control(str(task["run_id"]))
-        existing = self.repository.get_cube_entry(
-            project_name=str(task["project_name"]),
-            year=int(task["year"]),
-            month=int(task["month"]),
-            marketplace_code=str(task["marketplace_code"]),
-            category_key=str(task["category_key"]),
-        )
-        existing_by_category = self.repository.get_cube_entry_by_natural_key(
-            project_name=str(task["project_name"]),
-            year=int(task["year"]),
-            month=int(task["month"]),
-            marketplace_code=str(task["marketplace_code"]),
-            category_name=str(task["category_name"]),
-        )
-        existing = existing_by_category or existing
-        if existing and not settings.get("overwrite_db"):
+        stage_started = time.perf_counter()
+        stage_status = "success"
+        input_rows: int | None = int(task.get("rows_count") or 0) or None
+        output_rows: int | None = None
+        classified_path = Path(str(task["classified_file_path"]))
+        try:
+            self._check_control(str(task["run_id"]))
+            existing = self.repository.get_cube_entry(
+                project_name=str(task["project_name"]),
+                year=int(task["year"]),
+                month=int(task["month"]),
+                marketplace_code=str(task["marketplace_code"]),
+                category_key=str(task["category_key"]),
+            )
+            existing_by_category = self.repository.get_cube_entry_by_natural_key(
+                project_name=str(task["project_name"]),
+                year=int(task["year"]),
+                month=int(task["month"]),
+                marketplace_code=str(task["marketplace_code"]),
+                category_name=str(task["category_name"]),
+            )
+            existing = existing_by_category or existing
+            if existing and not settings.get("overwrite_db"):
+                stage_status = "skipped_existing"
+                output_rows = int(existing.get("rows_count") or 0)
+                self.repository.update_download_task(
+                    task_id,
+                    {
+                        "status": "saved_to_db",
+                        "save_status": "saved_to_db",
+                        "rows_count": int(existing.get("rows_count") or 0),
+                        "error_message": None,
+                    },
+                )
+                return
+            if not classified_path.exists():
+                raise FileNotFoundError(f"Classified-файл не найден: {classified_path}")
+            if (
+                existing_by_category
+                and str(existing_by_category.get("category_key") or "") != str(task["category_key"])
+                and settings.get("overwrite_db")
+            ):
+                self.repository.delete_cube_entry(entry_id=str(existing_by_category["id"]), table_name=self.settings.products_table)
+            self.repository.update_pipeline_run(str(task["run_id"]), {"current_step": f"Сохранение {task['category_name']} {ym(int(task['year']), int(task['month']))}"})
+            self.repository.update_download_task(task_id, {"status": "saving_to_db", "save_status": "saving_to_db", "error_message": None})
+            inserted = self.repository.import_products_file_idempotent(
+                run_id=str(task["run_id"]),
+                csv_path=classified_path,
+                table_name=self.settings.products_table,
+                project_name=str(task["project_name"]),
+                year=int(task["year"]),
+                month=int(task["month"]),
+                marketplace_code=str(task["marketplace_code"]),
+                category_key=str(task["category_key"]),
+                category_name=str(task["category_name"]),
+                source_type=normalize_source_type(task.get("source_type")),
+                overwrite=bool(settings.get("overwrite_db")),
+            )
+            output_rows = inserted
+            raw_path = Path(str(task.get("raw_file_path") or ""))
+            self.repository.upsert_cube_entry(
+                {
+                    "project_name": task["project_name"],
+                    "year": int(task["year"]),
+                    "month": int(task["month"]),
+                    "marketplace": task["marketplace"],
+                    "marketplace_code": task["marketplace_code"],
+                    "source_type": normalize_source_type(task.get("source_type")),
+                    "category_key": task["category_key"],
+                    "category_name": task["category_name"],
+                    "rows_count": inserted,
+                    "exported_at": file_timestamp(raw_path) or file_timestamp(classified_path),
+                    "source_processed_file_path": str(classified_path),
+                    "file_hash": file_sha1(classified_path),
+                    **month_day_coverage(int(task["year"]), int(task["month"])),
+                }
+            )
+            self.repository.refresh_large_category_flags(
+                project_name=str(task["project_name"]),
+                category_keys=[str(task["category_key"])],
+            )
             self.repository.update_download_task(
                 task_id,
-                {
-                    "status": "saved_to_db",
-                    "save_status": "saved_to_db",
-                    "rows_count": int(existing.get("rows_count") or 0),
-                    "error_message": None,
-                },
+                {"status": "saved_to_db", "save_status": "saved_to_db", "rows_count": inserted, "error_message": None},
             )
-            return
-        classified_path = Path(str(task["classified_file_path"]))
-        if not classified_path.exists():
-            raise FileNotFoundError(f"Classified-файл не найден: {classified_path}")
-        if (
-            existing_by_category
-            and str(existing_by_category.get("category_key") or "") != str(task["category_key"])
-            and settings.get("overwrite_db")
-        ):
-            self.repository.delete_cube_entry(entry_id=str(existing_by_category["id"]), table_name=self.settings.products_table)
-        self.repository.update_pipeline_run(str(task["run_id"]), {"current_step": f"Сохранение {task['category_name']} {ym(int(task['year']), int(task['month']))}"})
-        self.repository.update_download_task(task_id, {"status": "saving_to_db", "save_status": "saving_to_db", "error_message": None})
-        inserted = self.repository.import_products_file_idempotent(
-            run_id=str(task["run_id"]),
-            csv_path=classified_path,
-            table_name=self.settings.products_table,
-            project_name=str(task["project_name"]),
-            year=int(task["year"]),
-            month=int(task["month"]),
-            marketplace_code=str(task["marketplace_code"]),
-            category_key=str(task["category_key"]),
-            category_name=str(task["category_name"]),
-            source_type=normalize_source_type(task.get("source_type")),
-            overwrite=bool(settings.get("overwrite_db")),
-        )
-        raw_path = Path(str(task.get("raw_file_path") or ""))
-        self.repository.upsert_cube_entry(
-            {
-                "project_name": task["project_name"],
-                "year": int(task["year"]),
-                "month": int(task["month"]),
-                "marketplace": task["marketplace"],
-                "marketplace_code": task["marketplace_code"],
-                "source_type": normalize_source_type(task.get("source_type")),
-                "category_key": task["category_key"],
-                "category_name": task["category_name"],
-                "rows_count": inserted,
-                "exported_at": file_timestamp(raw_path) or file_timestamp(classified_path),
-                "source_processed_file_path": str(classified_path),
-                "file_hash": file_sha1(classified_path),
-                **month_day_coverage(int(task["year"]), int(task["month"])),
-            }
-        )
-        self.repository.refresh_large_category_flags(
-            project_name=str(task["project_name"]),
-            category_keys=[str(task["category_key"])],
-        )
-        self.repository.update_download_task(
-            task_id,
-            {"status": "saved_to_db", "save_status": "saved_to_db", "rows_count": inserted, "error_message": None},
-        )
-        if inserted == 0:
-            return
+            if inserted == 0:
+                return
+        except _PipelineInterrupted:
+            stage_status = "interrupted"
+            raise
+        except Exception:
+            stage_status = "failed"
+            raise
+        finally:
+            latest_task = self.repository.get_download_task(task_id) or task
+            self._log_task_timing(
+                latest_task,
+                stage="save_to_duckdb",
+                duration_sec=time.perf_counter() - stage_started,
+                status=stage_status,
+                input_rows=input_rows,
+                output_rows=output_rows,
+            )
 
     @staticmethod
     def _project_file_kind(relative_path: Path) -> str | None:

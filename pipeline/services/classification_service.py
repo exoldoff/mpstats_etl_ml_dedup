@@ -94,7 +94,13 @@ def classify_dataframe(
     rules_path: str | Path,
     fill_unclassified: dict[str, object] | None = None,
     manual_overrides_path: str | Path | None = None,
+    slice_category: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, object]]:
+    """Apply classifier rules to a dataframe and collect simple timing metadata.
+
+    `slice_category` is the category of the current web-pipeline task. When it
+    is known, the classifier can skip rules that cannot affect this category.
+    """
     timings: dict[str, float] = {}
     prepared = _time_call(timings, "prepare_input_seconds", lambda: prepare_for_classification(df))
     result, report = _time_call(
@@ -104,6 +110,7 @@ def classify_dataframe(
             prepared,
             rules_path=rules_path,
             fill_unclassified=fill_unclassified,
+            slice_category=slice_category,
         ),
     )
     result, dropped_columns, rename_map = _time_call(timings, "postprocess_seconds", lambda: postprocess_classified(result))
@@ -139,7 +146,14 @@ def classify_file(
     write_xlsx: bool = False,
     fill_unclassified: dict[str, object] | None = None,
     manual_overrides_path: str | Path | None = None,
+    slice_category: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, StepResult]:
+    """Classify one CSV/XLSX file and write the classified CSV.
+
+    `slice_category` should be supplied by the smart web pipeline, where each
+    file contains one category. Leave it empty for ad-hoc files with mixed
+    categories.
+    """
     total_started = time.perf_counter()
     timings: dict[str, float] = {}
     df = _time_call(timings, "read_input_seconds", lambda: read_classification_input(input_file))
@@ -148,6 +162,7 @@ def classify_file(
         rules_path=rules_path,
         fill_unclassified=fill_unclassified,
         manual_overrides_path=manual_overrides_path,
+        slice_category=slice_category,
     )
     timings.update(meta.pop("timings", {}))
     out_path = _time_call(timings, "write_output_seconds", lambda: write_semicolon_csv(result_df, output_file))
@@ -168,6 +183,9 @@ def classify_file(
     step.add_detail(
         input=str(input_file),
         output=str(out_path),
+        input_rows=len(df),
+        input_columns=len(df.columns),
+        output_columns=len(result_df.columns),
         report_rows=len(report),
         timings={key: round(value, 4) for key, value in timings.items()},
         **meta,

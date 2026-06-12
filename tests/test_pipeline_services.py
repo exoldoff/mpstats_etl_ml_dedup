@@ -793,6 +793,89 @@ class PipelineServicesTest(unittest.TestCase):
             self.assertEqual(int(report.iloc[0]["applied_rows"]), 0)
             self.assertTrue(result["Подкатегория"].isna().all())
 
+    def test_slice_category_prefilter_preserves_classifier_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            rules_file = root / "rules.csv"
+            conditions = json.dumps(
+                [
+                    {"match_field": "Бренд", "match_type": "equals", "pattern": "brand b"},
+                    {
+                        "join_with_prev": "and",
+                        "match_field": "Название",
+                        "match_type": "contains",
+                        "pattern": "порошок",
+                    },
+                ],
+                ensure_ascii=False,
+            )
+            rules_file.write_text(
+                "\n".join(
+                    [
+                        "active;priority;category;target_column;match_field;match_type;pattern;set_value;mode;comment;conditions_json",
+                        "1;1;Мыло;Подкатегория;Название;contains;жидкое;Жидкое;fill_empty;;",
+                        "1;2;*;Тип;Название;regex;^жидкое;Жидкий формат;fill_empty;;",
+                        "1;3;;Бренд норм;Бренд;equals;brand a;Brand A;overwrite;;",
+                        "1;4;Мыло;Тип;Название;contains;premium;Премиум;overwrite;;",
+                        f"1;5;Мыло;Сложное;;;;Сложное yes;fill_empty;;{conditions}",
+                        "1;6;Мыло;Подкатегория;;otherwise;;Прочее;overwrite;;",
+                        "1;7;Мясо;Новая колонка;Название;contains;мыло;Не должно примениться;fill_empty;;",
+                        "1;8;*;Новая колонка;Название;contains;пена;Создано;fill_empty;;",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            frame = pd.DataFrame(
+                [
+                    {"Категория": "Мыло", "Название": "жидкое мыло premium пена", "Бренд": "brand a", "Подкатегория": "Готово"},
+                    {"Категория": "Мыло", "Название": "жидкое мыло пена", "Бренд": "brand a", "Подкатегория": ""},
+                    {"Категория": "Мыло", "Название": "сухой порошок", "Бренд": "brand b", "Подкатегория": ""},
+                    {"Категория": "Мыло", "Название": "детское мыло", "Бренд": "brand c", "Подкатегория": ""},
+                ]
+            )
+
+            baseline, _ = apply_classifiers(frame, rules_file)
+            optimized, report = apply_classifiers(frame, rules_file, slice_category="Мыло")
+
+            self.assertEqual(
+                baseline.fillna("").to_dict("records"),
+                optimized.fillna("").to_dict("records"),
+            )
+            self.assertEqual(optimized["Подкатегория"].tolist(), ["Готово", "Жидкое", "Прочее", "Прочее"])
+            self.assertEqual(optimized["Тип"].fillna("").tolist(), ["Премиум", "Жидкий формат", "", ""])
+            self.assertEqual(optimized["Бренд норм"].fillna("").tolist(), ["Brand A", "Brand A", "", ""])
+            self.assertEqual(optimized["Сложное"].fillna("").tolist(), ["", "", "Сложное yes", ""])
+            self.assertEqual(optimized["Новая колонка"].fillna("").tolist(), ["Создано", "Создано", "", ""])
+            contains_report = report.loc[report["row_num"] == 2].iloc[0]
+            self.assertEqual(int(contains_report["candidate_rows"]), 1)
+            self.assertNotIn(8, report["row_num"].tolist())
+
+    def test_slice_category_prefilter_keeps_reachable_category_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            rules_file = root / "rules.csv"
+            rules_file.write_text(
+                "\n".join(
+                    [
+                        "active;priority;category;target_column;match_field;match_type;pattern;set_value;mode;comment;conditions_json",
+                        "1;1;Мыло хозяйственное;Категория;Категория;equals;Мыло хозяйственное;Мыло;overwrite;;",
+                        "1;2;Мыло;Подкатегория;Название;contains;жидк;Жидкое;fill_empty;;",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            frame = pd.DataFrame(
+                [{"Категория": "Мыло хозяйственное", "Название": "Жидкое хозяйственное мыло"}]
+            )
+
+            result, report = apply_classifiers(frame, rules_file, slice_category="Мыло хозяйственное")
+
+            self.assertEqual(report["applied_rows"].tolist(), [1, 1])
+            self.assertEqual(result.iloc[0]["Категория"], "Мыло")
+            self.assertEqual(result.iloc[0]["Подкатегория"], "Жидкое")
+
     def test_default_meat_rules_follow_reference_categories(self) -> None:
         cases = [
             ("Котлеты Три мяса Слово Мясника, 360 г", "Кулинария"),

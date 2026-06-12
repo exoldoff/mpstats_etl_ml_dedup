@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from functools import lru_cache
 import json
+import logging
+import os
 from pathlib import Path
 import re
+import time
 from typing import Iterable, Tuple
 
 import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
 
 REQUIRED_RULE_COLUMNS: Tuple[str, ...] = (
     "active",
@@ -35,6 +40,9 @@ ALLOWED_LOGIC_OPERATORS = {"and", "or"}
 CONDITIONS_COLUMN = "conditions_json"
 NUMBER_PATTERN = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
 CATEGORY_FILTER_SEPARATOR = re.compile(r"\s*(?:\||;)\s*")
+FULL_RULE_TIMING_ENV = "MPSTATS_CLASSIFIER_VERBOSE_RULES"
+SLOW_RULE_THRESHOLD_ENV = "MPSTATS_CLASSIFIER_SLOW_RULE_SEC"
+DEFAULT_SLOW_RULE_THRESHOLD_SEC = 0.5
 
 
 def default_rules_path(base_dir: str | Path | None = None) -> Path:
@@ -414,12 +422,97 @@ def _build_category_mask_from_normalized(
     return normalized_category.isin(normalized_categories)
 
 
+def _truthy_env(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on", "да", "all", "full"}
+
+
+def _slow_rule_threshold_seconds() -> float:
+    raw_value = os.getenv(SLOW_RULE_THRESHOLD_ENV, "").strip()
+    if not raw_value:
+        return DEFAULT_SLOW_RULE_THRESHOLD_SEC
+    try:
+        return max(0.0, float(raw_value.replace(",", ".")))
+    except ValueError:
+        LOGGER.warning("Ignoring invalid %s=%r: expected seconds as a number.", SLOW_RULE_THRESHOLD_ENV, raw_value)
+        return DEFAULT_SLOW_RULE_THRESHOLD_SEC
+
+
+def _log_classifier_payload(message: str, payload: dict[str, object]) -> None:
+    LOGGER.info("%s: %s", message, json.dumps(payload, ensure_ascii=False, default=str))
+
+
+def _rule_matches_category_set(rule_category: object, normalized_categories: set[str]) -> bool:
+    """Return True when a rule can be relevant for at least one category in the slice.
+
+    Empty category and "*" mean a global rule. Multiple categories in one cell
+    are split the same way as the runtime row-level category filter.
+    """
+    rule_categories = _split_rule_categories(rule_category)
+    if not rule_categories:
+        return True
+    return any(category.casefold() in normalized_categories for category in rule_categories)
+
+
+def _prefilter_rules_for_slice_category(
+    rules: pd.DataFrame,
+    *,
+    slice_category: str | None,
+    category_column: str,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Filter rules before applying them to a single category slice.
+
+    The web pipeline processes one category per file, so rules for unrelated
+    categories cannot affect the result. To keep older dynamic behavior safe,
+    the filter also includes categories that can be reached by active rules
+    writing into the category column.
+    """
+    clean_category = str(slice_category or "").strip()
+    if clean_category == "":
+        return rules, []
+
+    normalized_categories = {clean_category.casefold()}
+    display_categories = {clean_category}
+    changed = True
+    while changed:
+        changed = False
+        for rule in rules.itertuples(index=False):
+            if not bool(rule.active):
+                continue
+            if str(rule.target_column).strip() != category_column:
+                continue
+            next_category = str(rule.set_value).strip()
+            if next_category == "":
+                continue
+            if not _rule_matches_category_set(rule.category, normalized_categories):
+                continue
+            normalized_next = next_category.casefold()
+            if normalized_next not in normalized_categories:
+                normalized_categories.add(normalized_next)
+                display_categories.add(next_category)
+                changed = True
+
+    keep_mask = rules["category"].map(lambda value: _rule_matches_category_set(value, normalized_categories))
+    return rules.loc[keep_mask].reset_index(drop=True), sorted(display_categories, key=str.casefold)
+
+
+def _empty_share_by_target(out: pd.DataFrame, target_columns: Iterable[str]) -> dict[str, float]:
+    shares: dict[str, float] = {}
+    total_rows = len(out)
+    if total_rows == 0:
+        return {column: 0.0 for column in target_columns if column in out.columns}
+    for column in target_columns:
+        if column in out.columns:
+            shares[column] = round(float(_is_empty_series(out[column]).mean()), 4)
+    return shares
+
+
 def apply_classifiers(
     df: pd.DataFrame,
     rules_path: str | Path | None = None,
     *,
     category_column: str = "Категория",
     fill_unclassified: dict[str, object] | None = None,
+    slice_category: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Apply CSV/Excel rules to dataframe and return:
@@ -429,16 +522,29 @@ def apply_classifiers(
     Optional:
       - fill_unclassified: dict {target_column: fill_value}
         Applied after all rules; fills only empty values in selected columns.
+      - slice_category: category name of the current processed file. When set,
+        rules for other categories are skipped before the rule loop.
     """
     if rules_path is None:
         rules_path = default_rules_path()
 
+    total_started = time.perf_counter()
     out = df.copy()
-    rules = load_prepared_rules(rules_path)
+    initial_columns = set(out.columns)
+    all_rules = load_prepared_rules(rules_path)
+    rules, prefilter_categories = _prefilter_rules_for_slice_category(
+        all_rules,
+        slice_category=slice_category,
+        category_column=category_column,
+    )
     fill_unclassified_map = _normalize_fill_unclassified(fill_unclassified)
     report_rows: list[dict[str, object]] = []
+    rule_timings: list[dict[str, object]] = []
     normalized_category_cache: pd.Series | None = None
     target_empty_cache: dict[str, pd.Series] = {}
+    created_columns: set[str] = set()
+    log_all_rules = _truthy_env(os.getenv(FULL_RULE_TIMING_ENV))
+    slow_rule_threshold_sec = _slow_rule_threshold_seconds()
 
     def normalized_category(row_num: int, rule_categories: list[str]) -> pd.Series:
         nonlocal normalized_category_cache
@@ -464,14 +570,42 @@ def apply_classifiers(
         return target_empty_cache[column_name]
 
     for rule in rules.itertuples(index=False):
+        rule_started = time.perf_counter()
         conditions = list(getattr(rule, "parsed_conditions", []))
+        row_num = int(rule.row_num)
+        rule_id = f"row:{row_num}"
+        priority = int(rule.priority) if str(getattr(rule, "priority", "")).strip() else None
+        target_column = str(rule.target_column)
+        candidate_rows = 0
+        applied_rows = 0
+        reason = ""
+
         if not rule.active:
+            duration_sec = time.perf_counter() - rule_started
+            timing_row = {
+                "rule_id": rule_id,
+                "row_num": row_num,
+                "priority": priority,
+                "category": rule.category,
+                "target_column": target_column,
+                "match_type": rule.match_type,
+                "mode": rule.mode,
+                "candidate_rows": 0,
+                "applied_rows": 0,
+                "duration_sec": round(duration_sec, 6),
+                "active": False,
+            }
+            rule_timings.append(timing_row)
+            if log_all_rules:
+                _log_classifier_payload("Classifier rule timing", timing_row)
             report_rows.append(
                 {
-                    "row_num": int(rule.row_num),
+                    "rule_id": rule_id,
+                    "row_num": row_num,
                     "active": False,
                     "applied_rows": 0,
                     "candidate_rows": 0,
+                    "duration_sec": round(duration_sec, 6),
                     "reason": "inactive",
                     "target_column": rule.target_column,
                     "comment": getattr(rule, "comment", ""),
@@ -481,62 +615,73 @@ def apply_classifiers(
             )
             continue
 
-        row_num = int(rule.row_num)
-        if rule.target_column not in out.columns:
-            out[rule.target_column] = pd.NA
+        if target_column not in out.columns:
+            out[target_column] = pd.NA
+            created_columns.add(target_column)
 
         rule_categories = _split_rule_categories(rule.category)
+        base_mask = pd.Series(True, index=out.index)
         if rule_categories:
-            category_mask = _build_category_mask_from_normalized(
+            base_mask = _build_category_mask_from_normalized(
                 normalized_category(row_num, rule_categories),
                 rule_categories,
             )
-            if category_mask.any():
-                match_mask = _build_rule_mask(
-                    out.loc[category_mask],
-                    row_num=row_num,
-                    conditions=conditions,
-                    match_field=rule.match_field,
-                    match_type=rule.match_type,
-                    pattern=rule.pattern,
-                )
-                mask = pd.Series(False, index=out.index)
-                mask.loc[category_mask] = match_mask.to_numpy(dtype=bool)
-            else:
-                mask = pd.Series(False, index=out.index)
-        else:
-            mask = _build_rule_mask(
-                out,
+
+        write_only_empty = rule.mode == "fill_empty" or _rule_uses_otherwise(rule.match_type, conditions)
+        if write_only_empty:
+            base_mask = base_mask & target_empty(target_column)
+
+        if base_mask.any():
+            match_mask = _build_rule_mask(
+                out.loc[base_mask],
                 row_num=row_num,
                 conditions=conditions,
                 match_field=rule.match_field,
                 match_type=rule.match_type,
                 pattern=rule.pattern,
             )
+            mask = pd.Series(False, index=out.index)
+            mask.loc[base_mask] = match_mask.to_numpy(dtype=bool)
+        else:
+            mask = pd.Series(False, index=out.index)
+            reason = "no_candidate_rows"
 
         candidate_rows = int(mask.sum())
-        if _rule_uses_otherwise(rule.match_type, conditions):
-            write_mask = mask & target_empty(rule.target_column)
-        elif rule.mode == "fill_empty":
-            write_mask = mask & target_empty(rule.target_column)
-        else:
-            write_mask = mask
-
-        applied_rows = int(write_mask.sum())
+        write_mask = mask
+        applied_rows = candidate_rows
         if applied_rows > 0:
-            out.loc[write_mask, rule.target_column] = rule.set_value
-            if rule.target_column in target_empty_cache:
-                target_empty_cache[rule.target_column] = target_empty_cache[rule.target_column] & ~write_mask
-            if rule.target_column == category_column:
+            out.loc[write_mask, target_column] = rule.set_value
+            if target_column in target_empty_cache:
+                target_empty_cache[target_column] = target_empty_cache[target_column] & ~write_mask
+            if target_column == category_column:
                 normalized_category_cache = None
+
+        duration_sec = time.perf_counter() - rule_started
+        timing_row = {
+            "rule_id": rule_id,
+            "row_num": row_num,
+            "priority": priority,
+            "category": rule.category,
+            "target_column": target_column,
+            "match_type": rule.match_type,
+            "mode": rule.mode,
+            "candidate_rows": candidate_rows,
+            "applied_rows": applied_rows,
+            "duration_sec": round(duration_sec, 6),
+            "active": True,
+        }
+        rule_timings.append(timing_row)
+        if log_all_rules or duration_sec >= slow_rule_threshold_sec:
+            _log_classifier_payload("Classifier rule timing", timing_row)
 
         report_rows.append(
             {
+                "rule_id": rule_id,
                 "row_num": row_num,
                 "active": True,
                 "priority": int(rule.priority),
                 "category": rule.category,
-                "target_column": rule.target_column,
+                "target_column": target_column,
                 "match_field": rule.match_field,
                 "match_type": rule.match_type,
                 "pattern": rule.pattern,
@@ -544,6 +689,8 @@ def apply_classifiers(
                 "mode": rule.mode,
                 "candidate_rows": candidate_rows,
                 "applied_rows": applied_rows,
+                "duration_sec": round(duration_sec, 6),
+                "reason": reason,
                 "comment": getattr(rule, "comment", ""),
                 "conditions_count": len(conditions),
                 CONDITIONS_COLUMN: getattr(rule, CONDITIONS_COLUMN, ""),
@@ -553,9 +700,44 @@ def apply_classifiers(
     for column_name, fill_value in fill_unclassified_map.items():
         if column_name not in out.columns:
             out[column_name] = pd.NA
+            created_columns.add(column_name)
         empty_mask = _is_empty_series(out[column_name])
         if empty_mask.any():
             out.loc[empty_mask, column_name] = fill_value
 
     report = pd.DataFrame(report_rows)
+    active_rules_count = int(rules["active"].sum()) if "active" in rules.columns else len(rules)
+    inactive_rules_count = int(len(rules) - active_rules_count)
+    if report.empty:
+        rows_per_target: dict[str, int] = {}
+    else:
+        active_report = report[report["active"] == True].copy() if "active" in report.columns else report.copy()
+        rows_per_target = {
+            str(target): int(rows["applied_rows"].sum())
+            for target, rows in active_report.groupby("target_column", dropna=False)
+        }
+    rules_per_target = {
+        str(target): int(count)
+        for target, count in rules.loc[rules["active"], "target_column"].value_counts(dropna=False).items()
+    }
+    seconds_per_target: dict[str, float] = {}
+    for timing in rule_timings:
+        target = str(timing["target_column"])
+        seconds_per_target[target] = round(seconds_per_target.get(target, 0.0) + float(timing["duration_sec"]), 6)
+    target_columns = set(rows_per_target) | set(rules_per_target) | created_columns
+    summary = {
+        "total_rules_loaded": int(len(all_rules)),
+        "rules_after_category_prefilter": int(len(rules)),
+        "category_prefilter_values": prefilter_categories,
+        "active_rules_count": active_rules_count,
+        "inactive_rules_count": inactive_rules_count,
+        "total_classification_time_sec": round(time.perf_counter() - total_started, 6),
+        "top_10_slowest_rules": sorted(rule_timings, key=lambda item: float(item["duration_sec"]), reverse=True)[:10],
+        "columns_created_by_classifier": sorted(created_columns - initial_columns),
+        "rows_classified_per_target_column": rows_per_target,
+        "rules_per_target_column": rules_per_target,
+        "seconds_per_target_column": seconds_per_target,
+        "empty_share_per_target_column": _empty_share_by_target(out, sorted(target_columns)),
+    }
+    _log_classifier_payload("Classifier summary", summary)
     return out, report
