@@ -298,7 +298,7 @@ def _build_match_mask(series: pd.Series, match_type: str, pattern: str) -> pd.Se
     if match_type == "contains":
         return text.str.contains(pattern, case=False, regex=False, na=False)
     if match_type == "not_contains":
-        return ~text.str.contains(re.escape(pattern), case=False, regex=True, na=False)
+        return ~text.str.contains(pattern, case=False, regex=False, na=False)
     if match_type == "regex":
         try:
             return text.str.contains(pattern, case=False, regex=True, na=False)
@@ -406,28 +406,12 @@ def _split_rule_categories(rule_category: object) -> list[str]:
     return [] if "*" in categories else categories
 
 
-def _build_category_mask(
-    df: pd.DataFrame,
-    *,
-    row_num: int,
-    category_column: str,
+def _build_category_mask_from_normalized(
+    normalized_category: pd.Series,
     rule_categories: list[str],
 ) -> pd.Series:
-    if category_column not in df.columns:
-        category_filter = " | ".join(rule_categories)
-        raise ValueError(
-            f"Rule row {row_num} has category filter '{category_filter}', "
-            f"but dataframe has no '{category_column}' column."
-        )
     normalized_categories = {category.casefold() for category in rule_categories}
-    return (
-        df[category_column]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .str.casefold()
-        .isin(normalized_categories)
-    )
+    return normalized_category.isin(normalized_categories)
 
 
 def apply_classifiers(
@@ -453,6 +437,31 @@ def apply_classifiers(
     rules = load_prepared_rules(rules_path)
     fill_unclassified_map = _normalize_fill_unclassified(fill_unclassified)
     report_rows: list[dict[str, object]] = []
+    normalized_category_cache: pd.Series | None = None
+    target_empty_cache: dict[str, pd.Series] = {}
+
+    def normalized_category(row_num: int, rule_categories: list[str]) -> pd.Series:
+        nonlocal normalized_category_cache
+        if category_column not in out.columns:
+            category_filter = " | ".join(rule_categories)
+            raise ValueError(
+                f"Rule row {row_num} has category filter '{category_filter}', "
+                f"but dataframe has no '{category_column}' column."
+            )
+        if normalized_category_cache is None:
+            normalized_category_cache = (
+                out[category_column]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.casefold()
+            )
+        return normalized_category_cache
+
+    def target_empty(column_name: str) -> pd.Series:
+        if column_name not in target_empty_cache:
+            target_empty_cache[column_name] = _is_empty_series(out[column_name])
+        return target_empty_cache[column_name]
 
     for rule in rules.itertuples(index=False):
         conditions = list(getattr(rule, "parsed_conditions", []))
@@ -478,11 +487,9 @@ def apply_classifiers(
 
         rule_categories = _split_rule_categories(rule.category)
         if rule_categories:
-            category_mask = _build_category_mask(
-                out,
-                row_num=row_num,
-                category_column=category_column,
-                rule_categories=rule_categories,
+            category_mask = _build_category_mask_from_normalized(
+                normalized_category(row_num, rule_categories),
+                rule_categories,
             )
             if category_mask.any():
                 match_mask = _build_rule_mask(
@@ -509,17 +516,19 @@ def apply_classifiers(
 
         candidate_rows = int(mask.sum())
         if _rule_uses_otherwise(rule.match_type, conditions):
-            target_empty = _is_empty_series(out[rule.target_column])
-            write_mask = mask & target_empty
+            write_mask = mask & target_empty(rule.target_column)
         elif rule.mode == "fill_empty":
-            target_empty = _is_empty_series(out[rule.target_column])
-            write_mask = mask & target_empty
+            write_mask = mask & target_empty(rule.target_column)
         else:
             write_mask = mask
 
         applied_rows = int(write_mask.sum())
         if applied_rows > 0:
             out.loc[write_mask, rule.target_column] = rule.set_value
+            if rule.target_column in target_empty_cache:
+                target_empty_cache[rule.target_column] = target_empty_cache[rule.target_column] & ~write_mask
+            if rule.target_column == category_column:
+                normalized_category_cache = None
 
         report_rows.append(
             {

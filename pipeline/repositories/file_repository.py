@@ -60,6 +60,17 @@ def read_semicolon_csv(csv_path: str | Path, *, low_memory: bool = False) -> pd.
     return pd.read_csv(csv_path, sep=DEFAULT_CSV_SEP, encoding=DEFAULT_CSV_ENCODING, low_memory=low_memory)
 
 
+def count_semicolon_csv_rows(csv_path: str | Path) -> int:
+    path = Path(csv_path)
+    if not path.exists() or path.stat().st_size == 0:
+        return 0
+
+    with path.open("r", encoding=DEFAULT_CSV_ENCODING, newline="") as file:
+        reader = csv.reader(file, delimiter=DEFAULT_CSV_SEP)
+        next(reader, None)
+        return sum(1 for _ in reader)
+
+
 def write_semicolon_csv(df: pd.DataFrame, csv_path: str | Path) -> Path:
     path = Path(csv_path)
     path.parent.mkdir(parents=True, exist_ok=True)

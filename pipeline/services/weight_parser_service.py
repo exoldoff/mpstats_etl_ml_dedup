@@ -259,20 +259,23 @@ def parse_weights_dataframe(df: pd.DataFrame, *, max_weight_kg: float = 40.0) ->
         out["Продажи"].astype(str).str.replace("\u00a0", "", regex=False).str.replace(" ", "", regex=False).str.replace(",", ".", regex=False)
     )
     out["Продажи"] = pd.to_numeric(out["Продажи"], errors="coerce").fillna(0)
-    extracted_weights = out["Название"].apply(extract_weight_from_name)
-    out["Вес, кг сырой"] = extracted_weights.apply(lambda value: value.unit_kg if value else np.nan)
-    total_weight_raw = extracted_weights.apply(lambda value: value.total_kg if value else np.nan)
+    names = out["Название"].tolist()
+    extracted_weights = [extract_weight_from_name(name) for name in names]
+    raw_unit_weights = [value.unit_kg if value else np.nan for value in extracted_weights]
+    raw_total_weights = [value.total_kg if value else np.nan for value in extracted_weights]
+    out["Вес, кг сырой"] = raw_unit_weights
+    total_weight_raw = pd.Series(raw_total_weights, index=out.index, dtype="float64")
 
-    fixes = out.apply(lambda row: sanitize_weight_kg(row["Название"], row["Вес, кг сырой"], max_weight_kg), axis=1)
-    out[UNIT_WEIGHT_COLUMN] = fixes.apply(lambda value: value[0])
+    fixes = [sanitize_weight_kg(name, weight, max_weight_kg) for name, weight in zip(names, raw_unit_weights)]
+    out[UNIT_WEIGHT_COLUMN] = [value[0] for value in fixes]
     weight_multiplier = total_weight_raw / out["Вес, кг сырой"]
     out[TOTAL_WEIGHT_COLUMN] = np.where(
         out[UNIT_WEIGHT_COLUMN].notna() & np.isfinite(weight_multiplier),
         out[UNIT_WEIGHT_COLUMN] * weight_multiplier,
         np.nan,
     )
-    out["Вес аномалия"] = fixes.apply(lambda value: value[1])
-    out["Вес причина"] = fixes.apply(lambda value: value[2])
+    out["Вес аномалия"] = [value[1] for value in fixes]
+    out["Вес причина"] = [value[2] for value in fixes]
     out["Объем, кг"] = out["Продажи"] * out[TOTAL_WEIGHT_COLUMN].fillna(0)
     out["Объем, т"] = out["Объем, кг"] / 1000.0
     out["Год"] = pd.to_datetime(out["Дата"], errors="coerce", dayfirst=True).dt.year

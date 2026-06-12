@@ -1991,6 +1991,62 @@ class WebApiTest(unittest.TestCase):
                 self.assertTrue(payload["tasks"][0]["has_cube"])
                 self.assertEqual(payload["tasks"][0]["smart_status"], "ready")
 
+    def test_smart_pipeline_skip_existing_files_uses_stored_row_count_without_csv_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            seed_project(root)
+            settings = make_settings(root)
+            app = create_app(settings, start_workers=False)
+
+            with TestClient(app) as client:
+                category_id = client.get("/api/workflow/categories").json()["categories"][0]["category_id"]
+                plan_response = client.post(
+                    "/api/workflow/pipeline/plans",
+                    json={
+                        "project_name": "skip-unit",
+                        "run_type": "historical_backfill",
+                        "category_ids": [category_id],
+                        "start_year": 2025,
+                        "start_month": 1,
+                        "end_year": 2025,
+                        "end_month": 1,
+                        "settings": {
+                            "overwrite_raw": False,
+                            "overwrite_processed": False,
+                            "overwrite_db": False,
+                            "max_parallel_downloads": 1,
+                            "retry_count": 0,
+                            "timeout_seconds": 300,
+                            "pause_between_requests": 0,
+                            "max_weight_kg": 40,
+                        },
+                    },
+                )
+                self.assertEqual(plan_response.status_code, 200)
+                run_id = plan_response.json()["id"]
+                task = client.get(f"/api/workflow/pipeline/runs/{run_id}/tasks").json()["tasks"][0]
+                write_semicolon_csv(pd.DataFrame([{"SKU": "processed"}]), Path(task["processed_file_path"]))
+                write_semicolon_csv(pd.DataFrame([{"SKU": "classified"}]), Path(task["classified_file_path"]))
+                app.state.repository.update_download_task(task["id"], {"rows_count": 123})
+
+                with patch(
+                    "mpstats_app.services.smart_pipeline_service.count_semicolon_csv_rows",
+                    side_effect=AssertionError("existing row count should avoid CSV scan"),
+                ):
+                    app.state.smart_pipeline_service._process_task(
+                        task["id"],
+                        settings={"overwrite_processed": False, "max_weight_kg": 40},
+                    )
+                    app.state.smart_pipeline_service._classify_task(
+                        task["id"],
+                        settings={"overwrite_processed": False},
+                    )
+
+                updated = client.get(f"/api/workflow/pipeline/runs/{run_id}/tasks").json()["tasks"][0]
+                self.assertEqual(updated["process_status"], "processed")
+                self.assertEqual(updated["classify_status"], "classified")
+                self.assertEqual(updated["rows_count"], 123)
+
     def test_smart_pipeline_plan_rebuild_dedup_retry_and_monthly_sync(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

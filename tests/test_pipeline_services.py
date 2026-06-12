@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from classifiers.engine import apply_classifiers, default_rules_path
-from pipeline.repositories.file_repository import read_semicolon_csv, write_semicolon_csv
+from pipeline.repositories.file_repository import count_semicolon_csv_rows, read_semicolon_csv, write_semicolon_csv
 from pipeline.services.classification_service import classify_file
 from pipeline.services.enrich_service import (
     extract_category_from_filename,
@@ -29,6 +29,13 @@ class PipelineServicesTest(unittest.TestCase):
     def test_parse_steps_supports_ranges_and_lists(self) -> None:
         self.assertEqual(parse_steps("2-4,6"), [2, 3, 4, 6])
         self.assertEqual(parse_steps([6, 2, 2]), [2, 6])
+
+    def test_count_semicolon_csv_rows_streams_csv_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "rows.csv"
+            write_semicolon_csv(pd.DataFrame([{"SKU": "one"}, {"SKU": "two\nlines"}]), path)
+
+            self.assertEqual(count_semicolon_csv_rows(path), 2)
 
     def test_filename_metadata_extractors(self) -> None:
         filename = "Ozon_-_Категории_-_Продукты_2025-06-01-2025-06-30__Мясо.csv"

@@ -12,7 +12,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
-from pipeline.repositories.file_repository import read_csv_auto, read_semicolon_csv, write_semicolon_csv
+from pipeline.repositories.file_repository import count_semicolon_csv_rows, read_csv_auto, write_semicolon_csv
 from pipeline.services.classification_service import classify_file
 from pipeline.services.export_service import (
     SOURCE_TYPE_SUBJECT,
@@ -758,7 +758,7 @@ class SmartPipelineService:
         self._check_control(str(task["run_id"]))
         processed_path = Path(str(task["processed_file_path"]))
         if processed_path.exists() and not settings.get("overwrite_processed"):
-            rows = len(read_semicolon_csv(processed_path, low_memory=False))
+            rows = int(task.get("rows_count") or 0) or count_semicolon_csv_rows(processed_path)
             self.repository.update_download_task(
                 task_id,
                 {"status": "processed", "process_status": "processed", "processed_file_path": str(processed_path), "rows_count": rows},
@@ -796,7 +796,7 @@ class SmartPipelineService:
         self._check_control(str(task["run_id"]))
         classified_path = Path(str(task["classified_file_path"]))
         if classified_path.exists() and not force_reclassify and not settings.get("overwrite_processed"):
-            rows = len(read_semicolon_csv(classified_path, low_memory=False))
+            rows = int(task.get("rows_count") or 0) or count_semicolon_csv_rows(classified_path)
             self.repository.update_download_task(
                 task_id,
                 {"status": "classified", "classify_status": "classified", "classified_file_path": str(classified_path), "rows_count": rows},
