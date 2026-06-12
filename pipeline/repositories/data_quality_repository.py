@@ -116,32 +116,37 @@ class DataQualityRepository:
             }
             if "__project_name" not in columns:
                 return {}
-            product_counts = {
-                str(row[0]): int(row[1] or 0)
-                for row in con.execute(
-                    f"""
-                    SELECT
-                        CAST({quote_name('__project_name')} AS VARCHAR) AS project_name,
-                        COUNT(*) AS row_count
-                    FROM {quote_identifier(self.products_table)}
-                    WHERE {quote_name('__project_name')} IS NOT NULL
-                        AND TRIM(CAST({quote_name('__project_name')} AS VARCHAR)) <> ''
-                    GROUP BY {quote_name('__project_name')}
-                    ORDER BY project_name
-                    """
-                ).fetchall()
-            }
-            registry_counts = {
-                str(row[0]): int(row[1] or 0)
-                for row in con.execute(
-                    """
-                    SELECT project_name, COUNT(*) AS slice_count
-                    FROM cube_registry
-                    GROUP BY project_name
-                    """
-                ).fetchall()
-            }
-            projects = sorted(set(product_counts) | set(registry_counts), key=str.lower)
+            registry_rows = con.execute(
+                """
+                SELECT project_name, COUNT(*) AS slice_count, SUM(rows_count) AS row_count
+                FROM cube_registry
+                WHERE project_name IS NOT NULL AND TRIM(CAST(project_name AS VARCHAR)) <> ''
+                GROUP BY project_name
+                ORDER BY project_name
+                """
+            ).fetchall()
+            if registry_rows:
+                product_counts = {str(row[0]): int(row[2] or 0) for row in registry_rows}
+                registry_counts = {str(row[0]): int(row[1] or 0) for row in registry_rows}
+                projects = [str(row[0]) for row in registry_rows]
+            else:
+                product_counts = {
+                    str(row[0]): int(row[1] or 0)
+                    for row in con.execute(
+                        f"""
+                        SELECT
+                            CAST({quote_name('__project_name')} AS VARCHAR) AS project_name,
+                            COUNT(*) AS row_count
+                        FROM {quote_identifier(self.products_table)}
+                        WHERE {quote_name('__project_name')} IS NOT NULL
+                            AND TRIM(CAST({quote_name('__project_name')} AS VARCHAR)) <> ''
+                        GROUP BY {quote_name('__project_name')}
+                        ORDER BY project_name
+                        """
+                    ).fetchall()
+                }
+                registry_counts = {}
+                projects = sorted(product_counts, key=str.lower)
 
         return {
             project_name: QualityDataSource(

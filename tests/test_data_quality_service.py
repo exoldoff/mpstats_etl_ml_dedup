@@ -110,6 +110,28 @@ def _month_from_row(item: dict[str, object]) -> int:
 
 
 class DataQualityServiceTest(unittest.TestCase):
+    def test_quality_project_list_uses_cube_registry_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = write_quality_cube(root, "unit", [row("01", "sku-1", 10), row("01", "sku-2", 12)])
+            with connect(db_path) as con:
+                con.execute(
+                    """
+                    INSERT INTO mpstats_products (
+                        __project_name, __year, __month, __marketplace_code, __category_key,
+                        __source_file, "Дата", "Категория", "SKU", "Продажи, шт"
+                    )
+                    VALUES ('unit', '2025', '1', 'oz', 'extra', 'manual.csv', '01.01.2025', 'Кислота', 'sku-extra', '99')
+                    """
+                )
+
+            projects = make_service(root).list_projects()["projects"]
+            unit = next(project for project in projects if project["project_name"] == "unit")
+
+            self.assertEqual(unit["source_kind"], "cube")
+            self.assertEqual(unit["slice_count"], 1)
+            self.assertEqual(unit["row_count"], 2)
+
     def test_normal_sku_history_is_ok(self) -> None:
         """Стабильная история без скачков не должна шуметь.
 
