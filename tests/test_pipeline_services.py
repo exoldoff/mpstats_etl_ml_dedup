@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
+from classifiers import engine as classifier_engine
 from classifiers.engine import apply_classifiers, default_rules_path
 from pipeline.repositories.file_repository import count_semicolon_csv_rows, read_semicolon_csv, write_semicolon_csv
 from pipeline.services.classification_service import classify_file
@@ -599,6 +600,42 @@ class PipelineServicesTest(unittest.TestCase):
             self.assertEqual(report["applied_rows"].sum(), 2)
             self.assertEqual(result["Подкатегория"].tolist(), ["Мясо", "Прочее"])
 
+    def test_fill_empty_rule_checks_only_empty_target_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            rules_file = root / "rules.csv"
+            rules_file.write_text(
+                "\n".join(
+                    [
+                        "active;priority;category;target_column;match_field;match_type;pattern;set_value;mode;comment;conditions_json",
+                        "1;1;*;Подкатегория;Название;contains;мыло;Авто;fill_empty;;",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            frame = pd.DataFrame(
+                [
+                    {"Категория": "Мыло", "Название": "мыло готовое", "Подкатегория": "Уже заполнено"},
+                    {"Категория": "Мыло", "Название": "мыло пустое", "Подкатегория": ""},
+                    {"Категория": "Мыло", "Название": "мыло без значения", "Подкатегория": pd.NA},
+                ]
+            )
+            checked_lengths: list[int] = []
+            original_build_match_mask = classifier_engine._build_match_mask
+
+            def record_checked_rows(series: pd.Series, match_type: str, pattern: str) -> pd.Series:
+                checked_lengths.append(len(series))
+                return original_build_match_mask(series, match_type, pattern)
+
+            with patch("classifiers.engine._build_match_mask", side_effect=record_checked_rows):
+                result, report = apply_classifiers(frame, rules_file)
+
+            self.assertEqual(checked_lengths, [2])
+            self.assertEqual(int(report.iloc[0]["candidate_rows"]), 2)
+            self.assertEqual(int(report.iloc[0]["applied_rows"]), 2)
+            self.assertEqual(result["Подкатегория"].tolist(), ["Уже заполнено", "Авто", "Авто"])
+
     def test_contains_rule_treats_regex_special_chars_as_literal_text(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -694,7 +731,8 @@ class PipelineServicesTest(unittest.TestCase):
             self.assertEqual(result["Вес lte"].fillna("").tolist(), ["yes", "yes", "", ""])
             self.assertEqual(result["Вес gt"].fillna("").tolist(), ["", "", "yes", ""])
             self.assertEqual(result["Вес gte"].fillna("").tolist(), ["", "yes", "yes", ""])
-            self.assertEqual(report["candidate_rows"].tolist(), [1, 2, 1, 2])
+            self.assertEqual(report["candidate_rows"].tolist(), [4, 4, 4, 4])
+            self.assertEqual(report["applied_rows"].tolist(), [1, 2, 1, 2])
 
     def test_numeric_classifier_rule_rejects_non_numeric_pattern(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -848,7 +886,8 @@ class PipelineServicesTest(unittest.TestCase):
             self.assertEqual(optimized["Сложное"].fillna("").tolist(), ["", "", "Сложное yes", ""])
             self.assertEqual(optimized["Новая колонка"].fillna("").tolist(), ["Создано", "Создано", "", ""])
             contains_report = report.loc[report["row_num"] == 2].iloc[0]
-            self.assertEqual(int(contains_report["candidate_rows"]), 1)
+            self.assertEqual(int(contains_report["candidate_rows"]), 3)
+            self.assertEqual(int(contains_report["applied_rows"]), 1)
             self.assertNotIn(8, report["row_num"].tolist())
 
     def test_slice_category_prefilter_keeps_reachable_category_rules(self) -> None:

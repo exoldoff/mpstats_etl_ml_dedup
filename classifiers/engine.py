@@ -631,7 +631,8 @@ def apply_classifiers(
         if write_only_empty:
             base_mask = base_mask & target_empty(target_column)
 
-        if base_mask.any():
+        candidate_rows = int(base_mask.sum())
+        if candidate_rows > 0:
             match_mask = _build_rule_mask(
                 out.loc[base_mask],
                 row_num=row_num,
@@ -646,9 +647,8 @@ def apply_classifiers(
             mask = pd.Series(False, index=out.index)
             reason = "no_candidate_rows"
 
-        candidate_rows = int(mask.sum())
         write_mask = mask
-        applied_rows = candidate_rows
+        applied_rows = int(write_mask.sum())
         if applied_rows > 0:
             out.loc[write_mask, target_column] = rule.set_value
             if target_column in target_empty_cache:
