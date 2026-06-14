@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import pandas as pd
 
-from research.dedup.annotator import _item_summary, apply_label, clear_label, labeled_count, next_unlabeled_index
+from research.dedup.annotator import (
+    _item_summary,
+    _signal_summary,
+    apply_label,
+    clear_label,
+    labeled_count,
+    next_unlabeled_index,
+)
 
 
 def test_apply_label_and_count() -> None:
@@ -43,7 +50,27 @@ def test_item_summary_includes_marketplace_and_pack_fields() -> None:
         }
     )
 
-    identity, pack_info = _item_summary(row, "a")
+    summary = _item_summary(row, "a")
 
-    assert identity == "sku=123 | marketplace=Ozon | brand=Brand"
-    assert pack_info == "unit=0.5 | total=3.0 | multipack=6"
+    assert summary == "Ozon | sku 123 | brand Brand | unit 0.5 | total 3.0 | x6"
+
+
+def test_signal_summary_uses_russian_flag_labels() -> None:
+    row = pd.Series(
+        {
+            "candidate_source": "faiss_embedding_topk",
+            "candidate_rank": 3,
+            "embedding_similarity_score": 0.98,
+            "labeling_stratum": "pack_variant_candidate",
+            "is_cross_marketplace_pair": True,
+            "is_hard_negative_candidate": False,
+            "is_pack_variant_candidate": True,
+        }
+    )
+
+    summary = _signal_summary(row)
+
+    assert "источник=faiss_embedding_topk" in summary
+    assert "межмаркетплейс=да" in summary
+    assert "сложный негатив=нет" in summary
+    assert "вариант упаковки=да" in summary

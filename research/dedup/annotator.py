@@ -97,16 +97,37 @@ def _first_cell(row: pd.Series, *columns: str) -> str:
     return "-"
 
 
-def _item_summary(row: pd.Series, side: str) -> tuple[str, str]:
+def _yes_no(value: str) -> str:
+    normalized = value.strip().casefold()
+    if normalized in {"true", "1", "yes", "y"}:
+        return "да"
+    if normalized in {"false", "0", "no", "n"}:
+        return "нет"
+    return value or "-"
+
+
+def _item_summary(row: pd.Series, side: str) -> str:
     marketplace = _first_cell(row, f"marketplace_{side}")
     sku = _first_cell(row, f"sku_{side}")
     brand = _first_cell(row, f"brand_{side}")
     unit = _first_cell(row, f"unit_amount_{side}")
     total = _first_cell(row, f"total_amount_{side}")
     pack = _first_cell(row, f"multipack_count_{side}")
-    identity = f"sku={sku} | marketplace={marketplace} | brand={brand}"
-    pack_info = f"unit={unit} | total={total} | multipack={pack}"
-    return identity, pack_info
+    return f"{marketplace} | sku {sku} | brand {brand} | unit {unit} | total {total} | x{pack}"
+
+
+def _signal_summary(row: pd.Series) -> str:
+    source = _first_cell(row, "candidate_source")
+    rank = _first_cell(row, "candidate_rank")
+    score = _first_cell(row, "embedding_similarity_score", "baseline_similarity_score")
+    stratum = _first_cell(row, "labeling_stratum")
+    cross = _yes_no(_cell(row, "is_cross_marketplace_pair"))
+    hard_negative = _yes_no(_cell(row, "is_hard_negative_candidate"))
+    pack_variant = _yes_no(_cell(row, "is_pack_variant_candidate"))
+    return (
+        f"источник={source} | rank={rank} | score={score} | стратегия={stratum} | "
+        f"межмаркетплейс={cross} | сложный негатив={hard_negative} | вариант упаковки={pack_variant}"
+    )
 
 
 def _add_line(screen: curses.window, y: int, text: str, attr: int = 0) -> int:
@@ -138,7 +159,6 @@ def _render(screen: curses.window, frame: pd.DataFrame, row_index: int, csv_path
     done = labeled_count(frame)
     current_label = _cell(row, "label") or "<empty>"
     title_attr = curses.A_BOLD
-    section_attr = curses.A_BOLD
 
     y = 0
     y = _add_line(
@@ -150,47 +170,17 @@ def _render(screen: curses.window, frame: pd.DataFrame, row_index: int, csv_path
     y = _add_line(screen, y, f"CSV: {csv_path}")
     y = _add_line(screen, y, "-" * (width - 1))
 
-    y = _add_line(screen, y, "PAIR", section_attr)
-    y = _add_wrapped(screen, y, "  A title: ", _cell(row, "title_a"), title_attr)
-    y = _add_wrapped(screen, y, "  B title: ", _cell(row, "title_b"), title_attr)
+    y = _add_wrapped(screen, y, "A  ", _cell(row, "title_a"), title_attr)
+    y = _add_wrapped(screen, y, "   ", _item_summary(row, "a"))
+    y = _add_line(screen, y, "")
+    y = _add_wrapped(screen, y, "B  ", _cell(row, "title_b"), title_attr)
+    y = _add_wrapped(screen, y, "   ", _item_summary(row, "b"))
     y = _add_line(screen, y, "")
 
-    a_identity, a_pack = _item_summary(row, "a")
-    b_identity, b_pack = _item_summary(row, "b")
-    y = _add_line(screen, y, "ITEMS", section_attr)
-    y = _add_wrapped(screen, y, "  A: ", a_identity)
-    y = _add_wrapped(screen, y, "     ", a_pack)
-    y = _add_wrapped(screen, y, "  B: ", b_identity)
-    y = _add_wrapped(screen, y, "     ", b_pack)
-    y = _add_line(screen, y, "")
-
-    y = _add_line(screen, y, "RETRIEVAL", section_attr)
-    y = _add_wrapped(
-        screen,
-        y,
-        "  ",
-        (
-            f"source={_first_cell(row, 'candidate_source')} | "
-            f"rank={_first_cell(row, 'candidate_rank')} | "
-            f"embedding_score={_first_cell(row, 'embedding_similarity_score', 'baseline_similarity_score')} | "
-            f"baseline_score={_first_cell(row, 'baseline_similarity_score')}"
-        ),
-    )
-    y = _add_line(screen, y, "FLAGS", section_attr)
-    y = _add_wrapped(
-        screen,
-        y,
-        "  ",
-        (
-            f"stratum={_cell(row, 'labeling_stratum')} | "
-            f"cross_marketplace={_cell(row, 'is_cross_marketplace_pair')} | "
-            f"hard_negative={_cell(row, 'is_hard_negative_candidate')} | "
-            f"pack_variant={_cell(row, 'is_pack_variant_candidate')}"
-        ),
-    )
+    y = _add_wrapped(screen, y, "Сигналы: ", _signal_summary(row))
     notes = _cell(row, "notes")
     if notes:
-        y = _add_wrapped(screen, y, "Notes: ", notes)
+        y = _add_wrapped(screen, y, "Заметка: ", notes)
 
     while y < height - 5:
         y = _add_line(screen, y, "")
