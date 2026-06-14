@@ -8,6 +8,7 @@ from research.dedup import (
     classification_report_df,
     generate_candidate_pairs,
     normalize_title,
+    prepare_product_records,
 )
 
 
@@ -28,6 +29,49 @@ def test_candidate_generation_keeps_brand_as_feature_not_filter() -> None:
     assert not matching_pair.empty
     assert matching_pair.iloc[0]["brand_a"] == "A"
     assert matching_pair.iloc[0]["brand_b"] == "B"
+
+
+def test_product_records_use_marketplace_article_key_not_article_only() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "Маркетплейс": "WB",
+                "Артикул": "100",
+                "месяц": "2026-01",
+                "SKU": "Соус томатный острый 200 г",
+                "Бренд": "A",
+                "Вес, кг (ед.)": 0.2,
+                "Вес, кг": 0.2,
+            },
+            {
+                "Маркетплейс": "WB",
+                "Артикул": "100",
+                "месяц": "2026-02",
+                "SKU": "Соус томатный острый 200 г",
+                "Бренд": "A",
+                "Вес, кг (ед.)": 0.2,
+                "Вес, кг": 0.2,
+            },
+            {
+                "Маркетплейс": "Ozon",
+                "Артикул": "100",
+                "месяц": "2026-01",
+                "SKU": "Соус томатный острый 200 г",
+                "Бренд": "A",
+                "Вес, кг (ед.)": 0.2,
+                "Вес, кг": 0.2,
+            },
+        ]
+    )
+
+    records = prepare_product_records(df)
+    pairs = generate_candidate_pairs(df, CandidateGenerationConfig(min_similarity=0.4, max_candidates=None))
+
+    assert len(records) == 2
+    assert set(records["raw_record_id"]) == {"wb::100", "ozon::100"}
+    assert not pairs.empty
+    assert bool(pairs.iloc[0]["is_cross_marketplace_pair"]) is True
+    assert pairs.iloc[0]["sku_a"] == pairs.iloc[0]["sku_b"] == "100"
 
 
 def test_hard_negative_same_brand_weight_different_flavor() -> None:

@@ -6,6 +6,7 @@ This package is intentionally independent from ``pipeline/`` and
 
 from .candidates import (
     CandidateGenerationConfig,
+    add_cross_marketplace_flags,
     add_hard_negative_flags,
     add_pack_variant_flags,
     generate_candidate_pairs,
@@ -34,6 +35,7 @@ __all__ = [
     "PAIR_LABELS",
     "PairMatcher",
     "RuleBasedMatcher",
+    "add_cross_marketplace_flags",
     "add_hard_negative_flags",
     "add_pack_variant_flags",
     "classification_report_df",

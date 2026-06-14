@@ -18,6 +18,12 @@ from .normalization import (
 
 
 CANDIDATE_OUTPUT_COLUMNS = [
+    "raw_record_id_a",
+    "raw_record_id_b",
+    "marketplace_a",
+    "marketplace_b",
+    "marketplaces_a",
+    "marketplaces_b",
     "sku_a",
     "sku_b",
     "title_a",
@@ -31,6 +37,7 @@ CANDIDATE_OUTPUT_COLUMNS = [
     "multipack_count_a",
     "multipack_count_b",
     "baseline_similarity_score",
+    "is_cross_marketplace_pair",
     "is_hard_negative_candidate",
 ]
 
@@ -39,6 +46,7 @@ CANDIDATE_OUTPUT_COLUMNS = [
 class CandidateGenerationConfig:
     title_col: str | None = None
     sku_col: str | None = None
+    marketplace_col: str | None = None
     brand_col: str | None = None
     unit_amount_col: str | None = None
     total_amount_col: str | None = None
@@ -76,6 +84,35 @@ def _first_present(series: pd.Series) -> object:
     return text_non_empty.iloc[0]
 
 
+def _unique_text_values(series: pd.Series) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for value in series.dropna():
+        text = str(value).strip()
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        values.append(text)
+        seen.add(key)
+    return values
+
+
+def _marketplace_key(value: object) -> str:
+    if value is None:
+        return "unknown_marketplace"
+    try:
+        if bool(value != value):
+            return "unknown_marketplace"
+    except TypeError:
+        return "unknown_marketplace"
+    text = str(value).casefold().strip()
+    if not text:
+        return "unknown_marketplace"
+    return " ".join(text.split())
+
+
 def _to_number(value: object) -> float | None:
     if value is None:
         return None
@@ -106,10 +143,16 @@ def prepare_product_records(
     products_df: pd.DataFrame,
     config: CandidateGenerationConfig | None = None,
 ) -> pd.DataFrame:
-    """Normalize the classified mpstats product slice into one row per SKU."""
+    """Normalize the classified mpstats product slice into marketplace+SKU records."""
     cfg = config or CandidateGenerationConfig()
     title_col = _resolve_column(products_df, cfg.title_col, ["SKU", "Название", "title", "name"], required=True)
     sku_col = _resolve_column(products_df, cfg.sku_col, ["Артикул", "sku_id", "id", "article"], required=False)
+    marketplace_col = _resolve_column(
+        products_df,
+        cfg.marketplace_col,
+        ["Маркетплейс", "__marketplace_code", "marketplace", "marketplace_code"],
+        required=False,
+    )
     brand_col = _resolve_column(products_df, cfg.brand_col, ["Бренд", "brand"], required=False)
     unit_col = _resolve_column(
         products_df,
@@ -130,14 +173,26 @@ def prepare_product_records(
         required=False,
     )
 
+    sku_values = (
+        products_df[sku_col]
+        if sku_col
+        else pd.Series([f"row_{idx}" for idx in products_df.index], index=products_df.index)
+    )
+    marketplace_values = (
+        products_df[marketplace_col]
+        if marketplace_col
+        else pd.Series(["unknown_marketplace"] * len(products_df), index=products_df.index)
+    )
     records = pd.DataFrame(
         {
-            "sku": products_df[sku_col].astype(str) if sku_col else [f"row_{idx}" for idx in products_df.index],
+            "sku": sku_values,
+            "marketplace": marketplace_values,
             "title": products_df[title_col],
             "brand": products_df[brand_col] if brand_col else "",
             "unit_amount": pd.to_numeric(products_df[unit_col], errors="coerce") if unit_col else pd.NA,
             "total_amount": pd.to_numeric(products_df[total_col], errors="coerce") if total_col else pd.NA,
-        }
+        },
+        index=products_df.index,
     )
     if multipack_col:
         records["multipack_count"] = pd.to_numeric(products_df[multipack_col], errors="coerce")
@@ -151,11 +206,18 @@ def prepare_product_records(
     records = records[records["title"].ne("")].copy()
     records["sku"] = records["sku"].fillna("").astype(str).str.strip()
     records.loc[records["sku"].eq(""), "sku"] = [f"row_{idx}" for idx in records.index[records["sku"].eq("")]]
+    records["marketplace"] = records["marketplace"].fillna("").astype(str).str.strip()
+    records.loc[records["marketplace"].eq(""), "marketplace"] = "unknown_marketplace"
+    records["marketplace_key"] = records["marketplace"].map(_marketplace_key)
+    records["raw_record_id"] = records["marketplace_key"] + "::" + records["sku"]
     records["brand"] = records["brand"].fillna("").astype(str).str.strip()
 
     grouped = (
-        records.groupby("sku", as_index=False)
+        records.groupby("raw_record_id", as_index=False)
         .agg(
+            sku=("sku", _first_present),
+            marketplace=("marketplace", _first_present),
+            marketplaces=("marketplace", _unique_text_values),
             title=("title", _first_present),
             brand=("brand", _first_present),
             unit_amount=("unit_amount", _first_present),
@@ -211,6 +273,12 @@ def _candidate_pair_rows(records: pd.DataFrame, cfg: CandidateGenerationConfig) 
             continue
         rows.append(
             {
+                "raw_record_id_a": left["raw_record_id"],
+                "raw_record_id_b": right["raw_record_id"],
+                "marketplace_a": left["marketplace"],
+                "marketplace_b": right["marketplace"],
+                "marketplaces_a": left["marketplaces"],
+                "marketplaces_b": right["marketplaces"],
                 "sku_a": left["sku"],
                 "sku_b": right["sku"],
                 "title_a": left["title"],
@@ -228,6 +296,22 @@ def _candidate_pair_rows(records: pd.DataFrame, cfg: CandidateGenerationConfig) 
             }
         )
     return rows
+
+
+def add_cross_marketplace_flags(pairs_df: pd.DataFrame) -> pd.DataFrame:
+    """Mark candidate pairs whose left/right records come from different marketplaces."""
+    result = pairs_df.copy()
+    if result.empty:
+        result["is_cross_marketplace_pair"] = pd.Series(dtype=bool)
+        return result
+
+    def is_cross_marketplace(row: pd.Series) -> bool:
+        left = _marketplace_key(row.get("marketplace_a"))
+        right = _marketplace_key(row.get("marketplace_b"))
+        return left != "unknown_marketplace" and right != "unknown_marketplace" and left != right
+
+    result["is_cross_marketplace_pair"] = result.apply(is_cross_marketplace, axis=1)
+    return result
 
 
 def _numbers_close(left: object, right: object, *, abs_tol: float, rel_tol: float) -> bool:
@@ -355,10 +439,11 @@ def generate_candidate_pairs(
     if pairs.empty:
         return pd.DataFrame(columns=CANDIDATE_OUTPUT_COLUMNS)
 
+    pairs = add_cross_marketplace_flags(pairs)
     pairs = add_hard_negative_flags(pairs, cfg)
     pairs = pairs.sort_values(
-        ["baseline_similarity_score", "shared_title_tokens_count", "sku_a", "sku_b"],
-        ascending=[False, False, True, True],
+        ["baseline_similarity_score", "shared_title_tokens_count", "marketplace_a", "sku_a", "marketplace_b", "sku_b"],
+        ascending=[False, False, True, True, True, True],
     ).reset_index(drop=True)
     if cfg.max_candidates is not None:
         pairs = pairs.head(cfg.max_candidates).copy()

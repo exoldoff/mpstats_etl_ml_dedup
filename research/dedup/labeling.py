@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from .candidates import add_pack_variant_flags
+from .candidates import add_cross_marketplace_flags, add_pack_variant_flags
 
 
 @dataclass(frozen=True)
@@ -18,18 +18,30 @@ class LabelingSamplingConfig:
 
 
 DEFAULT_STRATA_SHARES = {
-    "hard_negative_candidate": 0.25,
-    "pack_variant_candidate": 0.20,
-    "high_similarity": 0.25,
-    "medium_similarity": 0.20,
-    "random_easy_negative": 0.10,
+    "cross_marketplace_candidate": 0.20,
+    "hard_negative_candidate": 0.20,
+    "pack_variant_candidate": 0.18,
+    "high_similarity": 0.22,
+    "medium_similarity": 0.15,
+    "random_easy_negative": 0.05,
 }
 
 
 def _pair_key(row: pd.Series) -> str:
-    left = str(row.get("sku_a"))
-    right = str(row.get("sku_b"))
+    left = _clean_pair_key(row.get("raw_record_id_a")) or _clean_pair_key(row.get("sku_a"))
+    right = _clean_pair_key(row.get("raw_record_id_b")) or _clean_pair_key(row.get("sku_b"))
     return "||".join(sorted([left, right]))
+
+
+def _clean_pair_key(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if bool(value != value):
+            return ""
+    except TypeError:
+        return ""
+    return str(value).strip()
 
 
 def _quota_counts(target_size: int) -> dict[str, int]:
@@ -67,11 +79,14 @@ def stratified_labeling_sample(
     candidates = candidates_df.copy()
     if "is_pack_variant_candidate" not in candidates.columns:
         candidates = add_pack_variant_flags(candidates)
+    if "is_cross_marketplace_pair" not in candidates.columns:
+        candidates = add_cross_marketplace_flags(candidates)
     candidates["_pair_key"] = candidates.apply(_pair_key, axis=1)
 
     score = pd.to_numeric(candidates["baseline_similarity_score"], errors="coerce").fillna(0.0)
     quotas = _quota_counts(cfg.target_size)
     pools = {
+        "cross_marketplace_candidate": candidates[candidates["is_cross_marketplace_pair"].fillna(False)],
         "hard_negative_candidate": candidates[candidates["is_hard_negative_candidate"].fillna(False)],
         "pack_variant_candidate": candidates[candidates["is_pack_variant_candidate"].fillna(False)],
         "high_similarity": candidates[score >= cfg.high_similarity_threshold],
