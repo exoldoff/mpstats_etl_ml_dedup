@@ -17,6 +17,7 @@
 | `README.md` | краткий обзор | запуск, структура, состояние проекта |
 | `docs/AI_INDEX.md` | индекс для агентов | всегда после `AGENTS.md` |
 | `docs/USER_GUIDE.md` | пользовательская инструкция web-app | изменения UI, workflow, расчётов, статусов, справочника, классификатора |
+| `docs/ARCHITECTURE_PROGRESS.md` | research-журнал к архитектуре | статус dedup research-этапов, артефакты, проверки, следующий шаг |
 | `filter.md` | справочник MPStats-фильтров | задачи с `filterModel` и CSV-колонкой `Фильтр` |
 | `.cursor/agents/mpstats-tasks-handbook.md` | узкий handbook | обновление `TASKS` из CSV-справочника |
 | `справочник tasks архив.md` | append-only архив | после обновления `TASKS`, только дописывать недостающие задачи |
