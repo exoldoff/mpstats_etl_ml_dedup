@@ -72,7 +72,8 @@ Research-код остаётся независимым: `research/dedup/` не 
 
 | Файл/папка | Роль |
 | --- | --- |
-| `research/dedup/candidates.py` | product records, candidate generation, hard-negative и cross-marketplace flags |
+| `research/dedup/candidates.py` | product records и вспомогательные feature-флаги для candidate pairs |
+| `research/dedup/embedding_candidates.py` | FAISS top-k candidate generation по dense embeddings |
 | `research/dedup/labeling.py` | stratified sampling для ручной разметки gold-set |
 | `research/dedup/metrics.py` | dependency-light classification report и confusion matrix |
 | `research/dedup/fusion.py` | research fusion по архитектуре |
@@ -81,7 +82,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `research/dedup/tests/` | узкие тесты research-модулей |
 | `research/dedup/data/` | локальные CSV-артефакты, игнорируются `.gitignore` |
 | `notebooks/00_eda.ipynb` | EDA по `Соусы` |
-| `notebooks/01_candidate_generation.ipynb` | генерация `candidates_sauces.csv` |
+| `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking, генерация `candidates_sauces.csv` |
 | `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_sauces.csv` |
 | `notebooks/03_matching_comparison.ipynb` | сравнение baseline A/B на размеченном gold-set |
 | `notebooks/04_clustering_resolution.ipynb` | запланировано: graph resolution |
@@ -89,9 +90,10 @@ Research-код остаётся независимым: `research/dedup/` не 
 
 Текущие локальные CSV после последнего research-этапа:
 
-- `research/dedup/data/candidates_sauces.csv` — 60 381 пар, 28 885
-  cross-marketplace.
-- `research/dedup/data/labeling_sauces.csv` — 400 пар, 205 cross-marketplace.
+- `research/dedup/data/candidates_sauces.csv` — 60 000 пар из
+  `faiss_embedding_topk`, 25 093 cross-marketplace.
+- `research/dedup/data/labeling_sauces.csv` — 400 пар из
+  `faiss_embedding_topk`, 216 cross-marketplace.
 
 Эти CSV — рабочие данные, они не коммитятся.
 
@@ -103,7 +105,10 @@ Research-код остаётся независимым: `research/dedup/` не 
 
 - `00_eda.ipynb` по категории `Соусы`.
 - Candidate generation по `marketplace + Артикул`, без потери
-  cross-marketplace дублей.
+  cross-marketplace дублей: primary blocking теперь идёт через dense
+  embeddings + FAISS top-k. Default notebook-модель:
+  `intfloat/multilingual-e5-small`; заменить можно через
+  `DEDUP_EMBEDDING_MODEL`.
 - Stratified labeling dataset с отдельной стратой
   `cross_marketplace_candidate`.
 - Baseline matching scaffold:
@@ -187,6 +192,13 @@ python3 -m compileall research/dedup
 ```
 
 Notebook smoke через `nbclient`:
+
+Для `notebooks/01_candidate_generation.ipynb` предварительно нужны research
+dependencies:
+
+```bash
+python3 -m pip install -r requirements-research.txt
+```
 
 ```bash
 python3 - <<'PY'

@@ -12,6 +12,11 @@ from .candidates import (
     generate_candidate_pairs,
     prepare_product_records,
 )
+from .embedding_candidates import (
+    FAISS_CANDIDATE_OUTPUT_COLUMNS,
+    FaissCandidateGenerationConfig,
+    generate_faiss_candidate_pairs,
+)
 from .labeling import LabelingSamplingConfig, stratified_labeling_sample
 from .fusion import FusionConfig, decide_label
 from .matchers import BiEncoderMatcher, MatcherStatus, PAIR_LABELS, PairMatcher, RuleBasedMatcher
@@ -29,7 +34,9 @@ __all__ = [
     "CandidateGenerationConfig",
     "BiEncoderMatcher",
     "DEFAULT_FLAVOR_TOKENS",
+    "FAISS_CANDIDATE_OUTPUT_COLUMNS",
     "FusionConfig",
+    "FaissCandidateGenerationConfig",
     "LabelingSamplingConfig",
     "MatcherStatus",
     "PAIR_LABELS",
@@ -41,6 +48,7 @@ __all__ = [
     "classification_report_df",
     "confusion_matrix_df",
     "decide_label",
+    "generate_faiss_candidate_pairs",
     "generate_candidate_pairs",
     "meaningful_title_tokens",
     "normalize_brand",

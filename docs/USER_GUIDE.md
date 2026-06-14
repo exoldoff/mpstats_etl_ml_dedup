@@ -1345,8 +1345,18 @@ XLSX/CSV из `Данные` -> `Выгрузка` лежат в папке `exp
 Этот сценарий не относится к основному web-приложению и нужен только для
 исследовательского gold-set по дедупликации категории `Соусы`.
 
-После выполнения `notebooks/01_candidate_generation.ipynb` и
-`notebooks/02_labeling_dataset.ipynb` запустите терминальный аннотатор:
+Перед выполнением research-ноутбуков установите зависимости для embedding
+blocking:
+
+```bash
+python3 -m pip install -r requirements-research.txt
+```
+
+`notebooks/01_candidate_generation.ipynb` строит пары-кандидаты через dense
+embeddings и FAISS top-k. Затем `notebooks/02_labeling_dataset.ipynb` выбирает
+из них CSV для ручной разметки.
+
+После выполнения этих двух ноутбуков запустите терминальный аннотатор:
 
 ```bash
 python3 -m research.dedup.annotator

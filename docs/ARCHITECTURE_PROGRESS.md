@@ -15,8 +15,67 @@
 - Scope: категория `Соусы`, research-only.
 - Главная ветка работ: кандидаты -> ручная разметка gold-set -> сравнение
   matching engines -> кластеризация.
+- Primary blocking для `01_candidate_generation.ipynb` теперь соответствует
+  целевой архитектуре: dense embeddings -> FAISS top-k.
 - Текущий блокер для метрик: нужна ручная разметка
   `research/dedup/data/labeling_sauces.csv`.
+
+## 2026-06-23 — FAISS embedding candidate generation
+
+### Зачем
+
+Первичный blocking должен соответствовать архитектурной схеме: не lexical
+эвристики как основной поиск, а top-k ближайших соседей по dense embeddings.
+Rule/fuzzy logic остаётся для baseline matching и вспомогательных feature-флагов,
+но не формирует основной список candidate pairs.
+
+### Что сделано
+
+- Добавлен `research/dedup/embedding_candidates.py`:
+  - принимает `product_records` и aligned embeddings;
+  - нормализует vectors;
+  - строит FAISS `IndexFlatIP`;
+  - ищет top-k соседей;
+  - сохраняет совместимый pairwise contract для `02_labeling_dataset.ipynb`
+    и `03_matching_comparison.ipynb`.
+- `notebooks/01_candidate_generation.ipynb` переписан на flow:
+  `SentenceTransformer` -> embeddings -> FAISS top-k -> `candidates_sauces.csv`.
+- Default local model для notebook: `intfloat/multilingual-e5-small`; модель
+  можно заменить через `DEDUP_EMBEDDING_MODEL`.
+- Для smoke/debug добавлены `DEDUP_FAISS_RECORD_LIMIT` и
+  `DEDUP_CANDIDATES_PATH`, чтобы проверять flow без перезаписи основного CSV.
+- `baseline_similarity_score` в CSV оставлен для совместимости, но теперь равен
+  `embedding_similarity_score`.
+- Добавлен `requirements-research.txt` для notebook-зависимостей:
+  `faiss-cpu`, `sentence-transformers`.
+- Добавлен unit-test FAISS top-k логики через fake FAISS backend, чтобы тесты
+  не скачивали модель.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests` — 16 passed.
+- `python3 -m compileall research/dedup` — ok.
+- `git diff --check` — ok.
+- `nbclient` на `notebooks/01_candidate_generation.ipynb` с
+  `DEDUP_FAISS_RECORD_LIMIT=300`, `DEDUP_FAISS_TOP_K=10`,
+  `DEDUP_FAISS_MAX_CANDIDATES=1000`,
+  `DEDUP_CANDIDATES_PATH=research/dedup/data/candidates_sauces_smoke.csv` —
+  ok, 1000 candidate pairs, `candidate_source=faiss_embedding_topk`.
+- `nbclient` на полном `notebooks/01_candidate_generation.ipynb` —
+  ok, локально перегенерировано 60 000 candidate pairs, 25 093
+  cross-marketplace, `candidate_source=faiss_embedding_topk`.
+- `nbclient` на `notebooks/02_labeling_dataset.ipynb` — ok, локально
+  перегенерировано 400 labeling pairs, 216 cross-marketplace,
+  `candidate_source=faiss_embedding_topk`, `label` пустой для ручной разметки.
+- На локальном Python 3.13/macOS важно импортировать `faiss` до
+  `sentence-transformers`/`torch`; обратный порядок давал native crash
+  (`exit 139`). Notebook фиксирует этот порядок.
+
+### Следующий шаг
+
+Разметить `research/dedup/data/labeling_sauces.csv`, затем запускать
+`notebooks/03_matching_comparison.ipynb` для сравнения pairwise methods на
+FAISS-based gold-set.
 
 ## 2026-06-23 — Cross-marketplace candidate generation
 
