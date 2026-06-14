@@ -1366,6 +1366,10 @@ python3 -m research.dedup.annotator
 `research/dedup/data/labeling_sauces.csv`. Можно передать другой CSV первым
 аргументом.
 
+На экране аннотатор показывает оба title, SKU, marketplace, brand,
+unit/total/multipack, а также FAISS-поля `candidate_source`,
+`candidate_rank`, `embedding_similarity_score` и флаги страт.
+
 Горячие клавиши:
 
 - `w` — `exact_duplicate`;

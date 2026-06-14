@@ -89,6 +89,26 @@ def _cell(row: pd.Series, column: str) -> str:
     return normalize_label_value(row.get(column, ""))
 
 
+def _first_cell(row: pd.Series, *columns: str) -> str:
+    for column in columns:
+        value = _cell(row, column)
+        if value:
+            return value
+    return "-"
+
+
+def _item_summary(row: pd.Series, side: str) -> tuple[str, str]:
+    marketplace = _first_cell(row, f"marketplace_{side}")
+    sku = _first_cell(row, f"sku_{side}")
+    brand = _first_cell(row, f"brand_{side}")
+    unit = _first_cell(row, f"unit_amount_{side}")
+    total = _first_cell(row, f"total_amount_{side}")
+    pack = _first_cell(row, f"multipack_count_{side}")
+    identity = f"sku={sku} | marketplace={marketplace} | brand={brand}"
+    pack_info = f"unit={unit} | total={total} | multipack={pack}"
+    return identity, pack_info
+
+
 def _add_line(screen: curses.window, y: int, text: str, attr: int = 0) -> int:
     height, width = screen.getmaxyx()
     if y >= height - 1:
@@ -118,26 +138,52 @@ def _render(screen: curses.window, frame: pd.DataFrame, row_index: int, csv_path
     done = labeled_count(frame)
     current_label = _cell(row, "label") or "<empty>"
     title_attr = curses.A_BOLD
+    section_attr = curses.A_BOLD
 
     y = 0
-    y = _add_line(screen, y, f"SKU dedup annotator | row {row_index + 1}/{len(frame)} | labeled {done}/{len(frame)}", title_attr)
+    y = _add_line(
+        screen,
+        y,
+        f"SKU dedup annotator | row {row_index + 1}/{len(frame)} | labeled {done}/{len(frame)} | label {current_label}",
+        title_attr,
+    )
     y = _add_line(screen, y, f"CSV: {csv_path}")
-    y = _add_line(screen, y, f"Current label: {current_label}")
     y = _add_line(screen, y, "-" * (width - 1))
 
-    y = _add_wrapped(screen, y, "A title: ", _cell(row, "title_a"), title_attr)
-    y = _add_wrapped(screen, y, "B title: ", _cell(row, "title_b"), title_attr)
+    y = _add_line(screen, y, "PAIR", section_attr)
+    y = _add_wrapped(screen, y, "  A title: ", _cell(row, "title_a"), title_attr)
+    y = _add_wrapped(screen, y, "  B title: ", _cell(row, "title_b"), title_attr)
     y = _add_line(screen, y, "")
-    y = _add_wrapped(screen, y, "A: ", f"sku={_cell(row, 'sku_a')} | brand={_cell(row, 'brand_a')} | unit={_cell(row, 'unit_amount_a')} | total={_cell(row, 'total_amount_a')} | pack={_cell(row, 'multipack_count_a')}")
-    y = _add_wrapped(screen, y, "B: ", f"sku={_cell(row, 'sku_b')} | brand={_cell(row, 'brand_b')} | unit={_cell(row, 'unit_amount_b')} | total={_cell(row, 'total_amount_b')} | pack={_cell(row, 'multipack_count_b')}")
+
+    a_identity, a_pack = _item_summary(row, "a")
+    b_identity, b_pack = _item_summary(row, "b")
+    y = _add_line(screen, y, "ITEMS", section_attr)
+    y = _add_wrapped(screen, y, "  A: ", a_identity)
+    y = _add_wrapped(screen, y, "     ", a_pack)
+    y = _add_wrapped(screen, y, "  B: ", b_identity)
+    y = _add_wrapped(screen, y, "     ", b_pack)
     y = _add_line(screen, y, "")
+
+    y = _add_line(screen, y, "RETRIEVAL", section_attr)
     y = _add_wrapped(
         screen,
         y,
-        "Signals: ",
+        "  ",
+        (
+            f"source={_first_cell(row, 'candidate_source')} | "
+            f"rank={_first_cell(row, 'candidate_rank')} | "
+            f"embedding_score={_first_cell(row, 'embedding_similarity_score', 'baseline_similarity_score')} | "
+            f"baseline_score={_first_cell(row, 'baseline_similarity_score')}"
+        ),
+    )
+    y = _add_line(screen, y, "FLAGS", section_attr)
+    y = _add_wrapped(
+        screen,
+        y,
+        "  ",
         (
             f"stratum={_cell(row, 'labeling_stratum')} | "
-            f"score={_cell(row, 'baseline_similarity_score')} | "
+            f"cross_marketplace={_cell(row, 'is_cross_marketplace_pair')} | "
             f"hard_negative={_cell(row, 'is_hard_negative_candidate')} | "
             f"pack_variant={_cell(row, 'is_pack_variant_candidate')}"
         ),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from research.dedup.annotator import apply_label, clear_label, labeled_count, next_unlabeled_index
+from research.dedup.annotator import _item_summary, apply_label, clear_label, labeled_count, next_unlabeled_index
 
 
 def test_apply_label_and_count() -> None:
@@ -29,3 +29,21 @@ def test_clear_label() -> None:
     clear_label(frame, 0)
 
     assert frame.at[0, "label"] == ""
+
+
+def test_item_summary_includes_marketplace_and_pack_fields() -> None:
+    row = pd.Series(
+        {
+            "sku_a": "123",
+            "marketplace_a": "Ozon",
+            "brand_a": "Brand",
+            "unit_amount_a": 0.5,
+            "total_amount_a": 3.0,
+            "multipack_count_a": 6,
+        }
+    )
+
+    identity, pack_info = _item_summary(row, "a")
+
+    assert identity == "sku=123 | marketplace=Ozon | brand=Brand"
+    assert pack_info == "unit=0.5 | total=3.0 | multipack=6"
