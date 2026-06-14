@@ -12,6 +12,8 @@ from .candidates import (
     prepare_product_records,
 )
 from .labeling import LabelingSamplingConfig, stratified_labeling_sample
+from .fusion import FusionConfig, decide_label
+from .matchers import BiEncoderMatcher, MatcherStatus, PAIR_LABELS, PairMatcher, RuleBasedMatcher
 from .metrics import classification_report_df, confusion_matrix_df
 from .normalization import (
     DEFAULT_FLAVOR_TOKENS,
@@ -24,12 +26,19 @@ from .normalization import (
 
 __all__ = [
     "CandidateGenerationConfig",
+    "BiEncoderMatcher",
     "DEFAULT_FLAVOR_TOKENS",
+    "FusionConfig",
     "LabelingSamplingConfig",
+    "MatcherStatus",
+    "PAIR_LABELS",
+    "PairMatcher",
+    "RuleBasedMatcher",
     "add_hard_negative_flags",
     "add_pack_variant_flags",
     "classification_report_df",
     "confusion_matrix_df",
+    "decide_label",
     "generate_candidate_pairs",
     "meaningful_title_tokens",
     "normalize_brand",
