@@ -1424,14 +1424,26 @@ Cross-encoder — более внимательная проверка пары,
 `matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
 `matching_false_merges_sauces.csv`.
 
-В конце `03_matching_comparison.ipynb` есть мини-бенчмарк тяжёлых
-reranker-моделей: `Qwen/Qwen3-Reranker-4B` и `jinaai/jina-reranker-v3`.
-Он не меняет основные `matching_*` CSV, а сохраняет отдельные файлы
-`reranker_benchmark_summary_sauces.csv` и
-`reranker_benchmark_predictions_sauces.csv`.
+В конце `03_matching_comparison.ipynb` есть общий benchmark всех текущих
+matching-моделей на одном и том же срезе:
+
+- `rule_based_fuzzy`;
+- `bi_encoder_zero_shot`;
+- `cross_encoder_zero_shot`;
+- `reranker_qwen3_4b`;
+- `reranker_jina_v3`.
+
+Он не меняет основные `matching_*` CSV. Главные файлы для выбора лучшего
+решения:
+
+- `all_model_benchmark_summary_sauces.csv`;
+- `all_model_benchmark_predictions_sauces.csv`.
+
+Отдельные `reranker_benchmark_*` CSV тоже сохраняются, но они нужны только
+если хочется посмотреть новые reranker-модели отдельно от старых baseline.
 
 Запуск теперь обычный: откройте notebook, найдите ячейку
-`Блок кода 16. Настройки reranker-бенчмарка`, поменяйте значения прямо в
+`Блок кода 16. Настройки общего бенчмарка`, поменяйте значения прямо в
 ней и запустите следующие ячейки.
 
 Главные настройки:
@@ -1443,7 +1455,9 @@ QWEN_RERANKER_BATCH_SIZE = 1
 ```
 
 Для первого спокойного запуска оставьте `RERANKER_BENCHMARK_MAX_PAIRS = 120`.
-Для финального сравнения поставьте `RERANKER_BENCHMARK_MAX_PAIRS = 0`.
+В этом случае все методы, включая старые baseline, сравниваются на тех же
+120 парах. Для финального выбора лучшего решения поставьте
+`RERANKER_BENCHMARK_MAX_PAIRS = 0`.
 
 Можно запускать только одну модель:
 

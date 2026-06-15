@@ -22,7 +22,7 @@
   через supervised fusion/fine-tuning и прогонять выбранный matcher по полному
   candidate set.
 
-## 2026-06-25 — Reranker benchmark в notebook-3
+## 2026-06-25 — All-model benchmark в notebook-3
 
 ### Зачем
 
@@ -44,16 +44,23 @@ pack. Перед обучением своей fusion-модели полезн�
   - вызов `model.rerank(query, documents)`;
   - тот же pairwise score -> fusion -> label контракт, что у остальных
     matchers.
-- В конец `notebooks/03_matching_comparison.ipynb` добавлен мини-бенчмарк:
+- В конец `notebooks/03_matching_comparison.ipynb` добавлен общий
+  benchmark всех текущих matching-моделей:
+  - `rule_based_fuzzy`;
+  - `bi_encoder_zero_shot`;
+  - `cross_encoder_zero_shot`;
   - `Qwen/Qwen3-Reranker-4B`;
   - `jinaai/jina-reranker-v3`;
   - запуск управляется обычными переменными прямо в notebook-ячейке:
     `RERANKER_BENCHMARK_MODELS`, `RERANKER_BENCHMARK_MAX_PAIRS`,
     `QWEN_RERANKER_BATCH_SIZE`;
-  - результаты сохраняются отдельно в
+  - итоговая общая таблица сохраняется в
+    `all_model_benchmark_summary_sauces.csv` и
+    `all_model_benchmark_predictions_sauces.csv`;
+  - отдельные результаты новых reranker-моделей дополнительно сохраняются в
     `reranker_benchmark_summary_sauces.csv` и
-    `reranker_benchmark_predictions_sauces.csv`, основные `matching_*` CSV не
-    перетираются.
+    `reranker_benchmark_predictions_sauces.csv`;
+  - основные `matching_*` CSV не перетираются.
 - `requirements-research.txt` обновлён под актуальные reranker dependencies:
   `sentence-transformers>=5.0`, `transformers>=4.51`.
 
@@ -67,10 +74,10 @@ pack. Перед обучением своей fusion-модели полезн�
 
 ### Следующий шаг
 
-Запустить reranker-бенчмарк сначала с
+Запустить общий benchmark сначала с
 `RERANKER_BENCHMARK_MAX_PAIRS = 120`, затем поставить `0` для всего gold-set,
 если машина вывозит. Сравнивать строки
-`reranker_benchmark_calibrated / test`.
+`all_model_benchmark_calibrated / test`.
 
 ## 2026-06-25 — Ready-made cross-encoder rerank в notebook-3
 

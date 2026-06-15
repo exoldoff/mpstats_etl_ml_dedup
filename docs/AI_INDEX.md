@@ -116,12 +116,13 @@ Research-код остаётся независимым: `research/dedup/` не 
   - B: zero-shot bi-encoder с graceful skip без `sentence-transformers`.
   - D0: готовый cross-encoder rerank без дообучения, дописан новой секцией
     в конец `03_matching_comparison.ipynb`.
-- В конце `03_matching_comparison.ipynb` есть mini-benchmark для
-  тяжёлых reranker-моделей (`Qwen/Qwen3-Reranker-4B`,
-  `jinaai/jina-reranker-v3`). Запуск управляется обычными переменными прямо
-  в notebook-ячейке: список моделей, batch size и размер среза. Результаты
-  пишутся в отдельные `reranker_benchmark_*` CSV и не перетирают основные
-  `matching_*` артефакты.
+- В конце `03_matching_comparison.ipynb` есть общий benchmark всех
+  matching-моделей на одном срезе: `rule_based_fuzzy`,
+  `bi_encoder_zero_shot`, `cross_encoder_zero_shot`,
+  `reranker_qwen3_4b`, `reranker_jina_v3`. Новые reranker-модели задаются
+  обычными переменными прямо в notebook-ячейке: список моделей, batch size и
+  размер среза. Главный CSV для выбора лучшего решения:
+  `all_model_benchmark_summary_sauces.csv`.
 - `03_matching_comparison.ipynb` запускается без разметки и показывает
   заглушки вместо падения.
 
