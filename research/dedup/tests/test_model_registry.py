@@ -25,6 +25,12 @@ def test_resolve_known_aliases_and_custom_model_ids() -> None:
     assert spec.alias == "reranker_qwen3_4b"
     assert spec.model_name == "Qwen/Qwen3-Reranker-4B"
     assert spec.backend == CROSS_ENCODER_BACKEND
+    assert spec.device == "cpu"
+
+    qwen_small = resolve_model_spec("qwen3_0_6b")
+    assert qwen_small.alias == "reranker_qwen3_0_6b"
+    assert qwen_small.model_name == "Qwen/Qwen3-Reranker-0.6B"
+    assert qwen_small.backend == CROSS_ENCODER_BACKEND
 
     bge = resolve_model_spec("bge_m3")
     assert bge.alias == "reranker_bge_v2_m3"
@@ -98,6 +104,39 @@ def test_cross_encoder_loader_falls_back_to_cache_dir_kwarg(monkeypatch, tmp_pat
             "local_files_only": True,
         },
     )
+
+
+def test_cross_encoder_loader_uses_registry_device(monkeypatch, tmp_path) -> None:
+    clear_model_pool()
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeCrossEncoder:
+        def __init__(self, model_name: str, **kwargs: object) -> None:
+            calls.append((model_name, kwargs))
+
+    fake_module = types.SimpleNamespace(CrossEncoder=FakeCrossEncoder)
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+
+    manager = ModelManager(cache_dir=tmp_path, local_files_only=True)
+    manager.load_cross_encoder("qwen3_4b")
+
+    assert calls == [
+        (
+            "Qwen/Qwen3-Reranker-4B",
+            {
+                "cache_folder": str(tmp_path),
+                "local_files_only": True,
+                "device": "cpu",
+                "prompts": {
+                    "sku_match": (
+                        "Decide whether two ecommerce sauce products are the same SKU. "
+                        "Pay attention to brand, flavor or purpose, unit weight, total weight, and pack count."
+                    )
+                },
+                "default_prompt_name": "sku_match",
+            },
+        )
+    ]
 
 
 def test_transformers_auto_model_loader_uses_registry_defaults(monkeypatch, tmp_path) -> None:

@@ -136,6 +136,9 @@ Research-код остаётся независимым: `research/dedup/` не 
   `RERANKER_BENCHMARK_MODELS` или через env
   `DEDUP_RERANKER_BENCHMARK_MODELS`; главный CSV для выбора лучшего решения:
   `all_model_benchmark_summary_sauces.csv`.
+  `reranker_qwen3_4b` по умолчанию грузится на CPU, потому что на MPS с
+  лимитом около 9GB падает по памяти; для быстрого Qwen-smoke есть alias
+  `qwen3_0_6b`.
 - `03_matching_comparison.ipynb` запускается без разметки и показывает
   заглушки вместо падения.
 

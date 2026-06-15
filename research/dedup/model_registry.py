@@ -34,6 +34,7 @@ class ModelSpec:
     backend: str
     method_name: str | None = None
     batch_size: int | None = None
+    device: str | None = None
     documents_per_query: int | None = None
     text_prefix: str | None = None
     trust_remote_code: bool = False
@@ -93,12 +94,24 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         batch_size=32,
         encoding_format="float",
     ),
+    "reranker_qwen3_0_6b": ModelSpec(
+        alias="reranker_qwen3_0_6b",
+        model_name="Qwen/Qwen3-Reranker-0.6B",
+        backend=CROSS_ENCODER_BACKEND,
+        method_name="reranker_qwen3_0_6b",
+        batch_size=1,
+        prompts={"sku_match": SKU_RERANKER_INSTRUCTION},
+        default_prompt_name="sku_match",
+        fusion_threshold_high=0.0,
+        fusion_threshold_low=-5.0,
+    ),
     "reranker_qwen3_4b": ModelSpec(
         alias="reranker_qwen3_4b",
         model_name="Qwen/Qwen3-Reranker-4B",
         backend=CROSS_ENCODER_BACKEND,
         method_name="reranker_qwen3_4b",
         batch_size=1,
+        device="cpu",
         prompts={"sku_match": SKU_RERANKER_INSTRUCTION},
         default_prompt_name="sku_match",
         fusion_threshold_high=0.0,
@@ -126,8 +139,11 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
 }
 
 MODEL_ALIASES: dict[str, str] = {
+    "qwen/qwen3-reranker-0.6b": "reranker_qwen3_0_6b",
     "e5_small": "embedding_e5_small",
     "multilingual_e5_small": "embedding_e5_small",
+    "qwen3_0_6b": "reranker_qwen3_0_6b",
+    "qwen3_06b": "reranker_qwen3_0_6b",
     "qwen3_4b": "reranker_qwen3_4b",
     "bge_v2_m3": "reranker_bge_v2_m3",
     "bge_m3": "reranker_bge_v2_m3",
@@ -383,6 +399,7 @@ class ModelManager:
                     "model_name": spec.model_name,
                     "method_name": spec.method_name or "",
                     "batch_size": spec.batch_size or "",
+                    "device": spec.device or "",
                     "documents_per_query": spec.documents_per_query or "",
                     "dimensions": spec.dimensions or "",
                     "cache_dir": str(self.cache_dir),
@@ -459,6 +476,7 @@ class ModelManager:
         self,
         alias_or_name: str,
         *,
+        device: str | None = None,
         trust_remote_code: bool | None = None,
         prompts: dict[str, str] | None = None,
         default_prompt_name: str | None = None,
@@ -469,6 +487,9 @@ class ModelManager:
         spec = self.resolve(alias_or_name, backend=CROSS_ENCODER_BACKEND)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         common_kwargs: dict[str, Any] = {}
+        effective_device = device if device is not None else spec.device
+        if effective_device is not None:
+            common_kwargs["device"] = effective_device
         effective_trust_remote_code = trust_remote_code if trust_remote_code is not None else spec.trust_remote_code
         if effective_trust_remote_code:
             common_kwargs["trust_remote_code"] = True

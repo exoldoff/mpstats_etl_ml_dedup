@@ -22,6 +22,7 @@ class CrossEncoderConfig:
     model_name: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
     method_name: str = "cross_encoder_zero_shot"
     batch_size: int = 16
+    device: str | None = None
     trust_remote_code: bool = False
     prompts: dict[str, str] | None = None
     default_prompt_name: str | None = None
@@ -80,6 +81,7 @@ class CrossEncoderMatcher(PairMatcher):
                 )
                 self._model = manager.load_cross_encoder(
                     self.config.model_name,
+                    device=self.config.device,
                     trust_remote_code=self.config.trust_remote_code or None,
                     prompts=self.config.prompts,
                     default_prompt_name=self.config.default_prompt_name,

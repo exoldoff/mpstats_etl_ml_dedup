@@ -27,6 +27,35 @@
   через supervised fusion/fine-tuning и прогонять выбранный matcher по полному
   candidate set.
 
+## 2026-06-25 — Qwen reranker safe mode для Mac MPS
+
+### Зачем
+
+`Qwen/Qwen3-Reranker-4B` на Mac может падать при загрузке с
+`MPS backend out of memory`: модель почти целиком забивает доступный MPS
+лимит, поэтому уменьшение scoring batch само по себе не помогает.
+
+### Что сделано
+
+- В `ModelSpec` добавлен параметр `device`, который прокидывается в
+  `sentence_transformers.CrossEncoder`.
+- Alias `reranker_qwen3_4b` / `qwen3_4b` теперь по умолчанию грузится на
+  `cpu`, а `batch_size` остаётся `1`.
+- Добавлен лёгкий alias `reranker_qwen3_0_6b` / `qwen3_0_6b` для быстрого
+  Qwen-smoke, если 4B на CPU слишком медленный.
+- `03_matching_comparison.ipynb` показывает `device` в таблице benchmark и
+  прямо подсказывает ставить `MY_RERANKER_MAX_PAIRS = 12-30` для первого
+  CPU-прогона Qwen-4B.
+
+### Как пользоваться
+
+- Для проверки 4B без MPS OOM:
+  `MY_RERANKER_MODELS = ["qwen3_4b"]`, `MY_RERANKER_MAX_PAIRS = 12`.
+- Если нужно быстрее проверить именно Qwen-семейство:
+  `MY_RERANKER_MODELS = ["qwen3_0_6b"]`.
+- Перед повторным запуском после MPS OOM лучше перезапустить Jupyter kernel,
+  чтобы освободить уже занятые моделью/torch ресурсы.
+
 ## 2026-06-25 — Polza.ai backend для online embeddings
 
 ### Зачем
