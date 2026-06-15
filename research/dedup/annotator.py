@@ -3,9 +3,14 @@ from __future__ import annotations
 import argparse
 import curses
 from pathlib import Path
-import textwrap
 
 import pandas as pd
+
+try:
+    from wcwidth import wcwidth, wcswidth
+except ImportError:  # pragma: no cover - wcwidth is present in the notebook env
+    wcwidth = None
+    wcswidth = None
 
 
 DEFAULT_LABELING_PATH = Path(__file__).resolve().parent / "data" / "labeling_sauces.csv"
@@ -130,18 +135,92 @@ def _signal_summary(row: pd.Series) -> str:
     )
 
 
+def _display_width(text: str) -> int:
+    if wcswidth is not None:
+        width = wcswidth(text)
+        if width >= 0:
+            return width
+    total = 0
+    for char in text:
+        if wcwidth is None:
+            total += 1
+            continue
+        char_width = wcwidth(char)
+        total += max(0, char_width)
+    return total
+
+
+def _fit_display_width(text: str, max_width: int) -> str:
+    if max_width <= 0:
+        return ""
+    result: list[str] = []
+    used = 0
+    for char in text:
+        char_width = _display_width(char)
+        if used + char_width > max_width:
+            break
+        result.append(char)
+        used += char_width
+    return "".join(result)
+
+
+def _wrap_plain_display(text: str, max_width: int) -> list[str]:
+    if not text:
+        return [""]
+    width = max(8, max_width)
+    words = str(text).split()
+    lines: list[str] = []
+    current = ""
+
+    def flush_current() -> None:
+        nonlocal current
+        if current:
+            lines.append(current)
+            current = ""
+
+    for word in words:
+        while _display_width(word) > width:
+            flush_current()
+            chunk = _fit_display_width(word, width)
+            lines.append(chunk)
+            word = word[len(chunk) :]
+        candidate = word if not current else f"{current} {word}"
+        if _display_width(candidate) <= width:
+            current = candidate
+        else:
+            flush_current()
+            current = word
+
+    flush_current()
+    return lines or [""]
+
+
+def _wrap_display(prefix: str, value: str, max_width: int) -> list[str]:
+    width = max(12, max_width)
+    prefix_width = _display_width(prefix)
+    body_width = max(8, width - prefix_width)
+    body_lines = _wrap_plain_display(value, body_width)
+    continuation_prefix = " " * len(prefix)
+    lines = [f"{prefix}{body_lines[0]}"]
+    lines.extend(f"{continuation_prefix}{line}" for line in body_lines[1:])
+    return lines
+
+
 def _add_line(screen: curses.window, y: int, text: str, attr: int = 0) -> int:
     height, width = screen.getmaxyx()
     if y >= height - 1:
         return y
-    screen.addnstr(y, 0, text.ljust(max(0, width - 1)), max(0, width - 1), attr)
+    screen.move(y, 0)
+    screen.clrtoeol()
+    line = _fit_display_width(text, max(0, width - 1))
+    if line:
+        screen.addstr(y, 0, line, attr)
     return y + 1
 
 
 def _add_wrapped(screen: curses.window, y: int, prefix: str, value: str, attr: int = 0) -> int:
     _, width = screen.getmaxyx()
-    text = f"{prefix}{value}"
-    wrapped = textwrap.wrap(text, width=max(20, width - 1), replace_whitespace=False) or [""]
+    wrapped = _wrap_display(prefix, value, max(20, width - 1))
     for line in wrapped:
         y = _add_line(screen, y, line, attr)
     return y

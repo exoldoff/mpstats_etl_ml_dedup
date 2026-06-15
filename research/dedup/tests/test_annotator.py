@@ -3,8 +3,10 @@ from __future__ import annotations
 import pandas as pd
 
 from research.dedup.annotator import (
+    _display_width,
     _item_summary,
     _signal_summary,
+    _wrap_display,
     apply_label,
     clear_label,
     labeled_count,
@@ -74,3 +76,16 @@ def test_signal_summary_uses_russian_flag_labels() -> None:
     assert "межмаркетплейс=да" in summary
     assert "сложный негатив=нет" in summary
     assert "вариант упаковки=да" in summary
+
+
+def test_wrap_display_keeps_lines_within_terminal_width() -> None:
+    lines = _wrap_display(
+        "A  ",
+        "Кетчуп Балтимор Адмирал с кусочками чеснока, дой-пак, 260 г 6 шт",
+        32,
+    )
+
+    assert len(lines) > 1
+    assert all(_display_width(line) <= 32 for line in lines)
+    assert lines[0].startswith("A  ")
+    assert all(line.startswith("   ") for line in lines[1:])
