@@ -1430,6 +1430,7 @@ matching-моделей на одном и том же срезе:
 - `rule_based_fuzzy`;
 - `bi_encoder_zero_shot`;
 - `cross_encoder_zero_shot`;
+- `reranker_bge_v2_m3`;
 - `reranker_qwen3_4b`;
 - `reranker_jina_v3`.
 
@@ -1443,27 +1444,42 @@ matching-моделей на одном и том же срезе:
 если хочется посмотреть новые reranker-модели отдельно от старых baseline.
 
 Запуск теперь обычный: откройте notebook, найдите ячейку
-`Блок кода 16. Настройки общего бенчмарка`, поменяйте значения прямо в
-ней и запустите следующие ячейки.
+`Блок кода 16. Настройки общего бенчмарка` и поменяйте верхний блок
+`НАСТРОЙКИ ПОЛЬЗОВАТЕЛЯ`.
 
 Главные настройки:
 
 ```python
-RERANKER_BENCHMARK_MODELS = ["qwen3_4b", "jina_v3"]
-RERANKER_BENCHMARK_MAX_PAIRS = 120  # 0 = весь размеченный gold-set
-QWEN_RERANKER_BATCH_SIZE = 1
+MY_RERANKER_MODELS = [
+    "bge_m3",
+    # "qwen3_4b",
+    # "jina_v3",
+    # "cross-encoder/ms-marco-MiniLM-L6-v2",
+]
+MY_RERANKER_MAX_PAIRS = 120  # 0 = весь размеченный gold-set
+MY_CUSTOM_RERANKER_BACKEND = CROSS_ENCODER_BACKEND
 ```
 
-Для первого спокойного запуска оставьте `RERANKER_BENCHMARK_MAX_PAIRS = 120`.
+Модели можно писать короткими alias-ами из registry (`bge_m3`, `qwen3_4b`,
+`jina_v3`) или полными Hugging Face model ids
+(`BAAI/bge-reranker-v2-m3`, `Qwen/Qwen3-Reranker-4B`).
+
+Для первого спокойного запуска оставьте `MY_RERANKER_MAX_PAIRS = 120`.
 В этом случае все методы, включая старые baseline, сравниваются на тех же
 120 парах. Для финального выбора лучшего решения поставьте
-`RERANKER_BENCHMARK_MAX_PAIRS = 0`.
+`MY_RERANKER_MAX_PAIRS = 0`.
+
+Если вписываете свой model id, которого ещё нет в registry, оставьте
+`MY_CUSTOM_RERANKER_BACKEND = CROSS_ENCODER_BACKEND` для обычных
+`sentence_transformers.CrossEncoder` моделей. Для Jina-like моделей с
+методом `.rerank` используйте `TRANSFORMERS_AUTO_MODEL_BACKEND`.
 
 Можно запускать только одну модель:
 
 ```python
-RERANKER_BENCHMARK_MODELS = ["qwen3_4b"]
-RERANKER_BENCHMARK_MODELS = ["jina_v3"]
+MY_RERANKER_MODELS = ["bge_m3"]
+MY_RERANKER_MODELS = ["qwen3_4b"]
+MY_RERANKER_MODELS = ["jina_v3"]
 ```
 
 Jina v3 удобна для эксперимента, но перед production-использованием нужно
