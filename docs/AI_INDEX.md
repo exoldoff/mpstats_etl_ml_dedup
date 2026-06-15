@@ -77,6 +77,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `research/dedup/labeling.py` | stratified sampling для ручной разметки gold-set |
 | `research/dedup/metrics.py` | dependency-light classification report и confusion matrix |
 | `research/dedup/fusion.py` | research fusion по архитектуре |
+| `research/dedup/model_registry.py` | единый registry/manager/pool для локальных research-моделей и cache dir |
 | `research/dedup/matchers/` | baseline matching engines A/B и общий интерфейс |
 | `research/dedup/annotator.py` | helper для ручной разметки |
 | `research/dedup/tests/` | узкие тесты research-модулей |
@@ -106,9 +107,9 @@ Research-код остаётся независимым: `research/dedup/` не 
 - `00_eda.ipynb` по категории `Соусы`.
 - Candidate generation по `marketplace + Артикул`, без потери
   cross-marketplace дублей: primary blocking теперь идёт через dense
-  embeddings + FAISS top-k. Default notebook-модель:
-  `intfloat/multilingual-e5-small`; заменить можно через
-  `DEDUP_EMBEDDING_MODEL`.
+  embeddings + FAISS top-k. Default notebook alias:
+  `embedding_e5_small` (`intfloat/multilingual-e5-small`); заменить можно
+  через `DEDUP_EMBEDDING_MODEL`.
 - Stratified labeling dataset с отдельной стратой
   `cross_marketplace_candidate`.
 - Baseline matching scaffold:
@@ -116,12 +117,17 @@ Research-код остаётся независимым: `research/dedup/` не 
   - B: zero-shot bi-encoder с graceful skip без `sentence-transformers`.
   - D0: готовый cross-encoder rerank без дообучения, дописан новой секцией
     в конец `03_matching_comparison.ipynb`.
+- Research-модели больше не загружаются напрямую из notebook cells:
+  `research/dedup/model_registry.py` задаёт alias -> backend/model id,
+  `ModelManager` управляет локальным кэшем `research/dedup/models/`,
+  in-process pool и offline-флагом `DEDUP_MODEL_LOCAL_ONLY=1`.
+  Cache dir можно заменить через `DEDUP_MODEL_CACHE_DIR`.
 - В конце `03_matching_comparison.ipynb` есть общий benchmark всех
   matching-моделей на одном срезе: `rule_based_fuzzy`,
   `bi_encoder_zero_shot`, `cross_encoder_zero_shot`,
-  `reranker_qwen3_4b`, `reranker_jina_v3`. Новые reranker-модели задаются
-  обычными переменными прямо в notebook-ячейке: список моделей, batch size и
-  размер среза. Главный CSV для выбора лучшего решения:
+  `reranker_qwen3_4b`, `reranker_jina_v3`. Новые reranker-модели выбираются
+  alias-ами registry в `RERANKER_BENCHMARK_MODELS` или через env
+  `DEDUP_RERANKER_BENCHMARK_MODELS`; главный CSV для выбора лучшего решения:
   `all_model_benchmark_summary_sauces.csv`.
 - `03_matching_comparison.ipynb` запускается без разметки и показывает
   заглушки вместо падения.

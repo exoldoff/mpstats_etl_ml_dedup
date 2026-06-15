@@ -10,6 +10,9 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
+# Research model cache
+research/dedup/models/
+
 # Системное
 .DS_Store
 Thumbs.db

@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 import importlib.util
 import math
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 import numpy as np
 
 from research.dedup.fusion import FusionConfig, decide_label, get_pair_value
+from research.dedup.model_registry import ModelManager, model_text_prefix
 
 from .base import MatcherStatus, PairMatcher
 
@@ -20,6 +22,8 @@ class BiEncoderConfig:
     model_name: str = "intfloat/multilingual-e5-base"
     batch_size: int = 32
     text_prefix: str | None = None
+    cache_dir: str | Path | None = None
+    local_files_only: bool | None = None
     fusion: FusionConfig = FusionConfig(threshold_high=0.86, threshold_low=0.58)
     uncertain_fallback_label: str = "different_product"
 
@@ -65,9 +69,11 @@ class BiEncoderMatcher(PairMatcher):
             if self._model_factory is not None:
                 self._model = self._model_factory(self.config.model_name)
             else:
-                from sentence_transformers import SentenceTransformer
-
-                self._model = SentenceTransformer(self.config.model_name)
+                manager = ModelManager(
+                    cache_dir=self.config.cache_dir,
+                    local_files_only=self.config.local_files_only,
+                )
+                self._model = manager.load_sentence_transformer(self.config.model_name)
         except Exception as exc:  # pragma: no cover - depends on local model/network state
             self._load_error = f"failed to load {self.config.model_name}: {exc}"
             return None
@@ -78,8 +84,8 @@ class BiEncoderMatcher(PairMatcher):
         brand = get_pair_value(pair, f"brand_{side}", f"canonical_brand_{side}", default="")
         text = " ".join(part.strip() for part in [str(brand or ""), str(title or "")] if part and str(part).strip())
         prefix = self.config.text_prefix
-        if prefix is None and "e5" in self.config.model_name.lower():
-            prefix = "passage: "
+        if prefix is None:
+            prefix = model_text_prefix(self.config.model_name)
         return f"{prefix or ''}{text}".strip()
 
     @staticmethod

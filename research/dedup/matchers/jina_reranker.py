@@ -4,9 +4,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 import importlib.util
 import math
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from research.dedup.fusion import FusionConfig, decide_label, get_pair_value
+from research.dedup.model_registry import ModelManager
 
 from .base import MatcherStatus, PairMatcher
 
@@ -20,6 +22,8 @@ class JinaRerankerConfig:
     method_name: str = "reranker_jina_v3"
     documents_per_query: int = 16
     trust_remote_code: bool = True
+    cache_dir: str | Path | None = None
+    local_files_only: bool | None = None
     fusion: FusionConfig = FusionConfig(threshold_high=0.5, threshold_low=0.2)
     uncertain_fallback_label: str = "different_product"
 
@@ -67,15 +71,15 @@ class JinaRerankerMatcher(PairMatcher):
             if self._model_factory is not None:
                 self._model = self._model_factory(self.config.model_name)
             else:
-                from transformers import AutoModel
-
-                self._model = AutoModel.from_pretrained(
+                manager = ModelManager(
+                    cache_dir=self.config.cache_dir,
+                    local_files_only=self.config.local_files_only,
+                )
+                self._model = manager.load_transformers_auto_model(
                     self.config.model_name,
                     dtype="auto",
                     trust_remote_code=self.config.trust_remote_code,
                 )
-            if hasattr(self._model, "eval"):
-                self._model.eval()
         except Exception as exc:  # pragma: no cover - depends on local model/network state
             self._load_error = f"failed to load {self.config.model_name}: {exc}"
             return None

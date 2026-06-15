@@ -17,10 +17,70 @@
   matching engines -> кластеризация.
 - Primary blocking для `01_candidate_generation.ipynb` теперь соответствует
   целевой архитектуре: dense embeddings -> FAISS top-k.
+- Research-модели управляются через `research/dedup/model_registry.py`:
+  alias -> backend/model id, общий cache dir `research/dedup/models/`,
+  in-process pool и offline-режим `DEDUP_MODEL_LOCAL_ONLY=1`.
 - Gold-set размечен и готов для baseline-метрик. Следующий research-фокус:
   сравнить более сильные готовые reranker-модели, затем снижать false merges
   через supervised fusion/fine-tuning и прогонять выбранный matcher по полному
   candidate set.
+
+## 2026-06-25 — Model registry и локальный cache/pool
+
+### Зачем
+
+Модели в research notebooks больше не должны выглядеть как магическая загрузка
+прямо из ячейки: нужно явно видеть, какой alias выбран, какой реальный model id
+будет загружен и куда он попадёт на диске.
+
+### Что сделано
+
+- Добавлен `research/dedup/model_registry.py`:
+  - registry alias-ов `embedding_e5_small`, `bi_encoder_e5_small`,
+    `cross_encoder_mmarco`, `reranker_qwen3_4b`, `reranker_jina_v3`;
+  - `ModelManager` с единым cache dir `research/dedup/models/`;
+  - override cache dir через `DEDUP_MODEL_CACHE_DIR`;
+  - offline-режим `DEDUP_MODEL_LOCAL_ONLY=1`;
+  - in-process pool, чтобы повторный запуск ячеек не пересоздавал уже
+    загруженную модель в рамках одного Python kernel.
+- `BiEncoderMatcher`, `CrossEncoderMatcher`, `JinaRerankerMatcher` теперь
+  грузят реальные модели через `ModelManager`, но сохраняют `model_factory`
+  для unit tests и fake-моделей.
+- `notebooks/01_candidate_generation.ipynb` больше не импортирует
+  `SentenceTransformer` напрямую: embedding модель берётся через
+  `MODEL_MANAGER.load_sentence_transformer(DEDUP_EMBEDDING_MODEL)`.
+- `notebooks/03_matching_comparison.ipynb` показывает alias/input,
+  реальный model id, cache dir и offline-флаг для bi-encoder/cross-encoder и
+  reranker benchmark.
+- `research/dedup/models/` добавлен в `.gitignore`.
+
+### Как пользоваться
+
+- Обычный запуск: ничего не менять, defaults используют локальный кэш
+  `research/dedup/models/`.
+- Поменять место кэша:
+  `DEDUP_MODEL_CACHE_DIR=/path/to/models`.
+- Не ходить в сеть и брать только уже скачанное:
+  `DEDUP_MODEL_LOCAL_ONLY=1`.
+- Выбрать модель в notebook:
+  `DEDUP_EMBEDDING_MODEL=embedding_e5_small`,
+  `DEDUP_BI_ENCODER_MODEL=bi_encoder_e5_small`,
+  `DEDUP_CROSS_ENCODER_MODEL=cross_encoder_mmarco`,
+  `RERANKER_BENCHMARK_MODELS = ["reranker_qwen3_4b", "reranker_jina_v3"]`.
+- Лёгкий smoke-запуск notebook-3 без тяжёлых моделей:
+  `DEDUP_RUN_BI_ENCODER=0 DEDUP_RUN_CROSS_ENCODER=0 DEDUP_RERANKER_BENCHMARK_MODELS=`.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests/test_model_registry.py
+  research/dedup/tests/test_matchers.py` — 15 passed.
+- `python3 -m compileall research/dedup` — ok.
+- `ast.parse` всех code cells в `01_candidate_generation.ipynb` и
+  `03_matching_comparison.ipynb` — ok.
+- `nbclient` на `notebooks/03_matching_comparison.ipynb` в лёгком режиме
+  (`DEDUP_RUN_BI_ENCODER=0`, `DEDUP_RUN_CROSS_ENCODER=0`,
+  `DEDUP_RERANKER_BENCHMARK_MODELS=`) — ok.
+- `git diff --check` — ok.
 
 ## 2026-06-25 — All-model benchmark в notebook-3
 
@@ -51,9 +111,9 @@ pack. Перед обучением своей fusion-модели полезн�
   - `cross_encoder_zero_shot`;
   - `Qwen/Qwen3-Reranker-4B`;
   - `jinaai/jina-reranker-v3`;
-  - запуск управляется обычными переменными прямо в notebook-ячейке:
-    `RERANKER_BENCHMARK_MODELS`, `RERANKER_BENCHMARK_MAX_PAIRS`,
-    `QWEN_RERANKER_BATCH_SIZE`;
+  - после добавления model registry запуск управляется alias-ами в
+    `RERANKER_BENCHMARK_MODELS`, а model id/cache/backend берутся из
+    `research/dedup/model_registry.py`;
   - итоговая общая таблица сохраняется в
     `all_model_benchmark_summary_sauces.csv` и
     `all_model_benchmark_predictions_sauces.csv`;
@@ -235,9 +295,10 @@ Rule/fuzzy logic остаётся для baseline matching и вспомогат
   - сохраняет совместимый pairwise contract для `02_labeling_dataset.ipynb`
     и `03_matching_comparison.ipynb`.
 - `notebooks/01_candidate_generation.ipynb` переписан на flow:
-  `SentenceTransformer` -> embeddings -> FAISS top-k -> `candidates_sauces.csv`.
-- Default local model для notebook: `intfloat/multilingual-e5-small`; модель
-  можно заменить через `DEDUP_EMBEDDING_MODEL`.
+  embeddings -> FAISS top-k -> `candidates_sauces.csv`.
+- После добавления model registry default alias для notebook:
+  `embedding_e5_small` (`intfloat/multilingual-e5-small`); модель можно
+  заменить через `DEDUP_EMBEDDING_MODEL`.
 - Для smoke/debug добавлены `DEDUP_FAISS_RECORD_LIMIT` и
   `DEDUP_CANDIDATES_PATH`, чтобы проверять flow без перезаписи основного CSV.
 - `baseline_similarity_score` в CSV оставлен для совместимости, но теперь равен

@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 import importlib.util
 import math
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 import numpy as np
 
 from research.dedup.fusion import FusionConfig, decide_label, get_pair_value
+from research.dedup.model_registry import ModelManager
 
 from .base import MatcherStatus, PairMatcher
 
@@ -23,6 +25,8 @@ class CrossEncoderConfig:
     trust_remote_code: bool = False
     prompts: dict[str, str] | None = None
     default_prompt_name: str | None = None
+    cache_dir: str | Path | None = None
+    local_files_only: bool | None = None
     fusion: FusionConfig = FusionConfig(threshold_high=8.0, threshold_low=4.0)
     uncertain_fallback_label: str = "different_product"
 
@@ -70,16 +74,16 @@ class CrossEncoderMatcher(PairMatcher):
             if self._model_factory is not None:
                 self._model = self._model_factory(self.config.model_name)
             else:
-                from sentence_transformers import CrossEncoder
-
-                model_kwargs: dict[str, Any] = {}
-                if self.config.trust_remote_code:
-                    model_kwargs["trust_remote_code"] = True
-                if self.config.prompts is not None:
-                    model_kwargs["prompts"] = self.config.prompts
-                if self.config.default_prompt_name is not None:
-                    model_kwargs["default_prompt_name"] = self.config.default_prompt_name
-                self._model = CrossEncoder(self.config.model_name, **model_kwargs)
+                manager = ModelManager(
+                    cache_dir=self.config.cache_dir,
+                    local_files_only=self.config.local_files_only,
+                )
+                self._model = manager.load_cross_encoder(
+                    self.config.model_name,
+                    trust_remote_code=self.config.trust_remote_code or None,
+                    prompts=self.config.prompts,
+                    default_prompt_name=self.config.default_prompt_name,
+                )
         except Exception as exc:  # pragma: no cover - depends on local model/network state
             self._load_error = f"failed to load {self.config.model_name}: {exc}"
             return None
