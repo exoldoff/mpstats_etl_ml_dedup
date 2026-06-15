@@ -1385,6 +1385,47 @@ rank, score, стратегия отбора и русские флаги: ме�
 
 Аннотатор сохраняет CSV после каждого нажатия `w/a/s/d/c`.
 
+После завершения разметки не запускайте заново
+`notebooks/02_labeling_dataset.ipynb`, иначе можно перезаписать рабочий CSV
+разметки. Дальше запускайте notebooks сверху вниз:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+import nbformat
+from nbclient import NotebookClient
+
+for notebook in [
+    "notebooks/03_matching_comparison.ipynb",
+    "notebooks/04_clustering_resolution.ipynb",
+    "notebooks/05_evaluation_report.ipynb",
+]:
+    path = Path(notebook)
+    nb = nbformat.read(path, as_version=4)
+    NotebookClient(
+        nb,
+        timeout=900,
+        kernel_name="python3",
+        resources={"metadata": {"path": str(Path.cwd())}},
+    ).execute()
+    nbformat.write(nb, path)
+    print("ok", notebook)
+PY
+```
+
+`03_matching_comparison.ipynb` делает dev/test split, калибрует
+`threshold_high` на dev и сохраняет локальные артефакты:
+`matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
+`matching_false_merges_sauces.csv`.
+
+`04_clustering_resolution.ipynb` строит partial family/pack graph по
+predictions из 03 и сохраняет `clustering_components_sauces.csv` и
+`clustering_pair_eval_sauces.csv`.
+
+`05_evaluation_report.ipynb` собирает текущий research-отчёт: качество
+разметки, сравнение baselines, false-merge примеры и partial clustering
+metrics. CSV-артефакты лежат в `research/dedup/data/` и не коммитятся.
+
 ## 23. Безопасные правила работы
 
 - Не отправляйте cookie в переписки и не сохраняйте его в публичные файлы.

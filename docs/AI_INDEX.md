@@ -85,8 +85,8 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking, генерация `candidates_sauces.csv` |
 | `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_sauces.csv` |
 | `notebooks/03_matching_comparison.ipynb` | сравнение baseline A/B на размеченном gold-set |
-| `notebooks/04_clustering_resolution.ipynb` | запланировано: graph resolution |
-| `notebooks/05_evaluation_report.ipynb` | запланировано: финальный отчёт |
+| `notebooks/04_clustering_resolution.ipynb` | graph resolution по calibrated pairwise predictions |
+| `notebooks/05_evaluation_report.ipynb` | финальный research-отчёт по текущему baseline-прогону |
 
 Текущие локальные CSV после последнего research-этапа:
 
@@ -119,9 +119,19 @@ Research-код остаётся независимым: `research/dedup/` не 
 
 Текущий следующий шаг:
 
-- Заполнить `label` и при необходимости `notes` в
-  `research/dedup/data/labeling_sauces.csv`.
-- После разметки запускать `notebooks/03_matching_comparison.ipynb`.
+- Gold-set уже можно использовать для метрик: `labeling_sauces.csv` содержит
+  400 размеченных пар, из них 379 входят в 3-class evaluation и 21 помечена
+  как `uncertain`.
+- `notebooks/03_matching_comparison.ipynb` теперь делает stratified dev/test
+  split, калибрует `threshold_high` на dev и сохраняет
+  `matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
+  `matching_false_merges_sauces.csv`.
+- `notebooks/04_clustering_resolution.ipynb` строит partial family/pack graph
+  по predictions из 03 и сохраняет `clustering_components_sauces.csv`,
+  `clustering_pair_eval_sauces.csv`.
+- `notebooks/05_evaluation_report.ipynb` собирает текущий research-отчёт.
+  Следующий ML-шаг — улучшать rerank/fusion на hard negatives
+  (cross-encoder/LLM-judge), не переносить код в production pipeline.
 
 ## Production Web-App: карта проекта
 

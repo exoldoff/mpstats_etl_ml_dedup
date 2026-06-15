@@ -17,8 +17,91 @@
   matching engines -> кластеризация.
 - Primary blocking для `01_candidate_generation.ipynb` теперь соответствует
   целевой архитектуре: dense embeddings -> FAISS top-k.
-- Текущий блокер для метрик: нужна ручная разметка
-  `research/dedup/data/labeling_sauces.csv`.
+- Gold-set размечен и готов для baseline-метрик. Следующий research-фокус:
+  снижать false merges через более строгий rerank/fusion
+  (cross-encoder/LLM-judge), затем прогонять выбранный matcher по полному
+  candidate set.
+
+## 2026-06-24 — Gold-set validation, calibrated matching, clustering/report
+
+### Зачем
+
+После ручной разметки нужно было перейти от scaffolding к честным метрикам:
+проверить CSV, не тюнить пороги на том же наборе, на котором репортятся
+результаты, и собрать первый graph-resolution/report слой.
+
+### Что сделано
+
+- Проверен `research/dedup/data/labeling_sauces.csv`:
+  - 400 строк, пустых labels нет;
+  - invalid labels нет;
+  - 379 пар входят в 3-class evaluation;
+  - 21 пара оставлена как `uncertain`;
+  - дубликатов unordered pair и self-pairs нет.
+- `notebooks/03_matching_comparison.ipynb` обновлён:
+  - default bi-encoder model: `intfloat/multilingual-e5-small`;
+  - добавлен stratified dev/test split;
+  - `threshold_high` калибруется на dev;
+  - held-out test используется для отчётных метрик;
+  - сохраняются локальные CSV-артефакты:
+    `matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
+    `matching_false_merges_sauces.csv`.
+- Добавлен `research/dedup/clustering.py`:
+  - connected components для family graph (`exact_duplicate` +
+    `same_product_different_pack`);
+  - pack graph только по `exact_duplicate`;
+  - helper для pair-level component flags и component-size summary.
+- Добавлен `notebooks/04_clustering_resolution.ipynb`:
+  - читает calibrated predictions из notebook-3;
+  - выбирает лучший calibrated method по held-out `test`;
+  - строит partial true/predicted family и pack components;
+  - сохраняет `clustering_components_sauces.csv` и
+    `clustering_pair_eval_sauces.csv`.
+- Добавлен `notebooks/05_evaluation_report.ipynb`:
+  - собирает label QA, matching summary, false-merge examples и partial
+    clustering metrics в один отчётный notebook.
+
+### Получившиеся baseline-цифры
+
+Текущий лучший calibrated baseline по held-out macro-F1 — `rule_based_fuzzy`:
+
+| Метрика | Значение |
+| --- | ---: |
+| Held-out pairs | 151 |
+| `threshold_high` | 0.86 |
+| macro-F1 | 0.606 |
+| `exact_duplicate` precision | 0.579 |
+| false-merge rate | 18.5% |
+
+Zero-shot `intfloat/multilingual-e5-small` без reranker слишком агрессивен
+на default threshold: много false merges. При `threshold_high=1.0` достигает
+высокой precision для `exact_duplicate`, но почти теряет recall; это полезный
+аргумент в пользу cross-encoder/reranker, а не финальное решение.
+
+Partial graph metrics на held-out test для выбранного `rule_based_fuzzy`:
+
+| Graph | Precision | Recall | F1 |
+| --- | ---: | ---: | ---: |
+| family | 0.594 | 0.695 | 0.641 |
+| pack | 0.579 | 0.379 | 0.458 |
+
+Важно: это partial sanity-check по sampled gold-set pairs, не полная
+cluster-quality метрика по всей категории.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests/test_clustering.py` — 3 passed.
+- `python3 -m compileall research/dedup` — ok.
+- `nbclient` на `notebooks/03_matching_comparison.ipynb` — ok.
+- `nbclient` на `notebooks/04_clustering_resolution.ipynb` — ok.
+- `nbclient` на `notebooks/05_evaluation_report.ipynb` — ok.
+
+### Следующий шаг
+
+Перед финальной технологией нужно добавить более сильный reranker/fusion:
+cross-encoder или LLM-judge для low-confidence/false-merge-prone пар.
+Также стоит вручную пересмотреть несколько sanity-suspect labels, если
+нужен максимально чистый held-out report.
 
 ## 2026-06-23 — FAISS embedding candidate generation
 
