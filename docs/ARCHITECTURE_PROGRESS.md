@@ -93,7 +93,8 @@ API-ключей, model ids и endpoint-ов.
 
 - Добавлен `research/dedup/model_registry.py`:
   - registry alias-ов `embedding_e5_small`, `bi_encoder_e5_small`,
-    `cross_encoder_mmarco`, `reranker_qwen3_4b`, `reranker_jina_v3`;
+    `cross_encoder_mmarco`, `reranker_qwen3_4b`, `reranker_bge_v2_m3`,
+    `reranker_jina_v3`;
   - `ModelManager` с единым cache dir `research/dedup/models/`;
   - override cache dir через `DEDUP_MODEL_CACHE_DIR`;
   - offline-режим `DEDUP_MODEL_LOCAL_ONLY=1`;
@@ -122,7 +123,7 @@ API-ключей, model ids и endpoint-ов.
   `DEDUP_EMBEDDING_MODEL=embedding_e5_small`,
   `DEDUP_BI_ENCODER_MODEL=bi_encoder_e5_small`,
   `DEDUP_CROSS_ENCODER_MODEL=cross_encoder_mmarco`,
-  `RERANKER_BENCHMARK_MODELS = ["reranker_qwen3_4b", "reranker_jina_v3"]`.
+  `RERANKER_BENCHMARK_MODELS = ["reranker_qwen3_4b", "reranker_bge_v2_m3", "reranker_jina_v3"]`.
 - Лёгкий smoke-запуск notebook-3 без тяжёлых моделей:
   `DEDUP_RUN_BI_ENCODER=0 DEDUP_RUN_CROSS_ENCODER=0 DEDUP_RERANKER_BENCHMARK_MODELS=`.
 
@@ -137,6 +138,32 @@ API-ключей, model ids и endpoint-ов.
   (`DEDUP_RUN_BI_ENCODER=0`, `DEDUP_RUN_CROSS_ENCODER=0`,
   `DEDUP_RERANKER_BENCHMARK_MODELS=`) — ok.
 - `git diff --check` — ok.
+
+## 2026-06-25 — BGE reranker в benchmark list
+
+### Зачем
+
+В all-model benchmark должен быть не только Qwen/Jina, но и BGE reranker как
+сильный multilingual cross-encoder вариант.
+
+### Что сделано
+
+- Добавлен alias `reranker_bge_v2_m3`:
+  - model id: `BAAI/bge-reranker-v2-m3`;
+  - backend: `sentence_transformers.CrossEncoder`;
+  - короткие aliases: `bge_v2_m3`, `bge_m3`.
+- `notebooks/03_matching_comparison.ipynb` теперь по умолчанию запускает
+  `["reranker_qwen3_4b", "reranker_bge_v2_m3", "reranker_jina_v3"]`.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests/test_model_registry.py
+  research/dedup/tests/test_matchers.py` — 20 passed.
+- `python3 -m compileall research/dedup` — ok.
+- `ast.parse` code cells в `notebooks/03_matching_comparison.ipynb` — ok.
+- `nbclient` на `notebooks/03_matching_comparison.ipynb` в лёгком режиме
+  (`DEDUP_RUN_BI_ENCODER=0`, `DEDUP_RUN_CROSS_ENCODER=0`,
+  `DEDUP_RERANKER_BENCHMARK_MODELS=`) — ok.
 
 ## 2026-06-25 — All-model benchmark в notebook-3
 
@@ -166,6 +193,7 @@ pack. Перед обучением своей fusion-модели полезн�
   - `bi_encoder_zero_shot`;
   - `cross_encoder_zero_shot`;
   - `Qwen/Qwen3-Reranker-4B`;
+  - `BAAI/bge-reranker-v2-m3`;
   - `jinaai/jina-reranker-v3`;
   - после добавления model registry запуск управляется alias-ами в
     `RERANKER_BENCHMARK_MODELS`, а model id/cache/backend берутся из

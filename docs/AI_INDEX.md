@@ -131,8 +131,9 @@ Research-код остаётся независимым: `research/dedup/` не 
 - В конце `03_matching_comparison.ipynb` есть общий benchmark всех
   matching-моделей на одном срезе: `rule_based_fuzzy`,
   `bi_encoder_zero_shot`, `cross_encoder_zero_shot`,
-  `reranker_qwen3_4b`, `reranker_jina_v3`. Новые reranker-модели выбираются
-  alias-ами registry в `RERANKER_BENCHMARK_MODELS` или через env
+  `reranker_qwen3_4b`, `reranker_bge_v2_m3`, `reranker_jina_v3`. Новые
+  reranker-модели выбираются alias-ами registry в
+  `RERANKER_BENCHMARK_MODELS` или через env
   `DEDUP_RERANKER_BENCHMARK_MODELS`; главный CSV для выбора лучшего решения:
   `all_model_benchmark_summary_sauces.csv`.
 - `03_matching_comparison.ipynb` запускается без разметки и показывает

@@ -26,6 +26,11 @@ def test_resolve_known_aliases_and_custom_model_ids() -> None:
     assert spec.model_name == "Qwen/Qwen3-Reranker-4B"
     assert spec.backend == CROSS_ENCODER_BACKEND
 
+    bge = resolve_model_spec("bge_m3")
+    assert bge.alias == "reranker_bge_v2_m3"
+    assert bge.model_name == "BAAI/bge-reranker-v2-m3"
+    assert bge.backend == CROSS_ENCODER_BACKEND
+
     custom = resolve_model_spec("vendor/custom-e5-model", backend=SENTENCE_TRANSFORMER_BACKEND)
     assert custom.alias == "vendor/custom-e5-model"
     assert custom.model_name == "vendor/custom-e5-model"
