@@ -76,6 +76,27 @@ def test_bi_encoder_gracefully_skips_when_dependency_missing(monkeypatch: pytest
     assert matcher.predict_label(_pair()) == "different_product"
 
 
+def test_bi_encoder_polza_backend_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("POLZA_API_KEY", raising=False)
+    monkeypatch.delenv("POLZA_AI_API_KEY", raising=False)
+    matcher = BiEncoderMatcher(BiEncoderConfig(model_name="polza_embedding_3_small"))
+
+    status = matcher.status()
+
+    assert status.available is False
+    assert "Polza.ai API key is missing" in status.message
+
+
+def test_bi_encoder_polza_backend_status_with_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POLZA_API_KEY", "secret")
+    matcher = BiEncoderMatcher(BiEncoderConfig(model_name="polza_embedding_3_small"))
+
+    status = matcher.status()
+
+    assert status.available is True
+    assert "openai/text-embedding-3-small" in status.message
+
+
 def test_bi_encoder_scores_with_injected_model() -> None:
     class FakeModel:
         def encode(self, texts: list[str], **_: object) -> np.ndarray:

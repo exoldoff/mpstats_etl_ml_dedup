@@ -77,7 +77,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `research/dedup/labeling.py` | stratified sampling для ручной разметки gold-set |
 | `research/dedup/metrics.py` | dependency-light classification report и confusion matrix |
 | `research/dedup/fusion.py` | research fusion по архитектуре |
-| `research/dedup/model_registry.py` | единый registry/manager/pool для локальных research-моделей и cache dir |
+| `research/dedup/model_registry.py` | единый registry/manager/pool для local-моделей и Polza.ai online embeddings |
 | `research/dedup/matchers/` | baseline matching engines A/B и общий интерфейс |
 | `research/dedup/annotator.py` | helper для ручной разметки |
 | `research/dedup/tests/` | узкие тесты research-модулей |
@@ -122,6 +122,12 @@ Research-код остаётся независимым: `research/dedup/` не 
   `ModelManager` управляет локальным кэшем `research/dedup/models/`,
   in-process pool и offline-флагом `DEDUP_MODEL_LOCAL_ONLY=1`.
   Cache dir можно заменить через `DEDUP_MODEL_CACHE_DIR`.
+- Online embedding-модели подключаются только через Polza.ai backend:
+  aliases `polza_embedding_3_small`, `polza_embedding_3_large`,
+  `polza_qwen3_embedding_4b`; ключ берётся из `POLZA_API_KEY` или
+  `POLZA_AI_API_KEY`, base URL по умолчанию `https://polza.ai/api/v1`.
+  Для прямого Polza model id используй `DEDUP_EMBEDDING_BACKEND=polza_embedding`
+  или `DEDUP_BI_ENCODER_BACKEND=polza_embedding`.
 - В конце `03_matching_comparison.ipynb` есть общий benchmark всех
   matching-моделей на одном срезе: `rule_based_fuzzy`,
   `bi_encoder_zero_shot`, `cross_encoder_zero_shot`,

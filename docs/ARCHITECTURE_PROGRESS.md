@@ -20,10 +20,66 @@
 - Research-модели управляются через `research/dedup/model_registry.py`:
   alias -> backend/model id, общий cache dir `research/dedup/models/`,
   in-process pool и offline-режим `DEDUP_MODEL_LOCAL_ONLY=1`.
+- Online embedding-модели идут через Polza.ai-compatible backend
+  `polza_embedding`, не через абстрактные provider env-переменные.
 - Gold-set размечен и готов для baseline-метрик. Следующий research-фокус:
   сравнить более сильные готовые reranker-модели, затем снижать false merges
   через supervised fusion/fine-tuning и прогонять выбранный matcher по полному
   candidate set.
+
+## 2026-06-25 — Polza.ai backend для online embeddings
+
+### Зачем
+
+Online-модели в research-слое должны подключаться через Polza.ai, а не через
+произвольные provider-переменные. Это сохраняет один понятный контракт для
+API-ключей, model ids и endpoint-ов.
+
+### Что сделано
+
+- В `research/dedup/model_registry.py` добавлен backend `polza_embedding`.
+- Добавлены aliases:
+  - `polza_embedding_3_small` -> `openai/text-embedding-3-small`;
+  - `polza_embedding_3_large` -> `openai/text-embedding-3-large`;
+  - `polza_qwen3_embedding_4b` -> `qwen/qwen3-embedding-4b`.
+- Добавлен `PolzaEmbeddingModel` с интерфейсом `encode(...)`, совместимым с
+текущим notebook/matcher-кодом:
+  - POST `{POLZA_BASE_URL}/embeddings`;
+  - `Authorization: Bearer ...`;
+  - request body `model`, `input`, `encoding_format`;
+  - `dimensions` отправляется только если явно задан.
+- Добавлен helper `fetch_polza_models(...)` для публичного каталога:
+  `/models?type=embedding&include_providers=true`.
+- `BiEncoderMatcher` теперь умеет backend `polza_embedding` и не требует
+  установленный `sentence-transformers` для Polza aliases.
+- `notebooks/01_candidate_generation.ipynb` и
+  `notebooks/03_matching_comparison.ipynb` получили env-переменные:
+  `DEDUP_EMBEDDING_BACKEND` и `DEDUP_BI_ENCODER_BACKEND`.
+
+### Как пользоваться
+
+- Ключ: `POLZA_API_KEY` или `POLZA_AI_API_KEY`.
+- Base URL по умолчанию: `https://polza.ai/api/v1`; override:
+  `POLZA_BASE_URL`.
+- Candidate generation через Polza:
+  `DEDUP_EMBEDDING_MODEL=polza_embedding_3_small`.
+- Если передаёшь прямой Polza model id:
+  `DEDUP_EMBEDDING_MODEL=openai/text-embedding-3-small DEDUP_EMBEDDING_BACKEND=polza_embedding`.
+- Bi-encoder comparison через Polza:
+  `DEDUP_BI_ENCODER_MODEL=polza_embedding_3_small`.
+- Для прямого Polza model id в notebook-3:
+  `DEDUP_BI_ENCODER_MODEL=openai/text-embedding-3-small DEDUP_BI_ENCODER_BACKEND=polza_embedding`.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests/test_model_registry.py
+  research/dedup/tests/test_matchers.py` — 20 passed.
+- `python3 -m compileall research/dedup` — ok.
+- `ast.parse` всех code cells в `01_candidate_generation.ipynb` и
+  `03_matching_comparison.ipynb` — ok.
+- `nbclient` на `notebooks/03_matching_comparison.ipynb` в лёгком режиме
+  (`DEDUP_RUN_BI_ENCODER=0`, `DEDUP_RUN_CROSS_ENCODER=0`,
+  `DEDUP_RERANKER_BENCHMARK_MODELS=`) — ok.
 
 ## 2026-06-25 — Model registry и локальный cache/pool
 

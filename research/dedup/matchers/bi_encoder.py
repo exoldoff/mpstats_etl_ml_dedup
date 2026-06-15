@@ -9,7 +9,14 @@ from typing import Any, Callable, Sequence
 import numpy as np
 
 from research.dedup.fusion import FusionConfig, decide_label, get_pair_value
-from research.dedup.model_registry import ModelManager, model_text_prefix
+from research.dedup.model_registry import (
+    POLZA_EMBEDDING_BACKEND,
+    SENTENCE_TRANSFORMER_BACKEND,
+    ModelManager,
+    get_polza_api_key,
+    model_text_prefix,
+    resolve_embedding_model_spec,
+)
 
 from .base import MatcherStatus, PairMatcher
 
@@ -20,6 +27,7 @@ ModelFactory = Callable[[str], Any]
 @dataclass(frozen=True)
 class BiEncoderConfig:
     model_name: str = "intfloat/multilingual-e5-base"
+    model_backend: str | None = None
     batch_size: int = 32
     text_prefix: str | None = None
     cache_dir: str | Path | None = None
@@ -51,12 +59,24 @@ class BiEncoderMatcher(PairMatcher):
             return MatcherStatus(available=False, message=self._load_error)
         if self._model_factory is not None:
             return MatcherStatus(available=True, message="custom model factory configured")
-        if importlib.util.find_spec("sentence_transformers") is None:
+        try:
+            spec = resolve_embedding_model_spec(self.config.model_name, backend=self.config.model_backend)
+        except Exception as exc:
+            return MatcherStatus(available=False, message=str(exc))
+        if spec.backend == POLZA_EMBEDDING_BACKEND:
+            if importlib.util.find_spec("requests") is None:
+                return MatcherStatus(available=False, message="requests is not installed; Polza.ai embeddings skipped")
+            try:
+                get_polza_api_key()
+            except RuntimeError as exc:
+                return MatcherStatus(available=False, message=str(exc))
+            return MatcherStatus(available=True, message=f"Polza.ai embeddings configured: {spec.model_name}")
+        if spec.backend == SENTENCE_TRANSFORMER_BACKEND and importlib.util.find_spec("sentence_transformers") is None:
             return MatcherStatus(
                 available=False,
                 message="sentence-transformers is not installed; bi-encoder baseline skipped",
             )
-        return MatcherStatus(available=True, message="sentence-transformers available; model loads lazily")
+        return MatcherStatus(available=True, message=f"{spec.backend} available; model loads lazily")
 
     def _load_model(self) -> Any | None:
         status = self.status()
@@ -73,7 +93,10 @@ class BiEncoderMatcher(PairMatcher):
                     cache_dir=self.config.cache_dir,
                     local_files_only=self.config.local_files_only,
                 )
-                self._model = manager.load_sentence_transformer(self.config.model_name)
+                self._model = manager.load_embedding_model(
+                    self.config.model_name,
+                    backend=self.config.model_backend,
+                )
         except Exception as exc:  # pragma: no cover - depends on local model/network state
             self._load_error = f"failed to load {self.config.model_name}: {exc}"
             return None
@@ -85,7 +108,7 @@ class BiEncoderMatcher(PairMatcher):
         text = " ".join(part.strip() for part in [str(brand or ""), str(title or "")] if part and str(part).strip())
         prefix = self.config.text_prefix
         if prefix is None:
-            prefix = model_text_prefix(self.config.model_name)
+            prefix = model_text_prefix(self.config.model_name, backend=self.config.model_backend)
         return f"{prefix or ''}{text}".strip()
 
     @staticmethod
