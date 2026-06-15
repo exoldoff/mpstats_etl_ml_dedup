@@ -1424,6 +1424,68 @@ Cross-encoder — более внимательная проверка пары,
 `matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
 `matching_false_merges_sauces.csv`.
 
+В конце `03_matching_comparison.ipynb` есть отдельный выключенный по
+умолчанию мини-бенчмарк тяжёлых reranker-моделей:
+`Qwen/Qwen3-Reranker-4B` и `jinaai/jina-reranker-v3`. Он не меняет основные
+`matching_*` CSV, а сохраняет отдельные файлы
+`reranker_benchmark_summary_sauces.csv` и
+`reranker_benchmark_predictions_sauces.csv`.
+
+Запуск полного бенчмарка:
+
+```bash
+DEDUP_RERANKER_BENCHMARK=1 python3 - <<'PY'
+from pathlib import Path
+import nbformat
+from nbclient import NotebookClient
+
+path = Path("notebooks/03_matching_comparison.ipynb")
+nb = nbformat.read(path, as_version=4)
+NotebookClient(
+    nb,
+    timeout=3600,
+    kernel_name="python3",
+    resources={"metadata": {"path": str(Path.cwd())}},
+).execute()
+nbformat.write(nb, path)
+print("ok", path)
+PY
+```
+
+Быстрый smoke-test на части пар:
+
+```bash
+DEDUP_RERANKER_BENCHMARK=1 \
+DEDUP_RERANKER_BENCHMARK_MAX_PAIRS=120 \
+python3 - <<'PY'
+from pathlib import Path
+import nbformat
+from nbclient import NotebookClient
+
+path = Path("notebooks/03_matching_comparison.ipynb")
+nb = nbformat.read(path, as_version=4)
+NotebookClient(
+    nb,
+    timeout=3600,
+    kernel_name="python3",
+    resources={"metadata": {"path": str(Path.cwd())}},
+).execute()
+nbformat.write(nb, path)
+print("ok", path)
+PY
+```
+
+Можно запускать только одну модель:
+
+```bash
+DEDUP_RERANKER_BENCHMARK=1 DEDUP_RERANKER_BENCHMARK_MODELS=qwen3_4b python3 -m jupyter lab
+DEDUP_RERANKER_BENCHMARK=1 DEDUP_RERANKER_BENCHMARK_MODELS=jina_v3 python3 -m jupyter lab
+```
+
+Для Qwen на слабой машине держите `DEDUP_QWEN_RERANKER_BATCH_SIZE=1`.
+Jina v3 удобна для эксперимента, но перед production-использованием нужно
+отдельно проверить лицензионные условия.
+
 `04_clustering_resolution.ipynb` строит partial family/pack graph по
 predictions из 03 и сохраняет `clustering_components_sauces.csv` и
 `clustering_pair_eval_sauces.csv`.

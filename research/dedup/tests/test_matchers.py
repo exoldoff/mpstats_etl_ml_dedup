@@ -6,9 +6,17 @@ import math
 import numpy as np
 import pytest
 
-from research.dedup import BiEncoderMatcher, CrossEncoderMatcher, FusionConfig, RuleBasedMatcher, decide_label
+from research.dedup import (
+    BiEncoderMatcher,
+    CrossEncoderMatcher,
+    FusionConfig,
+    JinaRerankerMatcher,
+    RuleBasedMatcher,
+    decide_label,
+)
 from research.dedup.matchers.bi_encoder import BiEncoderConfig
 from research.dedup.matchers.cross_encoder import CrossEncoderConfig
+from research.dedup.matchers.jina_reranker import JinaRerankerConfig
 
 
 def _pair(**overrides: object) -> dict[str, object]:
@@ -112,3 +120,39 @@ def test_cross_encoder_scores_with_injected_model() -> None:
 
     assert matcher.score(_pair()) == 0.95
     assert matcher.score(_pair(title_b="Соус сливочный 200 г")) == 0.1
+
+
+def test_cross_encoder_uses_configured_method_name() -> None:
+    matcher = CrossEncoderMatcher(CrossEncoderConfig(model_name="fake-cross-encoder", method_name="reranker_qwen3_4b"))
+
+    assert matcher.name == "reranker_qwen3_4b"
+
+
+def test_jina_reranker_gracefully_skips_when_dependency_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None if name == "transformers" else object())
+    matcher = JinaRerankerMatcher()
+
+    assert matcher.status().available is False
+    assert math.isnan(matcher.score(_pair()))
+    assert matcher.predict_label(_pair()) == "different_product"
+
+
+def test_jina_reranker_scores_with_injected_model() -> None:
+    class FakeModel:
+        def rerank(self, query: str, documents: list[str], **_: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "index": idx,
+                    "relevance_score": 0.9 if "острый" in query and "острый" in document else 0.05,
+                    "document": document,
+                }
+                for idx, document in enumerate(documents)
+            ]
+
+    matcher = JinaRerankerMatcher(
+        JinaRerankerConfig(model_name="fake-jina-reranker", documents_per_query=1),
+        model_factory=lambda _: FakeModel(),
+    )
+
+    assert matcher.score(_pair()) == 0.9
+    assert matcher.score(_pair(title_b="Соус сливочный 200 г")) == 0.05

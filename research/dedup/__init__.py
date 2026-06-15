@@ -27,7 +27,15 @@ from .embedding_candidates import (
 )
 from .labeling import LabelingSamplingConfig, stratified_labeling_sample
 from .fusion import FusionConfig, decide_label
-from .matchers import BiEncoderMatcher, CrossEncoderMatcher, MatcherStatus, PAIR_LABELS, PairMatcher, RuleBasedMatcher
+from .matchers import (
+    BiEncoderMatcher,
+    CrossEncoderMatcher,
+    JinaRerankerMatcher,
+    MatcherStatus,
+    PAIR_LABELS,
+    PairMatcher,
+    RuleBasedMatcher,
+)
 from .metrics import classification_report_df, confusion_matrix_df
 from .normalization import (
     DEFAULT_FLAVOR_TOKENS,
@@ -48,6 +56,7 @@ __all__ = [
     "FAISS_CANDIDATE_OUTPUT_COLUMNS",
     "FusionConfig",
     "FaissCandidateGenerationConfig",
+    "JinaRerankerMatcher",
     "LabelingSamplingConfig",
     "MatcherStatus",
     "PACK_EDGE_LABELS",

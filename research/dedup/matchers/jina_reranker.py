@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 import importlib.util
 import math
 from typing import Any, Callable, Sequence
-
-import numpy as np
 
 from research.dedup.fusion import FusionConfig, decide_label, get_pair_value
 
@@ -16,34 +15,32 @@ ModelFactory = Callable[[str], Any]
 
 
 @dataclass(frozen=True)
-class CrossEncoderConfig:
-    model_name: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
-    method_name: str = "cross_encoder_zero_shot"
-    batch_size: int = 16
-    trust_remote_code: bool = False
-    prompts: dict[str, str] | None = None
-    default_prompt_name: str | None = None
-    fusion: FusionConfig = FusionConfig(threshold_high=8.0, threshold_low=4.0)
+class JinaRerankerConfig:
+    model_name: str = "jinaai/jina-reranker-v3"
+    method_name: str = "reranker_jina_v3"
+    documents_per_query: int = 16
+    trust_remote_code: bool = True
+    fusion: FusionConfig = FusionConfig(threshold_high=0.5, threshold_low=0.2)
     uncertain_fallback_label: str = "different_product"
 
 
-class CrossEncoderMatcher(PairMatcher):
-    """Baseline D0: ready-made cross-encoder reranker, without fine-tuning."""
+class JinaRerankerMatcher(PairMatcher):
+    """Research wrapper for Jina rerankers that expose ``model.rerank``."""
+
+    def __init__(
+        self,
+        config: JinaRerankerConfig | None = None,
+        *,
+        model_factory: ModelFactory | None = None,
+    ) -> None:
+        self.config = config or JinaRerankerConfig()
+        self._model_factory = model_factory
+        self._model: Any | None = None
+        self._load_error: str | None = None
 
     @property
     def name(self) -> str:
         return self.config.method_name
-
-    def __init__(
-        self,
-        config: CrossEncoderConfig | None = None,
-        *,
-        model_factory: ModelFactory | None = None,
-    ) -> None:
-        self.config = config or CrossEncoderConfig()
-        self._model_factory = model_factory
-        self._model: Any | None = None
-        self._load_error: str | None = None
 
     def status(self) -> MatcherStatus:
         if self._model is not None:
@@ -52,12 +49,12 @@ class CrossEncoderMatcher(PairMatcher):
             return MatcherStatus(available=False, message=self._load_error)
         if self._model_factory is not None:
             return MatcherStatus(available=True, message="custom model factory configured")
-        if importlib.util.find_spec("sentence_transformers") is None:
+        if importlib.util.find_spec("transformers") is None:
             return MatcherStatus(
                 available=False,
-                message="sentence-transformers is not installed; cross-encoder baseline skipped",
+                message="transformers is not installed; Jina reranker benchmark skipped",
             )
-        return MatcherStatus(available=True, message="sentence-transformers available; cross-encoder loads lazily")
+        return MatcherStatus(available=True, message="transformers available; Jina reranker loads lazily")
 
     def _load_model(self) -> Any | None:
         status = self.status()
@@ -70,16 +67,15 @@ class CrossEncoderMatcher(PairMatcher):
             if self._model_factory is not None:
                 self._model = self._model_factory(self.config.model_name)
             else:
-                from sentence_transformers import CrossEncoder
+                from transformers import AutoModel
 
-                model_kwargs: dict[str, Any] = {}
-                if self.config.trust_remote_code:
-                    model_kwargs["trust_remote_code"] = True
-                if self.config.prompts is not None:
-                    model_kwargs["prompts"] = self.config.prompts
-                if self.config.default_prompt_name is not None:
-                    model_kwargs["default_prompt_name"] = self.config.default_prompt_name
-                self._model = CrossEncoder(self.config.model_name, **model_kwargs)
+                self._model = AutoModel.from_pretrained(
+                    self.config.model_name,
+                    dtype="auto",
+                    trust_remote_code=self.config.trust_remote_code,
+                )
+            if hasattr(self._model, "eval"):
+                self._model.eval()
         except Exception as exc:  # pragma: no cover - depends on local model/network state
             self._load_error = f"failed to load {self.config.model_name}: {exc}"
             return None
@@ -110,16 +106,33 @@ class CrossEncoderMatcher(PairMatcher):
         model = self._load_model()
         if model is None:
             return [math.nan for _ in pairs]
-        text_pairs = [(self._format_text(pair, "a"), self._format_text(pair, "b")) for pair in pairs]
+
+        grouped_documents: dict[str, list[tuple[int, str]]] = defaultdict(list)
+        for idx, pair in enumerate(pairs):
+            grouped_documents[self._format_text(pair, "a")].append((idx, self._format_text(pair, "b")))
+
+        scores = [math.nan for _ in pairs]
+        chunk_size = max(1, int(self.config.documents_per_query))
         try:
-            raw_scores = model.predict(text_pairs, batch_size=self.config.batch_size)
-        except TypeError:
-            raw_scores = model.predict(text_pairs)
-        scores = np.asarray(raw_scores, dtype=float).reshape(-1)
-        if len(scores) != len(pairs):
-            self._load_error = "model returned scores with unexpected shape"
+            for query, indexed_documents in grouped_documents.items():
+                for offset in range(0, len(indexed_documents), chunk_size):
+                    chunk = indexed_documents[offset : offset + chunk_size]
+                    documents = [document for _, document in chunk]
+                    try:
+                        results = model.rerank(query, documents, top_n=None)
+                    except TypeError:
+                        results = model.rerank(query, documents)
+                    for result in results:
+                        local_index = int(result.get("index", 0))
+                        if local_index >= len(chunk):
+                            continue
+                        pair_index, _ = chunk[local_index]
+                        raw_score = result.get("relevance_score", result.get("score", math.nan))
+                        scores[pair_index] = round(float(raw_score), 6)
+        except Exception as exc:  # pragma: no cover - depends on local model/runtime state
+            self._load_error = f"failed to score {self.config.model_name}: {exc}"
             return [math.nan for _ in pairs]
-        return [round(float(score), 6) for score in scores]
+        return scores
 
     def predict_label(self, pair: Any) -> str:
         score = self.score(pair)

@@ -18,9 +18,57 @@
 - Primary blocking для `01_candidate_generation.ipynb` теперь соответствует
   целевой архитектуре: dense embeddings -> FAISS top-k.
 - Gold-set размечен и готов для baseline-метрик. Следующий research-фокус:
-  проверить готовый cross-encoder rerank без дообучения, затем снижать false
-  merges через fine-tuning/LLM-judge и прогонять выбранный matcher по полному
+  сравнить более сильные готовые reranker-модели, затем снижать false merges
+  через supervised fusion/fine-tuning и прогонять выбранный matcher по полному
   candidate set.
+
+## 2026-06-25 — Optional reranker benchmark в notebook-3
+
+### Зачем
+
+После первых ошибок cross-encoder стало видно, что часть пар сложна даже для
+человека: товары очень близки по тексту, но отличаются назначением, вкусом или
+pack. Перед обучением своей fusion-модели полезно быстро проверить более
+сильные готовые reranker-модели на том же gold-set.
+
+### Что сделано
+
+- `CrossEncoderMatcher` получил:
+  - отдельное `method_name`, чтобы в одном notebook можно было сравнивать
+    несколько cross-encoder моделей;
+  - `prompts` / `default_prompt_name` для instruction-aware rerankers вроде
+    Qwen3;
+  - `trust_remote_code` на случай моделей с кастомным кодом.
+- Добавлен `research/dedup/matchers/jina_reranker.py`:
+  - lazy load через `transformers.AutoModel`;
+  - вызов `model.rerank(query, documents)`;
+  - тот же pairwise score -> fusion -> label контракт, что у остальных
+    matchers.
+- В конец `notebooks/03_matching_comparison.ipynb` добавлен выключенный по
+  умолчанию мини-бенчмарк:
+  - `Qwen/Qwen3-Reranker-4B`;
+  - `jinaai/jina-reranker-v3`;
+  - запуск включается через `DEDUP_RERANKER_BENCHMARK=1`;
+  - результаты сохраняются отдельно в
+    `reranker_benchmark_summary_sauces.csv` и
+    `reranker_benchmark_predictions_sauces.csv`, основные `matching_*` CSV не
+    перетираются.
+- `requirements-research.txt` обновлён под актуальные reranker dependencies:
+  `sentence-transformers>=5.0`, `transformers>=4.51`.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests` — 27 passed.
+- `python3 -m compileall research/dedup` — ok.
+- `nbclient` на `notebooks/03_matching_comparison.ipynb` в лёгком режиме
+  (`DEDUP_RUN_BI_ENCODER=0`, `DEDUP_RUN_CROSS_ENCODER=0`,
+  `DEDUP_RERANKER_BENCHMARK=0`) — ok.
+
+### Следующий шаг
+
+Запустить reranker-бенчмарк сначала на малом срезе
+`DEDUP_RERANKER_BENCHMARK_MAX_PAIRS=120`, затем на всём gold-set, если машина
+вывозит. Сравнивать строки `reranker_benchmark_calibrated / test`.
 
 ## 2026-06-25 — Ready-made cross-encoder rerank в notebook-3
 
