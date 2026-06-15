@@ -18,9 +18,65 @@
 - Primary blocking для `01_candidate_generation.ipynb` теперь соответствует
   целевой архитектуре: dense embeddings -> FAISS top-k.
 - Gold-set размечен и готов для baseline-метрик. Следующий research-фокус:
-  снижать false merges через более строгий rerank/fusion
-  (cross-encoder/LLM-judge), затем прогонять выбранный matcher по полному
+  проверить готовый cross-encoder rerank без дообучения, затем снижать false
+  merges через fine-tuning/LLM-judge и прогонять выбранный matcher по полному
   candidate set.
+
+## 2026-06-25 — Ready-made cross-encoder rerank в notebook-3
+
+### Зачем
+
+Архитектура предусматривает cross-encoder как более внимательную проверку
+пары после FAISS/bi-encoder retrieval. После первых baseline-метрик стало
+видно, что главная проблема — false merges на похожих вкусах/типах одного
+бренда. Поэтому следующий шаг — добавить готовый cross-encoder без
+дообучения и проверить, снижает ли он опасные ошибки.
+
+### Что сделано
+
+- Добавлен `research/dedup/matchers/cross_encoder.py`:
+  - lazy load через `sentence_transformers.CrossEncoder`;
+  - default model: `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`;
+  - используется raw rerank score модели; порог в notebook-3 подбирается
+    по фактическому диапазону score на dev;
+  - graceful skip, если `sentence-transformers` или модель недоступны.
+- В конец `notebooks/03_matching_comparison.ipynb` дописана новая секция
+  `cross_encoder_zero_shot`:
+  - использует те же `dev`/`test`;
+  - калибрует `threshold_high` на dev;
+  - сравнивает cross-encoder с уже посчитанными baselines;
+  - дописывает cross-encoder results в `matching_summary_sauces.csv`,
+    `matching_predictions_sauces.csv`, `matching_false_merges_sauces.csv`.
+
+### Следующий шаг
+
+### Первые цифры
+
+Готовый cross-encoder успешно запустился, но пока не обогнал
+`rule_based_fuzzy` на held-out test:
+
+| Метод | macro-F1 | `exact_duplicate` precision | false-merge rate |
+| --- | ---: | ---: | ---: |
+| `rule_based_fuzzy` | 0.606 | 0.579 | 18.5% |
+| `cross_encoder_zero_shot` | 0.572 | 0.500 | 21.9% |
+| `bi_encoder_zero_shot` | 0.470 | 1.000 | 15.2% |
+
+Вывод: готовый reranker сам по себе не решает товарный matching. Это
+полезный результат для защиты: следующая итерация должна быть fine-tuning
+cross-encoder на наших парах или LLM-judge для спорных случаев.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests` — 24 passed.
+- `python3 -m compileall research/dedup` — ok.
+- `nbclient` на `notebooks/03_matching_comparison.ipynb` с cross-encoder —
+  ok, CSV matching-артефакты обновлены.
+
+### Следующий шаг
+
+Перезапустить `04` и `05`, чтобы graph/report подхватили новый метод, затем
+решать: fine-tuning cross-encoder или LLM-judge на low-confidence/false-merge
+парах.
 
 ## 2026-06-24 — Gold-set validation, calibrated matching, clustering/report
 

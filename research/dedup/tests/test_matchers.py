@@ -6,8 +6,9 @@ import math
 import numpy as np
 import pytest
 
-from research.dedup import BiEncoderMatcher, FusionConfig, RuleBasedMatcher, decide_label
+from research.dedup import BiEncoderMatcher, CrossEncoderMatcher, FusionConfig, RuleBasedMatcher, decide_label
 from research.dedup.matchers.bi_encoder import BiEncoderConfig
+from research.dedup.matchers.cross_encoder import CrossEncoderConfig
 
 
 def _pair(**overrides: object) -> dict[str, object]:
@@ -85,3 +86,29 @@ def test_bi_encoder_scores_with_injected_model() -> None:
 
     assert matcher.score(_pair()) == 1.0
     assert matcher.score(_pair(title_b="Соус сливочный 200 г")) == 0.0
+
+
+def test_cross_encoder_gracefully_skips_when_dependency_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None if name == "sentence_transformers" else object())
+    matcher = CrossEncoderMatcher()
+
+    assert matcher.status().available is False
+    assert math.isnan(matcher.score(_pair()))
+    assert matcher.predict_label(_pair()) == "different_product"
+
+
+def test_cross_encoder_scores_with_injected_model() -> None:
+    class FakeModel:
+        def predict(self, pairs: list[tuple[str, str]], **_: object) -> np.ndarray:
+            scores = []
+            for left, right in pairs:
+                scores.append(0.95 if "острый" in left and "острый" in right else 0.1)
+            return np.asarray(scores)
+
+    matcher = CrossEncoderMatcher(
+        CrossEncoderConfig(model_name="fake-cross-encoder"),
+        model_factory=lambda _: FakeModel(),
+    )
+
+    assert matcher.score(_pair()) == 0.95
+    assert matcher.score(_pair(title_b="Соус сливочный 200 г")) == 0.1

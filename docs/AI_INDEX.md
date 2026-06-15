@@ -84,7 +84,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `notebooks/00_eda.ipynb` | EDA по `Соусы` |
 | `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking, генерация `candidates_sauces.csv` |
 | `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_sauces.csv` |
-| `notebooks/03_matching_comparison.ipynb` | сравнение baseline A/B на размеченном gold-set |
+| `notebooks/03_matching_comparison.ipynb` | сравнение baseline A/B/D0 на размеченном gold-set |
 | `notebooks/04_clustering_resolution.ipynb` | graph resolution по calibrated pairwise predictions |
 | `notebooks/05_evaluation_report.ipynb` | финальный research-отчёт по текущему baseline-прогону |
 
@@ -114,6 +114,8 @@ Research-код остаётся независимым: `research/dedup/` не 
 - Baseline matching scaffold:
   - A: rule-based fuzzy + structural fusion.
   - B: zero-shot bi-encoder с graceful skip без `sentence-transformers`.
+  - D0: готовый cross-encoder rerank без дообучения, дописан новой секцией
+    в конец `03_matching_comparison.ipynb`.
 - `03_matching_comparison.ipynb` запускается без разметки и показывает
   заглушки вместо падения.
 
@@ -123,7 +125,8 @@ Research-код остаётся независимым: `research/dedup/` не 
   400 размеченных пар, из них 379 входят в 3-class evaluation и 21 помечена
   как `uncertain`.
 - `notebooks/03_matching_comparison.ipynb` теперь делает stratified dev/test
-  split, калибрует `threshold_high` на dev и сохраняет
+  split, калибрует `threshold_high` на dev, сравнивает rule-based,
+  bi-encoder и готовый cross-encoder rerank, затем сохраняет
   `matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
   `matching_false_merges_sauces.csv`.
 - `notebooks/04_clustering_resolution.ipynb` строит partial family/pack graph

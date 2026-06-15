@@ -1414,7 +1414,13 @@ PY
 ```
 
 `03_matching_comparison.ipynb` делает dev/test split, калибрует
-`threshold_high` на dev и сохраняет локальные артефакты:
+`threshold_high` на dev и сравнивает текущие методы:
+`rule_based_fuzzy`, `bi_encoder_zero_shot` и `cross_encoder_zero_shot`.
+Cross-encoder — более внимательная проверка пары, но первый запуск может
+скачивать модель из Hugging Face. Если нужно временно пропустить этот блок,
+запустите notebook с `DEDUP_RUN_CROSS_ENCODER=0`.
+
+После прогона `03` сохраняет локальные артефакты:
 `matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
 `matching_false_merges_sauces.csv`.
 

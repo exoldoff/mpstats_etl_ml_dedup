@@ -27,7 +27,7 @@ from .embedding_candidates import (
 )
 from .labeling import LabelingSamplingConfig, stratified_labeling_sample
 from .fusion import FusionConfig, decide_label
-from .matchers import BiEncoderMatcher, MatcherStatus, PAIR_LABELS, PairMatcher, RuleBasedMatcher
+from .matchers import BiEncoderMatcher, CrossEncoderMatcher, MatcherStatus, PAIR_LABELS, PairMatcher, RuleBasedMatcher
 from .metrics import classification_report_df, confusion_matrix_df
 from .normalization import (
     DEFAULT_FLAVOR_TOKENS,
@@ -42,6 +42,7 @@ __all__ = [
     "CandidateGenerationConfig",
     "BiEncoderMatcher",
     "ComponentConfig",
+    "CrossEncoderMatcher",
     "DEFAULT_FLAVOR_TOKENS",
     "FAMILY_EDGE_LABELS",
     "FAISS_CANDIDATE_OUTPUT_COLUMNS",
