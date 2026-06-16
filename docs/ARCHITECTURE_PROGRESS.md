@@ -152,6 +152,9 @@ API-ключей, model ids и endpoint-ов.
   - `polza_embedding_3_small` -> `openai/text-embedding-3-small`;
   - `polza_embedding_3_large` -> `openai/text-embedding-3-large`;
   - `polza_qwen3_embedding_4b` -> `qwen/qwen3-embedding-4b`.
+- Оригинальные Polza model ids тоже принимаются напрямую:
+  `openai/text-embedding-3-small`, `openai/text-embedding-3-large`,
+  `qwen/qwen3-embedding-4b`; backend определяется registry автоматически.
 - Добавлен `PolzaEmbeddingModel` с интерфейсом `encode(...)`, совместимым с
 текущим notebook/matcher-кодом:
   - POST `{POLZA_BASE_URL}/embeddings`;
@@ -172,13 +175,15 @@ API-ключей, model ids и endpoint-ов.
 - Base URL по умолчанию: `https://polza.ai/api/v1`; override:
   `POLZA_BASE_URL`.
 - Candidate generation через Polza:
+  `DEDUP_EMBEDDING_MODEL=openai/text-embedding-3-small`.
+- Старый alias тоже работает:
   `DEDUP_EMBEDDING_MODEL=polza_embedding_3_small`.
-- Если передаёшь прямой Polza model id:
-  `DEDUP_EMBEDDING_MODEL=openai/text-embedding-3-small DEDUP_EMBEDDING_BACKEND=polza_embedding`.
+- `DEDUP_EMBEDDING_BACKEND=polza_embedding` нужен только для нового прямого
+  Polza model id, которого ещё нет в registry.
 - Bi-encoder comparison через Polza:
-  `DEDUP_BI_ENCODER_MODEL=polza_embedding_3_small`.
-- Для прямого Polza model id в notebook-3:
-  `DEDUP_BI_ENCODER_MODEL=openai/text-embedding-3-small DEDUP_BI_ENCODER_BACKEND=polza_embedding`.
+  `DEDUP_BI_ENCODER_MODEL=openai/text-embedding-3-small`.
+- `DEDUP_BI_ENCODER_BACKEND=polza_embedding` нужен только для нового прямого
+  Polza model id, которого ещё нет в registry.
 
 ### Проверки
 

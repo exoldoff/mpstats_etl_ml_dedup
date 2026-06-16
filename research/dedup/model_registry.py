@@ -139,7 +139,12 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
 }
 
 MODEL_ALIASES: dict[str, str] = {
+    "intfloat/multilingual-e5-small": "embedding_e5_small",
+    "cross-encoder/mmarco-mminilmv2-l12-h384-v1": "cross_encoder_mmarco",
     "qwen/qwen3-reranker-0.6b": "reranker_qwen3_0_6b",
+    "qwen/qwen3-reranker-4b": "reranker_qwen3_4b",
+    "baai/bge-reranker-v2-m3": "reranker_bge_v2_m3",
+    "jinaai/jina-reranker-v3": "reranker_jina_v3",
     "e5_small": "embedding_e5_small",
     "multilingual_e5_small": "embedding_e5_small",
     "qwen3_0_6b": "reranker_qwen3_0_6b",
@@ -149,6 +154,9 @@ MODEL_ALIASES: dict[str, str] = {
     "bge_m3": "reranker_bge_v2_m3",
     "jina_v3": "reranker_jina_v3",
     "mmarco": "cross_encoder_mmarco",
+    "openai/text-embedding-3-small": "polza_embedding_3_small",
+    "openai/text-embedding-3-large": "polza_embedding_3_large",
+    "qwen/qwen3-embedding-4b": "polza_qwen3_embedding_4b",
     "polza_text_embedding_3_small": "polza_embedding_3_small",
     "polza_text_embedding_3_large": "polza_embedding_3_large",
 }

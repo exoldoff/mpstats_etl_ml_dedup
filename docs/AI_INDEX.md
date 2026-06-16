@@ -126,11 +126,14 @@ Research-код остаётся независимым: `research/dedup/` не 
   in-process pool и offline-флагом `DEDUP_MODEL_LOCAL_ONLY=1`.
   Cache dir можно заменить через `DEDUP_MODEL_CACHE_DIR`.
 - Online embedding-модели подключаются только через Polza.ai backend:
-  aliases `polza_embedding_3_small`, `polza_embedding_3_large`,
-  `polza_qwen3_embedding_4b`; ключ берётся из `POLZA_API_KEY` или
-  `POLZA_AI_API_KEY`, base URL по умолчанию `https://polza.ai/api/v1`.
-  Для прямого Polza model id используй `DEDUP_EMBEDDING_BACKEND=polza_embedding`
-  или `DEDUP_BI_ENCODER_BACKEND=polza_embedding`.
+  известные Polza model ids `openai/text-embedding-3-small`,
+  `openai/text-embedding-3-large`, `qwen/qwen3-embedding-4b` можно писать
+  напрямую без backend override; старые aliases `polza_embedding_3_small`,
+  `polza_embedding_3_large`, `polza_qwen3_embedding_4b` остаются рабочими.
+  Ключ берётся из `POLZA_API_KEY` или `POLZA_AI_API_KEY`, base URL по
+  умолчанию `https://polza.ai/api/v1`. `DEDUP_EMBEDDING_BACKEND=polza_embedding`
+  или `DEDUP_BI_ENCODER_BACKEND=polza_embedding` нужны только для нового
+  прямого Polza model id, которого ещё нет в registry.
 - В конце `03_matching_comparison.ipynb` есть общий benchmark всех
   matching-моделей на одном срезе: `rule_based_fuzzy`,
   `bi_encoder_zero_shot`, `cross_encoder_zero_shot`,

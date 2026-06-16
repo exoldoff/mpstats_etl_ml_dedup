@@ -37,6 +37,10 @@ def test_resolve_known_aliases_and_custom_model_ids() -> None:
     assert bge.model_name == "BAAI/bge-reranker-v2-m3"
     assert bge.backend == CROSS_ENCODER_BACKEND
 
+    bge_original_id = resolve_model_spec("BAAI/bge-reranker-v2-m3")
+    assert bge_original_id.alias == "reranker_bge_v2_m3"
+    assert bge_original_id.backend == CROSS_ENCODER_BACKEND
+
     custom = resolve_model_spec("vendor/custom-e5-model", backend=SENTENCE_TRANSFORMER_BACKEND)
     assert custom.alias == "vendor/custom-e5-model"
     assert custom.model_name == "vendor/custom-e5-model"
@@ -50,6 +54,16 @@ def test_resolve_known_aliases_and_custom_model_ids() -> None:
     assert polza.model_name == "openai/text-embedding-3-small"
     assert polza.backend == POLZA_EMBEDDING_BACKEND
     assert model_text_prefix("polza_embedding_3_small") is None
+
+    polza_original_id = resolve_embedding_model_spec("openai/text-embedding-3-small")
+    assert polza_original_id.alias == "polza_embedding_3_small"
+    assert polza_original_id.model_name == "openai/text-embedding-3-small"
+    assert polza_original_id.backend == POLZA_EMBEDDING_BACKEND
+    assert model_text_prefix("openai/text-embedding-3-small") is None
+
+    qwen_original_id = resolve_embedding_model_spec("qwen/qwen3-embedding-4b")
+    assert qwen_original_id.alias == "polza_qwen3_embedding_4b"
+    assert qwen_original_id.backend == POLZA_EMBEDDING_BACKEND
 
 
 def test_sentence_transformer_loader_uses_explicit_cache_and_pool(monkeypatch, tmp_path) -> None:
