@@ -415,16 +415,124 @@ def error_report(frame: pd.DataFrame, mask_col: str) -> pd.DataFrame:
     return rows[[column for column in ERROR_REPORT_COLUMNS if column in rows.columns]]
 
 
-def write_threshold_reports(results: dict[str, pd.DataFrame], reports_dir: str | Path) -> None:
-    reports_path = Path(reports_dir)
-    reports_path.mkdir(parents=True, exist_ok=True)
-
-    results["calibration_on_dev"].to_csv(reports_path / "threshold_calibration_dev.csv", index=False)
-    results["evaluation_on_test"].to_csv(reports_path / "threshold_evaluation_test.csv", index=False)
-    predictions = results["predictions"]
+def threshold_pair_review(results: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    predictions = results.get("predictions", pd.DataFrame())
+    frames: list[pd.DataFrame] = []
 
     for split_name in ["dev", "test"]:
-        split = predictions[predictions["eval_split"].eq(split_name)].copy() if not predictions.empty else pd.DataFrame()
-        error_report(split, "false_merge").to_csv(reports_path / f"false_merges_on_{split_name}.csv", index=False)
-        error_report(split, "false_reject").to_csv(reports_path / f"false_rejects_on_{split_name}.csv", index=False)
-        error_report(split, "manual_review").to_csv(reports_path / f"manual_review_pairs_{split_name}.csv", index=False)
+        split = (
+            predictions[predictions["eval_split"].eq(split_name)].copy()
+            if not predictions.empty
+            else pd.DataFrame()
+        )
+        for issue_type, mask_col in [
+            ("false_merge", "false_merge"),
+            ("false_reject", "false_reject"),
+            ("manual_review", "manual_review"),
+        ]:
+            report = error_report(split, mask_col)
+            if report.empty:
+                continue
+            report = report.copy()
+            report.insert(0, "issue_type", issue_type)
+            report.insert(1, "eval_split", split_name)
+            frames.append(report)
+
+    if not frames:
+        return pd.DataFrame(columns=["issue_type", "eval_split", *ERROR_REPORT_COLUMNS])
+    return pd.concat(frames, ignore_index=True)
+
+
+def _threshold_model_ranking(calibration: pd.DataFrame, evaluation: pd.DataFrame) -> pd.DataFrame:
+    ranking = calibration.copy()
+    if ranking.empty:
+        return ranking
+
+    if not evaluation.empty:
+        test_columns = [
+            "method",
+            "auto_same_precision",
+            "auto_same_recall",
+            "false_merge_count",
+            "false_merge_rate",
+            "auto_diff_precision",
+            "auto_diff_recall",
+            "false_reject_count",
+            "manual_review_rate",
+            "auto_coverage",
+            "binary_f1_if_forced",
+            "pairs",
+            "same_base_pairs",
+            "different_product_pairs",
+        ]
+        test_view = evaluation[[column for column in test_columns if column in evaluation.columns]].copy()
+        test_view = test_view.rename(
+            columns={column: f"test_{column}" for column in test_view.columns if column != "method"}
+        )
+        ranking = ranking.merge(test_view, on="method", how="left")
+
+    sort_columns = [
+        column
+        for column in ["passed_auto_same_constraints", "auto_coverage", "auto_same_recall", "manual_review_rate"]
+        if column in ranking.columns
+    ]
+    if sort_columns:
+        ranking = ranking.sort_values(
+            sort_columns,
+            ascending=[False, False, False, True][: len(sort_columns)],
+        ).reset_index(drop=True)
+    return ranking
+
+
+def write_compact_threshold_report(
+    results: dict[str, pd.DataFrame],
+    reports_dir: str | Path,
+    *,
+    summary_filename: str = "threshold_summary.xlsx",
+    pair_review_filename: str = "threshold_pair_review.csv",
+) -> dict[str, Path]:
+    """Write the SKU threshold benchmark as one workbook plus one pair-review CSV."""
+    reports_path = Path(reports_dir)
+    reports_path.mkdir(parents=True, exist_ok=True)
+    summary_path = reports_path / summary_filename
+    pair_review_path = reports_path / pair_review_filename
+
+    calibration = results.get("calibration_on_dev", pd.DataFrame())
+    evaluation = results.get("evaluation_on_test", pd.DataFrame())
+    confusion = results.get("confusion_matrices", pd.DataFrame())
+    pair_review = threshold_pair_review(results)
+    ranking = _threshold_model_ranking(calibration, evaluation)
+
+    readme = pd.DataFrame(
+        [
+            {"field": "generated_at", "value": pd.Timestamp.now().isoformat()},
+            {"field": "source", "value": "notebooks/03_matching_comparison.ipynb"},
+            {
+                "field": "auto_merge_rule",
+                "value": "Choose threshold_auto_same on dev by max recall with precision target and false_merge_count limit.",
+            },
+            {
+                "field": "test_rule",
+                "value": "evaluation_test is held-out validation only; do not choose thresholds or models on test.",
+            },
+            {
+                "field": "pair_review",
+                "value": "threshold_pair_review.csv contains false_merge, false_reject and manual_review rows for dev/test.",
+            },
+        ]
+    )
+
+    with pd.ExcelWriter(summary_path) as writer:
+        readme.to_excel(writer, sheet_name="readme", index=False)
+        ranking.to_excel(writer, sheet_name="model_ranking", index=False)
+        calibration.to_excel(writer, sheet_name="calibration_dev", index=False)
+        evaluation.to_excel(writer, sheet_name="evaluation_test", index=False)
+        confusion.to_excel(writer, sheet_name="confusion_matrices", index=False)
+        pair_review.to_excel(writer, sheet_name="pair_review", index=False)
+
+    pair_review.to_csv(pair_review_path, index=False)
+    return {"summary": summary_path, "pair_review": pair_review_path}
+
+
+def write_threshold_reports(results: dict[str, pd.DataFrame], reports_dir: str | Path) -> None:
+    write_compact_threshold_report(results, reports_dir)

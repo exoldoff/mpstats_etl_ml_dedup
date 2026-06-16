@@ -1443,14 +1443,10 @@ Cross-encoder — более внимательная проверка пары,
 
 Главные production-отчёты лежат в `artifacts/reports/`:
 
-- `threshold_calibration_dev.csv` — критерии и выбранные пороги на dev;
-- `threshold_evaluation_test.csv` — финальная проверка тех же порогов на test;
-- `false_merges_on_dev.csv`, `false_merges_on_test.csv`;
-- `false_rejects_on_dev.csv`, `false_rejects_on_test.csv`;
-- `manual_review_pairs_dev.csv`, `manual_review_pairs_test.csv`;
-- `threshold_confusion_matrices.csv`;
-- PNG-графики score distribution, precision-recall, threshold vs false merges
-  и threshold vs manual review.
+- `threshold_summary.xlsx` — один workbook со сводкой моделей, dev/test
+  calibration, confusion matrices и листом `pair_review`;
+- `threshold_pair_review.csv` — один CSV со всеми парами для чтения глазами:
+  `false_merge`, `false_reject` и `manual_review` по dev/test.
 
 В конце `03_matching_comparison.ipynb` есть общий benchmark всех текущих
 matching-моделей на одном и том же срезе:
@@ -1463,9 +1459,9 @@ matching-моделей на одном и том же срезе:
 - `reranker_jina_v3`.
 
 Главный файл для выбора безопасного решения — теперь
-`artifacts/reports/threshold_calibration_dev.csv`. Test split нельзя
-использовать ни для выбора порогов, ни для выбора модели; он нужен только для
-финальной проверки.
+`artifacts/reports/threshold_summary.xlsx`, лист `model_ranking`. Test split
+нельзя использовать ни для выбора порогов, ни для выбора модели; он нужен
+только для финальной проверки.
 
 Совместимые CSV общего benchmark всё ещё сохраняются:
 

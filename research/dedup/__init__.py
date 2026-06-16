@@ -89,7 +89,9 @@ from .threshold_calibration import (
     prepare_calibration_frame,
     same_base_product_from_labels,
     same_base_product_target,
+    threshold_pair_review,
     triage_confusion_matrix,
+    write_compact_threshold_report,
     write_threshold_reports,
 )
 
@@ -166,9 +168,11 @@ __all__ = [
     "same_pack_signature_mask",
     "same_base_product_from_labels",
     "same_base_product_target",
+    "threshold_pair_review",
     "stratified_labeling_sample",
     "title_similarity",
     "triage_confusion_matrix",
     "tokenize_title",
+    "write_compact_threshold_report",
     "write_threshold_reports",
 ]

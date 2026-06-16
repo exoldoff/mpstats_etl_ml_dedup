@@ -140,10 +140,10 @@ Research-код остаётся независимым: `research/dedup/` не 
   `reranker_qwen3_4b`, `reranker_bge_v2_m3`, `reranker_jina_v3`. Новые
   reranker-модели выбираются alias-ами registry в
   `RERANKER_BENCHMARK_MODELS` или через env
-  `DEDUP_RERANKER_BENCHMARK_MODELS`; главный CSV для выбора безопасного
-  auto-merge решения теперь `artifacts/reports/threshold_calibration_dev.csv`.
-  Test split используется только для финальной проверки в
-  `artifacts/reports/threshold_evaluation_test.csv`.
+  `DEDUP_RERANKER_BENCHMARK_MODELS`; главный отчёт для выбора безопасного
+  auto-merge решения теперь `artifacts/reports/threshold_summary.xlsx`
+  (`model_ranking`). Test split используется только для финальной проверки в
+  том же workbook (`evaluation_test`).
   `reranker_qwen3_4b` по умолчанию грузится на CPU, потому что на MPS с
   лимитом около 9GB падает по памяти; для быстрого Qwen-smoke есть alias
   `qwen3_0_6b`.

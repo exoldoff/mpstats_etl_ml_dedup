@@ -30,9 +30,9 @@
   отчёты.
 - Benchmark SKU matching перешёл на cost-sensitive calibration:
   `threshold_auto_same` и `threshold_auto_diff` выбираются только на dev,
-  `test` используется только для финальной проверки. Главные отчёты:
-  `artifacts/reports/threshold_calibration_dev.csv` и
-  `artifacts/reports/threshold_evaluation_test.csv`.
+  `test` используется только для финальной проверки. Главные отчёты теперь
+  компактные: `artifacts/reports/threshold_summary.xlsx` и
+  `artifacts/reports/threshold_pair_review.csv`.
   Следующий research-фокус: читать false merges/manual review, улучшать
   reranker/fusion и прогонять выбранный matcher по полному candidate set.
 
@@ -59,12 +59,11 @@ deduplication: false merge разных товаров опаснее, чем п
   - `threshold_auto_diff` выбирается по максимальному coverage среди порогов,
     где `auto_diff_precision >= 0.95`.
 - `notebooks/03_matching_comparison.ipynb` теперь применяет dev-пороги к test
-  без переобучения и сохраняет:
-  - `artifacts/reports/threshold_calibration_dev.csv`;
-  - `artifacts/reports/threshold_evaluation_test.csv`;
-  - `false_merges_on_*`, `false_rejects_on_*`, `manual_review_pairs_*`;
-  - forced и triage confusion matrices;
-  - score distribution, precision-recall и threshold diagnostic PNG.
+  без переобучения и сохраняет компактный отчёт:
+  - `artifacts/reports/threshold_summary.xlsx`;
+  - `artifacts/reports/threshold_pair_review.csv`;
+  - внутри workbook остаются dev/test calibration, forced/triage confusion
+    matrices и pair review.
 - `notebooks/04_clustering_resolution.ipynb` выбирает метод только по dev
   calibration и строит graph edge только из `auto_same`; `manual_review` не
   превращается в автосклейку.

@@ -38,7 +38,7 @@ auto-merge — безопасность: высокая precision и ноль fa
 
 ## Где смотреть прошедшие модели
 
-Открой `artifacts/reports/threshold_calibration_dev.csv`.
+Открой `artifacts/reports/threshold_summary.xlsx`, sheet `model_ranking`.
 
 Модели, прошедшие порог безопасности, это строки, где:
 
@@ -49,9 +49,9 @@ auto-merge — безопасность: высокая precision и ноль fa
 Для выбора кандидата смотри сначала `passed_auto_same_constraints`, затем
 `auto_coverage`, `auto_same_recall` и `manual_review_rate`.
 
-`artifacts/reports/threshold_evaluation_test.csv` нужен только для финальной
-проверки выбранных на dev порогов. Test split нельзя использовать для
-подбора threshold или выбора модели.
+Sheet `evaluation_test` нужен только для финальной проверки выбранных на dev
+порогов. Test split нельзя использовать для подбора threshold или выбора
+модели.
 
 ## Manual review
 
@@ -64,20 +64,15 @@ auto-merge — безопасность: высокая precision и ноль fa
 - низкая `manual_review_rate` с false merges опасна и не должна побеждать
   только за счёт красивого coverage;
 - конкретные пары для чтения глазами лежат в
-  `manual_review_pairs_dev.csv` и `manual_review_pairs_test.csv`.
+  `artifacts/reports/threshold_pair_review.csv` и в sheet `pair_review`.
 
 ## Основные артефакты
 
-- `artifacts/reports/threshold_calibration_dev.csv`
-- `artifacts/reports/threshold_evaluation_test.csv`
-- `artifacts/reports/false_merges_on_dev.csv`
-- `artifacts/reports/false_merges_on_test.csv`
-- `artifacts/reports/false_rejects_on_dev.csv`
-- `artifacts/reports/false_rejects_on_test.csv`
-- `artifacts/reports/manual_review_pairs_dev.csv`
-- `artifacts/reports/manual_review_pairs_test.csv`
-- `artifacts/reports/threshold_confusion_matrices.csv`
-- `artifacts/reports/*precision_recall*.png`
-- `artifacts/reports/*threshold_false_merges*.png`
-- `artifacts/reports/*threshold_manual_review*.png`
-- `artifacts/reports/*score_distribution*.png`
+- `artifacts/reports/threshold_summary.xlsx`
+  - `model_ranking` — основной лист для выбора метода;
+  - `calibration_dev` — dev calibration;
+  - `evaluation_test` — held-out проверка выбранных dev-порогов;
+  - `confusion_matrices` — forced и triage confusion matrices;
+  - `pair_review` — пары для ручного чтения.
+- `artifacts/reports/threshold_pair_review.csv` — та же таблица пар отдельным
+  CSV, чтобы её было удобно фильтровать или отправлять на разметку.

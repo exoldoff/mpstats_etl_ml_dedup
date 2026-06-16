@@ -10,6 +10,8 @@ from research.dedup.threshold_calibration import (
     calibrate_method_thresholds,
     error_report,
     prepare_calibration_frame,
+    threshold_pair_review,
+    write_compact_threshold_report,
 )
 
 
@@ -132,3 +134,40 @@ def test_calibrate_and_evaluate_outputs_dev_and_test_triage_metrics() -> None:
     manual = error_report(test_predictions, "manual_review")
     assert rejects["benchmark_pair_key"].tolist() == ["pair-7"]
     assert manual["benchmark_pair_key"].tolist() == ["pair-6"]
+
+
+def test_compact_threshold_report_writes_workbook_and_pair_review(tmp_path) -> None:
+    frame = pd.DataFrame(
+        [
+            _row("m", "dev", 0.95, "exact_duplicate", 1),
+            _row("m", "dev", 0.90, "same_product_different_pack", 2),
+            _row("m", "dev", 0.20, "different_product", 3),
+            _row("m", "dev", 0.10, "different_product", 4),
+            _row("m", "test", 0.96, "exact_duplicate", 5),
+            _row("m", "test", 0.50, "different_product", 6),
+            _row("m", "test", 0.05, "same_product_different_pack", 7),
+        ]
+    )
+    results = calibrate_and_evaluate_methods(frame)
+    results["confusion_matrices"] = pd.DataFrame(
+        [{"method": "m", "eval_split": "test", "matrix_type": "triage", "true_label": "same_base_product"}]
+    )
+
+    paths = write_compact_threshold_report(results, tmp_path)
+    pair_review = threshold_pair_review(results)
+
+    assert paths["summary"].name == "threshold_summary.xlsx"
+    assert paths["summary"].exists()
+    assert paths["pair_review"].name == "threshold_pair_review.csv"
+    assert paths["pair_review"].exists()
+    assert set(pair_review["issue_type"]) == {"false_reject", "manual_review"}
+
+    workbook = pd.ExcelFile(paths["summary"])
+    assert workbook.sheet_names == [
+        "readme",
+        "model_ranking",
+        "calibration_dev",
+        "evaluation_test",
+        "confusion_matrices",
+        "pair_review",
+    ]
