@@ -1525,6 +1525,14 @@ MY_RERANKER_MODELS = ["jina_v3"]
 Jina v3 удобна для эксперимента, но перед production-использованием нужно
 отдельно проверить лицензионные условия.
 
+Если в таблице статусов все reranker-модели падают с ошибкой про
+`huggingface_hub` или `logging`, обновите research-зависимости в том Python,
+который выбран как Jupyter kernel, и перезапустите kernel:
+
+```bash
+python3 -m pip install -U -r requirements-research.txt
+```
+
 `04_clustering_resolution.ipynb` строит partial family/pack graph по
 predictions из 03 и сохраняет `clustering_components_sauces.csv` и
 `clustering_pair_eval_sauces.csv`.
