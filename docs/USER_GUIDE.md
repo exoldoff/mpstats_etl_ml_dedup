@@ -1448,12 +1448,6 @@ Cross-encoder — более внимательная проверка пары,
   weighted-метрики по объёму продаж.
 
 Raw predictions и старые `matching_*` CSV этот benchmark не перезаписывает.
-Если kernel был перезапущен или часть model payloads пропала, финальный block
-пытается восстановить недостающие methods из старых score-файлов:
-`research/dedup/data/all_model_benchmark_predictions_sauces.csv`,
-`matching_predictions_sauces.csv` и `reranker_benchmark_predictions_sauces.csv`.
-Это не пересчитывает модели, а только заново применяет binary threshold
-метрики к уже сохранённым `score`.
 
 В конце `03_matching_comparison.ipynb` есть общий benchmark всех текущих
 matching-моделей на одном и том же срезе:
