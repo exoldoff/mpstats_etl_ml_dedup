@@ -68,6 +68,10 @@
   - `artifacts/reports/binary_threshold_predictions.csv`;
   - `artifacts/reports/binary_threshold_by_volume_bucket.csv`, если sales
     volume доступен.
+- Чтобы не терять долгие reranker-прогоны после restart/kernel ошибки,
+  финальный block умеет восстановить missing methods из старых score-файлов
+  `all_model_benchmark_predictions_sauces.csv`, `matching_predictions_sauces.csv`
+  и `reranker_benchmark_predictions_sauces.csv`.
 - `docs/ARCHITECTURE.md`, `docs/AI_INDEX.md`,
   `docs/THRESHOLD_CALIBRATION_REPORT.md` и `docs/USER_GUIDE.md` обновлены
   под новый benchmark.
