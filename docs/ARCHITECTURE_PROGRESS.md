@@ -25,9 +25,62 @@
 - Gold-set переводится на binary-контракт: для модели остаются
   `exact_duplicate` и `different_product`; legacy
   `same_product_different_pack` пользователь заменяет на `exact_duplicate`.
-  Следующий research-фокус: сравнить более сильные готовые reranker-модели,
-  затем снижать false merges через supervised fusion/fine-tuning и прогонять
-  выбранный matcher по полному candidate set.
+  В threshold calibration legacy label временно мапится в positive
+  `same_base_product`, чтобы старые размеченные строки не ломали dev/test
+  отчёты.
+- Benchmark SKU matching перешёл на cost-sensitive calibration:
+  `threshold_auto_same` и `threshold_auto_diff` выбираются только на dev,
+  `test` используется только для финальной проверки. Главные отчёты:
+  `artifacts/reports/threshold_calibration_dev.csv` и
+  `artifacts/reports/threshold_evaluation_test.csv`.
+  Следующий research-фокус: читать false merges/manual review, улучшать
+  reranker/fusion и прогонять выбранный matcher по полному candidate set.
+
+## 2026-06-25 — Cost-sensitive threshold calibration для SKU matching
+
+### Зачем
+
+Один threshold по `macro_f1` плохо соответствует цене ошибок в SKU
+deduplication: false merge разных товаров опаснее, чем пропуск дубля или
+ручная проверка. Поэтому benchmark теперь оптимизирует безопасный auto-merge,
+а не общую симметричную метрику.
+
+### Что сделано
+
+- Добавлен `research/dedup/threshold_calibration.py`:
+  - binary target `same_base_product`;
+  - `exact_duplicate` и legacy `same_product_different_pack` мапятся в
+    positive, `different_product` — в negative;
+  - если во входных данных уже есть `same_base_product`, используется она;
+  - для каждого `method` на dev калибруются `threshold_auto_same` и
+    `threshold_auto_diff`;
+  - `threshold_auto_same` выбирается по максимальному recall среди порогов,
+    где `auto_same_precision >= 0.97` и `false_merge_count <= 0`;
+  - `threshold_auto_diff` выбирается по максимальному coverage среди порогов,
+    где `auto_diff_precision >= 0.95`.
+- `notebooks/03_matching_comparison.ipynb` теперь применяет dev-пороги к test
+  без переобучения и сохраняет:
+  - `artifacts/reports/threshold_calibration_dev.csv`;
+  - `artifacts/reports/threshold_evaluation_test.csv`;
+  - `false_merges_on_*`, `false_rejects_on_*`, `manual_review_pairs_*`;
+  - forced и triage confusion matrices;
+  - score distribution, precision-recall и threshold diagnostic PNG.
+- `notebooks/04_clustering_resolution.ipynb` выбирает метод только по dev
+  calibration и строит graph edge только из `auto_same`; `manual_review` не
+  превращается в автосклейку.
+- `notebooks/05_evaluation_report.ipynb` показывает dev calibration как
+  главный выборочный отчёт, а test — только как held-out проверку.
+- Добавлен `docs/THRESHOLD_CALIBRATION_REPORT.md` с критерием auto-merge,
+  объяснением, почему `macro_f1` не production-критерий, и списком артефактов.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests/test_threshold_calibration.py` — 5 passed.
+- `python3 -m pytest research/dedup/tests` — 42 passed.
+- `python3 -m compileall research/dedup` — ok.
+- `ast.parse` code cells в `notebooks/03_matching_comparison.ipynb`,
+  `notebooks/04_clustering_resolution.ipynb`,
+  `notebooks/05_evaluation_report.ipynb` — ok.
 
 ## 2026-06-25 — Binary pair labels без different-pack класса
 

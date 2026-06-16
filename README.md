@@ -43,6 +43,7 @@ MPStats cookie хранится только локально. Локальна�
 ## Документация
 
 - `docs/USER_GUIDE.md` — подробная пользовательская инструкция.
+- `docs/THRESHOLD_CALIBRATION_REPORT.md` — как читать cost-sensitive benchmark для SKU matching.
 - `filter.md` — справочник синтаксиса фильтров MPStats.
 - `Справочник категорий MP STATS.csv` — справочник категорий.
 - `classifiers/rules.csv` — правила классификации.

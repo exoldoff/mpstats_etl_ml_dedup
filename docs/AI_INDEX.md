@@ -34,6 +34,7 @@
 | `docs/AI_INDEX.md` | индекс для агентов | всегда после `AGENTS.md` |
 | `docs/ARCHITECTURE.md` | источник research-архитектуры | задачи по dedup, matching, evaluation, notebooks, ML-методологии |
 | `docs/ARCHITECTURE_PROGRESS.md` | журнал research-этапов | понять, что уже сделано, какие CSV/ноутбуки/проверки актуальны |
+| `docs/THRESHOLD_CALIBRATION_REPORT.md` | критерии SKU matching benchmark | cost-sensitive пороги, manual review, почему macro-F1 не главный критерий |
 | `README.md` | краткий обзор | запуск, структура, состояние проекта |
 | `docs/USER_GUIDE.md` | пользовательская инструкция web-app | изменения UI, workflow, расчётов, статусов, справочника, классификатора |
 | `docs/PIPELINE_OVERVIEW.md` | краткое объяснение pipeline | вопросы про текущие шаги pipeline и pandas/SQL |
@@ -80,6 +81,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `research/dedup/fusion.py` | research fusion по архитектуре |
 | `research/dedup/model_registry.py` | единый registry/manager/pool для local-моделей и Polza.ai online embeddings |
 | `research/dedup/matchers/` | baseline matching engines A/B и общий интерфейс |
+| `research/dedup/threshold_calibration.py` | cost-sensitive dev calibration для `threshold_auto_same` / `threshold_auto_diff` |
 | `research/dedup/annotator.py` | helper для ручной разметки |
 | `research/dedup/tests/` | узкие тесты research-модулей |
 | `research/dedup/data/` | локальные CSV-артефакты, игнорируются `.gitignore` |
@@ -135,8 +137,10 @@ Research-код остаётся независимым: `research/dedup/` не 
   `reranker_qwen3_4b`, `reranker_bge_v2_m3`, `reranker_jina_v3`. Новые
   reranker-модели выбираются alias-ами registry в
   `RERANKER_BENCHMARK_MODELS` или через env
-  `DEDUP_RERANKER_BENCHMARK_MODELS`; главный CSV для выбора лучшего решения:
-  `all_model_benchmark_summary_sauces.csv`.
+  `DEDUP_RERANKER_BENCHMARK_MODELS`; главный CSV для выбора безопасного
+  auto-merge решения теперь `artifacts/reports/threshold_calibration_dev.csv`.
+  Test split используется только для финальной проверки в
+  `artifacts/reports/threshold_evaluation_test.csv`.
   `reranker_qwen3_4b` по умолчанию грузится на CPU, потому что на MPS с
   лимитом около 9GB падает по памяти; для быстрого Qwen-smoke есть alias
   `qwen3_0_6b`.
@@ -145,18 +149,20 @@ Research-код остаётся независимым: `research/dedup/` не 
 
 Текущий следующий шаг:
 
-- Gold-set для метрик теперь ожидает binary labels:
-  `exact_duplicate`, `different_product`; `uncertain` и legacy
-  `same_product_different_pack` не входят в evaluation, пока legacy-метки не
-  заменены на `exact_duplicate`.
+- Gold-set для threshold calibration использует binary target
+  `same_base_product`: `exact_duplicate` и legacy
+  `same_product_different_pack` считаются positive, `different_product` —
+  negative. Если во входных данных уже есть колонка `same_base_product`, она
+  считается источником правды.
 - `notebooks/03_matching_comparison.ipynb` теперь делает stratified dev/test
-  split, калибрует `threshold_high` на dev, сравнивает rule-based,
-  bi-encoder и готовый cross-encoder rerank, затем сохраняет
-  `matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
+  split, калибрует `threshold_auto_same` и `threshold_auto_diff` на dev по
+  cost-sensitive правилам, сравнивает rule-based, bi-encoder, cross-encoder и
+  reranker methods, затем сохраняет отчёты в `artifacts/reports/` и
+  совместимые `matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
   `matching_false_merges_sauces.csv`.
 - `notebooks/04_clustering_resolution.ipynb` строит partial family graph по
-  binary positive predictions, а pack graph — по тем же positive predictions
-  плюс deterministic `same_pack_signature`; сохраняет
+  `auto_same` triage predictions, а pack graph — по тем же `auto_same`
+  predictions плюс deterministic `same_pack_signature`; сохраняет
   `clustering_components_sauces.csv`, `clustering_pair_eval_sauces.csv`.
 - `notebooks/05_evaluation_report.ipynb` собирает текущий research-отчёт.
   Следующий ML-шаг — улучшать rerank/fusion на hard negatives

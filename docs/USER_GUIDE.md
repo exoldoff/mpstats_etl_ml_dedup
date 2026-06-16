@@ -1416,16 +1416,41 @@ for notebook in [
 PY
 ```
 
-`03_matching_comparison.ipynb` делает dev/test split, калибрует
-`threshold_high` на dev и сравнивает текущие методы:
-`rule_based_fuzzy`, `bi_encoder_zero_shot` и `cross_encoder_zero_shot`.
+`03_matching_comparison.ipynb` делает dev/test split и калибрует два
+cost-sensitive порога на dev:
+
+- `threshold_auto_same` — когда можно автоматически связать пару как один
+  базовый товар;
+- `threshold_auto_diff` — когда можно автоматически отклонить пару как разные
+  товары;
+- всё между порогами уходит в `manual_review`.
+
+Главный критерий auto-merge — пройти ограничения `auto_same_precision >= 0.97`
+и `false_merge_count <= 0` на dev. Macro-F1 остаётся только вспомогательной
+forced-метрикой, потому что false merge разных товаров намного опаснее, чем
+ручная проверка дубля.
+
+Notebook сравнивает текущие методы:
+`rule_based_fuzzy`, `bi_encoder_zero_shot`, `cross_encoder_zero_shot` и
+reranker-модели из общего benchmark.
 Cross-encoder — более внимательная проверка пары, но первый запуск может
 скачивать модель из Hugging Face. Если нужно временно пропустить этот блок,
 запустите notebook с `DEDUP_RUN_CROSS_ENCODER=0`.
 
-После прогона `03` сохраняет локальные артефакты:
+После прогона `03` сохраняет совместимые локальные артефакты:
 `matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
 `matching_false_merges_sauces.csv`.
+
+Главные production-отчёты лежат в `artifacts/reports/`:
+
+- `threshold_calibration_dev.csv` — критерии и выбранные пороги на dev;
+- `threshold_evaluation_test.csv` — финальная проверка тех же порогов на test;
+- `false_merges_on_dev.csv`, `false_merges_on_test.csv`;
+- `false_rejects_on_dev.csv`, `false_rejects_on_test.csv`;
+- `manual_review_pairs_dev.csv`, `manual_review_pairs_test.csv`;
+- `threshold_confusion_matrices.csv`;
+- PNG-графики score distribution, precision-recall, threshold vs false merges
+  и threshold vs manual review.
 
 В конце `03_matching_comparison.ipynb` есть общий benchmark всех текущих
 matching-моделей на одном и том же срезе:
@@ -1437,8 +1462,12 @@ matching-моделей на одном и том же срезе:
 - `reranker_qwen3_4b`;
 - `reranker_jina_v3`.
 
-Он не меняет основные `matching_*` CSV. Главные файлы для выбора лучшего
-решения:
+Главный файл для выбора безопасного решения — теперь
+`artifacts/reports/threshold_calibration_dev.csv`. Test split нельзя
+использовать ни для выбора порогов, ни для выбора модели; он нужен только для
+финальной проверки.
+
+Совместимые CSV общего benchmark всё ещё сохраняются:
 
 - `all_model_benchmark_summary_sauces.csv`;
 - `all_model_benchmark_predictions_sauces.csv`.
@@ -1461,6 +1490,14 @@ MY_RERANKER_MODELS = [
 ]
 MY_RERANKER_MAX_PAIRS = 120  # 0 = весь размеченный gold-set
 MY_CUSTOM_RERANKER_BACKEND = CROSS_ENCODER_BACKEND
+```
+
+Пороговые safety-параметры можно менять через env:
+
+```bash
+DEDUP_TARGET_AUTO_SAME_PRECISION=0.97
+DEDUP_MAX_FALSE_MERGES_ON_DEV=0
+DEDUP_TARGET_AUTO_DIFF_PRECISION=0.95
 ```
 
 Модели можно писать короткими alias-ами из registry (`bge_m3`, `qwen3_4b`,

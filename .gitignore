@@ -22,6 +22,7 @@ Thumbs.db
 .idea/
 
 # Локальные данные
+artifacts/
 data/
 output/
 temp/
