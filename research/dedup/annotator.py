@@ -17,14 +17,12 @@ DEFAULT_LABELING_PATH = Path(__file__).resolve().parent / "data" / "labeling_sau
 
 LABEL_BY_KEY = {
     "w": "exact_duplicate",
-    "a": "same_product_different_pack",
     "s": "different_product",
     "d": "uncertain",
 }
 
 LABEL_HINTS = {
-    "w": "same SKU and same pack",
-    "a": "same product, different pack",
+    "w": "same base product",
     "s": "different product",
     "d": "uncertain",
 }
@@ -264,7 +262,7 @@ def _render(screen: curses.window, frame: pd.DataFrame, row_index: int, csv_path
     while y < height - 5:
         y = _add_line(screen, y, "")
 
-    y = _add_line(screen, y, "Keys: w exact | a same-different-pack | s different | d uncertain | c clear")
+    y = _add_line(screen, y, "Keys: w exact/same-product | s different | d uncertain | c clear")
     y = _add_line(screen, y, "Nav: Space/Right next | Left previous | g next empty | q quit")
     _add_line(screen, y, message[: max(0, width - 1)])
     screen.refresh()
@@ -283,7 +281,7 @@ def _run_curses(screen: curses.window, frame: pd.DataFrame, csv_path: Path) -> N
         row_index = 0
         message = "All rows already have labels. Use arrows to review or c to clear."
     else:
-        message = "Ready. Press w/a/s/d to label this pair."
+        message = "Ready. Press w/s/d to label this pair."
 
     while True:
         _render(screen, frame, row_index, csv_path, message)
@@ -329,7 +327,7 @@ def _run_curses(screen: curses.window, frame: pd.DataFrame, csv_path: Path) -> N
                 row_index = next_index
                 message = "Moved to next empty row."
             continue
-        message = "Unknown key. Use w/a/s/d, arrows, c, g, q."
+        message = "Unknown key. Use w/s/d, arrows, c, g, q."
 
 
 def run(csv_path: Path) -> None:

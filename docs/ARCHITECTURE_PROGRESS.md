@@ -22,10 +22,38 @@
   in-process pool и offline-режим `DEDUP_MODEL_LOCAL_ONLY=1`.
 - Online embedding-модели идут через Polza.ai-compatible backend
   `polza_embedding`, не через абстрактные provider env-переменные.
-- Gold-set размечен и готов для baseline-метрик. Следующий research-фокус:
-  сравнить более сильные готовые reranker-модели, затем снижать false merges
-  через supervised fusion/fine-tuning и прогонять выбранный matcher по полному
-  candidate set.
+- Gold-set переводится на binary-контракт: для модели остаются
+  `exact_duplicate` и `different_product`; legacy
+  `same_product_different_pack` пользователь заменяет на `exact_duplicate`.
+  Следующий research-фокус: сравнить более сильные готовые reranker-модели,
+  затем снижать false merges через supervised fusion/fine-tuning и прогонять
+  выбранный matcher по полному candidate set.
+
+## 2026-06-25 — Binary pair labels без different-pack класса
+
+### Зачем
+
+Pack/multipack не должен быть отдельным ML-классом: модель должна отвечать,
+тот же это базовый товар или другой товар. Конкретная фасовка выделяется
+после модели deterministic правилами, чтобы не путать classifier и не
+занижать pairwise-метрики.
+
+### Что сделано
+
+- Pairwise label contract сужен до двух классов:
+  `exact_duplicate`, `different_product`; `uncertain` остаётся только как
+  ручная служебная метка вне метрик.
+- Legacy `same_product_different_pack` больше не генерируется кодом и не
+  входит в evaluation; такие старые строки нужно заменить на
+  `exact_duplicate` перед прогоном метрик.
+- Fusion больше не использует pack/multipack для отдельного класса:
+  brand mismatch остаётся жёстким negative signal, дальше решение идёт по
+  rerank score и порогам.
+- Pack-граф в `04_clustering_resolution.ipynb` отделён от ML-label:
+  family edge = binary `exact_duplicate`, pack edge = `exact_duplicate` +
+  deterministic `same_pack_signature`.
+- Аннотатор теперь сохраняет только `w -> exact_duplicate`,
+  `s -> different_product`, `d -> uncertain`.
 
 ## 2026-06-25 — Qwen reranker safe mode для Mac MPS
 

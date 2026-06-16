@@ -88,15 +88,9 @@ class JinaRerankerMatcher(PairMatcher):
     def _format_text(self, pair: Any, side: str) -> str:
         title = get_pair_value(pair, f"title_{side}", f"name_{side}", f"sku_name_{side}", default="")
         brand = get_pair_value(pair, f"brand_{side}", f"canonical_brand_{side}", default="")
-        unit = get_pair_value(pair, f"unit_amount_{side}", f"unit_weight_{side}", default="")
-        total = get_pair_value(pair, f"total_amount_{side}", f"total_weight_{side}", default="")
-        multipack = get_pair_value(pair, f"multipack_count_{side}", f"pack_count_{side}", default="")
         parts = [
             f"бренд: {brand}" if brand else "",
             f"название: {title}" if title else "",
-            f"вес единицы: {unit}" if unit not in (None, "") else "",
-            f"общий вес: {total}" if total not in (None, "") else "",
-            f"штук в наборе: {multipack}" if multipack not in (None, "") else "",
         ]
         return " | ".join(part for part in parts if str(part).strip())
 

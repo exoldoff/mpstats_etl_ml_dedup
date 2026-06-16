@@ -36,14 +36,14 @@ def _pair(**overrides: object) -> dict[str, object]:
     return pair
 
 
-def test_fusion_marks_same_unit_different_multipack_as_pack_variant() -> None:
+def test_fusion_treats_same_product_different_multipack_as_positive_class() -> None:
     label = decide_label(
         _pair(total_amount_b=0.6, multipack_count_b=3),
         rerank_score=0.95,
         config=FusionConfig(),
     )
 
-    assert label == "same_product_different_pack"
+    assert label == "exact_duplicate"
 
 
 def test_fusion_does_not_block_when_brand_is_missing() -> None:
@@ -59,11 +59,11 @@ def test_rule_based_matcher_predicts_exact_duplicate_and_brand_mismatch() -> Non
     assert matcher.predict_label(_pair(brand_b="Other Brand")) == "different_product"
 
 
-def test_rule_based_matcher_predicts_pack_variant() -> None:
+def test_rule_based_matcher_collapses_pack_variant_into_exact_duplicate() -> None:
     matcher = RuleBasedMatcher()
 
     assert matcher.predict_label(_pair(title_b="Соус томатный острый 3 x 200 г", total_amount_b=0.6, multipack_count_b=3)) == (
-        "same_product_different_pack"
+        "exact_duplicate"
     )
 
 

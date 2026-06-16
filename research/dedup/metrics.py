@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 
-DEFAULT_LABELS = ["exact_duplicate", "same_product_different_pack", "different_product", "uncertain"]
+DEFAULT_LABELS = ["exact_duplicate", "different_product"]
 
 
 def confusion_matrix_df(

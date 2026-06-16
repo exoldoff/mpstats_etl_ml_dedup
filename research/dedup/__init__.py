@@ -16,9 +16,11 @@ from .clustering import (
     FAMILY_EDGE_LABELS,
     PACK_EDGE_LABELS,
     ComponentConfig,
+    PackSignatureConfig,
     add_component_flags,
     build_components,
     component_size_summary,
+    same_pack_signature_mask,
 )
 from .embedding_candidates import (
     FAISS_CANDIDATE_OUTPUT_COLUMNS,
@@ -97,6 +99,7 @@ __all__ = [
     "PolzaEmbeddingModel",
     "MatcherStatus",
     "PACK_EDGE_LABELS",
+    "PackSignatureConfig",
     "PAIR_LABELS",
     "PairMatcher",
     "RuleBasedMatcher",
@@ -126,6 +129,7 @@ __all__ = [
     "prepare_product_records",
     "resolve_embedding_model_spec",
     "resolve_model_spec",
+    "same_pack_signature_mask",
     "stratified_labeling_sample",
     "title_similarity",
     "tokenize_title",

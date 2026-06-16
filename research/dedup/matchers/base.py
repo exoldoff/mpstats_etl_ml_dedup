@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-PAIR_LABELS = ("exact_duplicate", "same_product_different_pack", "different_product")
+PAIR_LABELS = ("exact_duplicate", "different_product")
 
 
 @dataclass(frozen=True)
@@ -28,4 +28,4 @@ class PairMatcher(ABC):
 
     @abstractmethod
     def predict_label(self, pair: Any) -> str:
-        """Return one of the 3 pairwise labels used by matching baselines."""
+        """Return one of the binary pairwise labels used by matching baselines."""

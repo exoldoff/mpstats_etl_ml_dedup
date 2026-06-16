@@ -22,7 +22,7 @@ class RuleBasedConfig:
 
 
 class RuleBasedMatcher(PairMatcher):
-    """Baseline A: fuzzy title similarity plus deterministic brand/pack fusion."""
+    """Baseline A: fuzzy title similarity plus deterministic binary fusion."""
 
     name = "rule_based_fuzzy"
 

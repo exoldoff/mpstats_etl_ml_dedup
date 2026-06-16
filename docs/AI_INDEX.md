@@ -55,13 +55,14 @@
   - `brand` -> `Бренд`
 - Выходные классы пары:
   - `exact_duplicate`
-  - `same_product_different_pack`
   - `different_product`
-- Бизнес-правило: `200 г` vs `3x200 г` — это
-  `same_product_different_pack`, не auto-merge в один SKU.
+- Бизнес-правило для модели: `200 г` vs `3x200 г` — положительная пара
+  `exact_duplicate`, если это тот же базовый товар; конкретная фасовка
+  выделяется после модели deterministic pack-правилами.
 - Brand — полезный сигнал, но не абсолютный stop-gate при missing brand.
-- Fusion: brand signal + deterministic weight/pack rules + rerank score.
-- Метрики: per-class precision/recall/F1, confusion matrix, false-merge
+- Fusion: brand signal + rerank score; deterministic pack rules живут
+  отдельным post-processing слоем.
+- Метрики: binary per-class precision/recall/F1, confusion matrix, false-merge
   как дорогая ошибка, retrieval recall@k отдельно от pairwise classification,
   clustering metrics отдельно от pairwise metrics.
 
@@ -144,17 +145,19 @@ Research-код остаётся независимым: `research/dedup/` не 
 
 Текущий следующий шаг:
 
-- Gold-set уже можно использовать для метрик: `labeling_sauces.csv` содержит
-  400 размеченных пар, из них 379 входят в 3-class evaluation и 21 помечена
-  как `uncertain`.
+- Gold-set для метрик теперь ожидает binary labels:
+  `exact_duplicate`, `different_product`; `uncertain` и legacy
+  `same_product_different_pack` не входят в evaluation, пока legacy-метки не
+  заменены на `exact_duplicate`.
 - `notebooks/03_matching_comparison.ipynb` теперь делает stratified dev/test
   split, калибрует `threshold_high` на dev, сравнивает rule-based,
   bi-encoder и готовый cross-encoder rerank, затем сохраняет
   `matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
   `matching_false_merges_sauces.csv`.
-- `notebooks/04_clustering_resolution.ipynb` строит partial family/pack graph
-  по predictions из 03 и сохраняет `clustering_components_sauces.csv`,
-  `clustering_pair_eval_sauces.csv`.
+- `notebooks/04_clustering_resolution.ipynb` строит partial family graph по
+  binary positive predictions, а pack graph — по тем же positive predictions
+  плюс deterministic `same_pack_signature`; сохраняет
+  `clustering_components_sauces.csv`, `clustering_pair_eval_sauces.csv`.
 - `notebooks/05_evaluation_report.ipynb` собирает текущий research-отчёт.
   Следующий ML-шаг — улучшать rerank/fusion на hard negatives
   (cross-encoder/LLM-judge), не переносить код в production pipeline.

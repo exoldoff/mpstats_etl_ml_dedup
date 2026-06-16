@@ -9,20 +9,51 @@ from research.dedup.clustering import (
     add_component_flags,
     build_components,
     component_size_summary,
+    same_pack_signature_mask,
 )
 
 
 def _pairs() -> pd.DataFrame:
     return pd.DataFrame(
         [
-            {"left": "a", "right": "b", "label": "exact_duplicate"},
-            {"left": "b", "right": "c", "label": "same_product_different_pack"},
-            {"left": "d", "right": "e", "label": "different_product"},
+            {
+                "left": "a",
+                "right": "b",
+                "label": "exact_duplicate",
+                "unit_amount_a": 0.2,
+                "unit_amount_b": 0.2,
+                "total_amount_a": 0.2,
+                "total_amount_b": 0.2,
+                "multipack_count_a": 1,
+                "multipack_count_b": 1,
+            },
+            {
+                "left": "b",
+                "right": "c",
+                "label": "exact_duplicate",
+                "unit_amount_a": 0.2,
+                "unit_amount_b": 0.2,
+                "total_amount_a": 0.2,
+                "total_amount_b": 0.6,
+                "multipack_count_a": 1,
+                "multipack_count_b": 3,
+            },
+            {
+                "left": "d",
+                "right": "e",
+                "label": "different_product",
+                "unit_amount_a": 0.2,
+                "unit_amount_b": 0.2,
+                "total_amount_a": 0.2,
+                "total_amount_b": 0.2,
+                "multipack_count_a": 1,
+                "multipack_count_b": 1,
+            },
         ]
     )
 
 
-def test_family_components_use_exact_and_pack_variant_edges() -> None:
+def test_family_components_use_binary_positive_edges() -> None:
     config = ComponentConfig(left_id_col="left", right_id_col="right", label_col="label")
 
     components = build_components(_pairs(), edge_labels=FAMILY_EDGE_LABELS, config=config)
@@ -32,11 +63,17 @@ def test_family_components_use_exact_and_pack_variant_edges() -> None:
     assert component_by_node["d"] != component_by_node["e"]
 
 
-def test_pack_components_use_only_exact_edges() -> None:
+def test_pack_components_use_positive_edges_with_same_pack_signature() -> None:
     config = ComponentConfig(left_id_col="left", right_id_col="right", label_col="label")
 
-    components = build_components(_pairs(), edge_labels=PACK_EDGE_LABELS, config=config)
-    flagged = add_component_flags(_pairs(), components, config=config)
+    pairs = _pairs()
+    components = build_components(
+        pairs,
+        edge_labels=PACK_EDGE_LABELS,
+        config=config,
+        edge_mask=same_pack_signature_mask(pairs),
+    )
+    flagged = add_component_flags(pairs, components, config=config)
 
     assert bool(flagged.loc[0, "same_component"]) is True
     assert bool(flagged.loc[1, "same_component"]) is False
