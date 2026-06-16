@@ -104,11 +104,11 @@ deterministic pack-правилами и не является отдельны�
         ▼
 [5] Fusion / calibration:
     brand signal + rerank_score → same_base_product score
-    + dev-only thresholds → auto_same / auto_different / manual_review
+    + dev-only threshold_same → forced binary same/different
         │
         ▼
 [6] Графовая кластеризация, 2 уровня:
-    Level 1 — Product Family по auto_same рёбрам
+    Level 1 — Product Family по positive pairwise edges
     Level 2 — pack-группа внутри семьи по deterministic pack signature
         │
         ▼
@@ -131,7 +131,7 @@ deterministic pack-правилами и не является отдельны�
 но разный продукт). Небольшой gold-set вручную всё равно нужен — для
 финальной оценки и для калибровки порогов.
 
-## 5. Fusion и cost-sensitive calibration — псевдокод
+## 5. Fusion и binary threshold evaluation — псевдокод
 
 ```python
 def pair_score(a, b, rerank_score):
@@ -142,33 +142,33 @@ def pair_score(a, b, rerank_score):
     # решение остаётся за rerank_score
     return rerank_score
 
-def triage(score, threshold_auto_same, threshold_auto_diff):
-    if score >= threshold_auto_same:
-        return "auto_same"
-    if score <= threshold_auto_diff:
-        return "auto_different"
-    return "manual_review"
+def predict_binary(score, threshold_same):
+    return 1 if score >= threshold_same else 0
 ```
 
-`threshold_auto_same` и `threshold_auto_diff` выбираются только на dev split.
-Test split не используется ни для выбора порогов, ни для выбора модели.
+`threshold_same` выбирается только на dev split. Test split не используется
+ни для выбора порога, ни для выбора модели.
 
-Главный production-критерий auto-merge:
+Для каждого method считаются несколько стратегий:
 
-- `auto_same_precision >= TARGET_AUTO_SAME_PRECISION`;
-- `false_merge_count <= MAX_FALSE_MERGES_ON_DEV`;
-- среди прошедших порогов берётся максимальный `auto_same_recall`.
+- `threshold_max_f1` — максимальный обычный F1 на dev;
+- `threshold_cost_sensitive` — минимум
+  `FP_COST * false_merge_count + FN_COST * false_split_count`;
+- `threshold_max_weighted_f1` и `threshold_weighted_cost` — только если есть
+  надёжный объём продаж по SKU A/B.
 
-Macro-F1 можно показывать в отчёте как forced sanity metric, но он не является
-главным production-критерием, потому что false merge разных товаров дороже,
-чем пропуск дубля в `manual_review`.
+Стартовая цена ошибок: `FP_COST = 5`, `FN_COST = 1`. Если объём продаж
+доступен, вес пары считается как `log1p(max(sales_volume_a, sales_volume_b))`.
+Revenue / turnover / GMV не используются как основной бизнес-вес. Если
+объёмы нельзя подтянуть надёжно, benchmark работает как обычный unweighted
+binary benchmark с `pair_weight = 1`.
 
 ## 6. Кластеризация
-- Level 1: connected components по графу с рёбрами `auto_same` → товарная
-  семья / базовый продукт.
+- Level 1: connected components по positive binary-рёбрам выбранной стратегии
+  → товарная семья / базовый продукт.
 - Level 2: внутри семьи группировка по deterministic pack signature из
   готовых weight/multipack колонок → финальная pack-группа.
-- `manual_review` не превращается в graph edge.
+- Текущий threshold benchmark не создаёт `manual_review` / triage-зону.
 
 ## 6.1 Организация кода на research-этапе (пересмотрено по запросу)
 Предыдущая версия предлагала сразу встраивать matching-код в
@@ -241,32 +241,30 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
 на старте, расширяем по мере выявления слабых мест.
 
 ### 8.3 Метрики
-- Binary forced metrics по `same_base_product`, включая forced confusion
-  matrix. Эти метрики полезны для sanity-check, но не выбирают production
-  threshold.
-- Triage metrics по классам `auto_same`, `auto_different`, `manual_review`.
-- Cost-sensitive calibration на dev:
-  - `threshold_auto_same`;
-  - `threshold_auto_diff`;
-  - `auto_same_precision`, `auto_same_recall`, `false_merge_count`,
-    `false_merge_rate`;
-  - `auto_diff_precision`, `auto_diff_recall`, `false_reject_count`;
-  - `manual_review_rate`, `auto_coverage`,
-    `passed_auto_same_constraints`.
+- Forced binary metrics по `same_base_product`: `precision`, `recall`, `F1`,
+  `accuracy`, `false_merge_count`, `false_split_count`, rates и cost.
+- Cost-sensitive thresholding на dev:
+  - `threshold_same`;
+  - `threshold_max_f1`;
+  - `threshold_cost_sensitive`;
+  - weighted strategies, если есть объём продаж.
+- Weighted metrics, если доступны продажи в штуках: `weighted_precision`,
+  `weighted_recall`, `weighted_f1`, `weighted_false_merge_cost`,
+  `weighted_false_split_cost`, `weighted_total_cost`.
+- Breakdown по bucket объёма продаж: `zero / low / medium / high`. Cutoffs
+  считаются только на dev и применяются к test без пересчёта.
 - **Асимметрия цены ошибки**: false merge (`same_base_product=0`, но
-  `auto_same`) — самая дорогая ошибка, потому что портит справочник и
-  downstream-отчёты. False negative / manual review дешевле: дубль можно
-  обработать позже. Практический вывод: auto-merge калибруется по высокой
-  precision и лимиту false merges, а не по macro-F1.
+  предсказано `1`) — самая дорогая ошибка, потому что портит справочник и
+  downstream-отчёты. False split дешевле: дубль можно обработать позже.
 - Recall@k для retrieval (раздел 8.1, п.1).
 - B-cubed precision/recall/F1 (или ARI) — для финальных кластеров.
 
 ### 8.4 Сравнение технологий (A–E)
 На одном held-out test-set, для каждой технологии: dev-пороги применяются без
-изменений, дальше считаются triage metrics, forced metrics, latency на 1000
-пар, стоимость на 1000 пар (для API/cloud-вариантов) и доля
-`manual_review` / LLM-fallback (для каскада с E). Test нельзя использовать
-для выбора threshold или модели.
+изменений, дальше считаются forced binary metrics, latency на 1000 пар и
+стоимость на 1000 пар для API/cloud-вариантов. Текущий benchmark не делает
+manual review, LLM-review или triage. Test нельзя использовать для выбора
+threshold или модели.
 
 ### 8.5 Качественный анализ
 Отдельно показать 5-10 примеров ошибок каждого типа в `05_evaluation_report.ipynb`

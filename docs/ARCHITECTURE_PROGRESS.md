@@ -28,13 +28,54 @@
   В threshold calibration legacy label временно мапится в positive
   `same_base_product`, чтобы старые размеченные строки не ломали dev/test
   отчёты.
-- Benchmark SKU matching перешёл на cost-sensitive calibration:
-  `threshold_auto_same` и `threshold_auto_diff` выбираются только на dev,
-  `test` используется только для финальной проверки. Главные отчёты теперь
-  компактные: `artifacts/reports/threshold_summary.xlsx` и
-  `artifacts/reports/threshold_pair_review.csv`.
-  Следующий research-фокус: читать false merges/manual review, улучшать
-  reranker/fusion и прогонять выбранный matcher по полному candidate set.
+- Benchmark SKU matching перешёл на forced binary evaluation:
+  для каждого method выбирается один `threshold_same` только на dev, а test
+  используется только для финальной проверки. Главные отчёты теперь:
+  `artifacts/reports/binary_threshold_summary.csv`,
+  `artifacts/reports/binary_threshold_predictions.csv` и, если доступны
+  объёмы продаж, `artifacts/reports/binary_threshold_by_volume_bucket.csv`.
+  Manual review, LLM-review и triage на текущем benchmark-этапе не нужны.
+
+## 2026-06-26 — Forced binary threshold benchmark для SKU matching
+
+### Зачем
+
+Двухпороговая схема `threshold_auto_same` / `threshold_auto_diff` отправляла
+слишком много пар в ручную проверку и усложняла текущий research benchmark.
+На этом этапе нужна простая binary evaluation: выше порога — тот же базовый
+товар, ниже порога — другой товар.
+
+### Что сделано
+
+- `research/dedup/threshold_calibration.py` переписан на forced binary
+  контракт:
+  - `same_base_product=1` для `exact_duplicate` и legacy
+    `same_product_different_pack`;
+  - `same_base_product=0` для `different_product`;
+  - `predicted_binary = 1 if score >= threshold_same else 0`.
+- Threshold выбирается только на dev для стратегий:
+  - `threshold_max_f1`;
+  - `threshold_cost_sensitive` с `FP_COST=5`, `FN_COST=1`;
+  - `threshold_max_weighted_f1`, если есть объёмы продаж;
+  - `threshold_weighted_cost`, если есть объёмы продаж.
+- Weighted-метрики строятся по объёму продаж, не по выручке:
+  `pair_weight = log1p(max(sales_volume_a, sales_volume_b))`.
+  Если объём нельзя надёжно подтянуть, используется `pair_weight=1`,
+  `weight_source=unit_weight_fallback`, weighted-метрики остаются пустыми.
+- `notebooks/03_matching_comparison.ipynb` больше не пишет старые
+  `matching_*` / workbook / pair-review artifacts и сохраняет только:
+  - `artifacts/reports/binary_threshold_summary.csv`;
+  - `artifacts/reports/binary_threshold_predictions.csv`;
+  - `artifacts/reports/binary_threshold_by_volume_bucket.csv`, если sales
+    volume доступен.
+- `docs/ARCHITECTURE.md`, `docs/AI_INDEX.md`,
+  `docs/THRESHOLD_CALIBRATION_REPORT.md` и `docs/USER_GUIDE.md` обновлены
+  под новый benchmark.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests/test_threshold_calibration.py` —
+  7 passed.
 
 ## 2026-06-25 — Cost-sensitive threshold calibration для SKU matching
 

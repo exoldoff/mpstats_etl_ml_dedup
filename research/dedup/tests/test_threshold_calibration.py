@@ -5,13 +5,12 @@ import math
 import pandas as pd
 
 from research.dedup.threshold_calibration import (
-    ThresholdCalibrationConfig,
+    BinaryThresholdConfig,
+    add_pair_weights,
     calibrate_and_evaluate_methods,
-    calibrate_method_thresholds,
-    error_report,
     prepare_calibration_frame,
-    threshold_pair_review,
-    write_compact_threshold_report,
+    summarize_by_volume_bucket,
+    write_binary_threshold_reports,
 )
 
 
@@ -25,12 +24,10 @@ def _row(method: str, split: str, score: float, label: str, idx: int) -> dict[st
         "title_b": f"B {idx}",
         "brand_a": "Brand",
         "brand_b": "Brand",
-        "unit_amount_a": 0.2,
-        "unit_amount_b": 0.2,
-        "total_amount_a": 0.2,
-        "total_amount_b": 0.2,
-        "multipack_count_a": 1,
-        "multipack_count_b": 1,
+        "raw_record_id_a": f"wb::{idx}",
+        "raw_record_id_b": f"ozon::{idx}",
+        "sku_a": str(idx),
+        "sku_b": str(idx + 100),
         "benchmark_pair_key": f"pair-{idx}",
     }
 
@@ -63,55 +60,13 @@ def test_existing_same_base_product_column_overrides_label_mapping() -> None:
     assert prepared["same_base_product"].tolist() == [1, 0]
 
 
-def test_auto_same_threshold_chooses_highest_recall_without_false_merges() -> None:
+def test_binary_threshold_strategies_are_selected_on_dev_only() -> None:
     frame = pd.DataFrame(
         [
             _row("m", "dev", 0.95, "exact_duplicate", 1),
             _row("m", "dev", 0.90, "same_product_different_pack", 2),
             _row("m", "dev", 0.80, "different_product", 3),
             _row("m", "dev", 0.20, "different_product", 4),
-        ]
-    )
-
-    thresholds, same_grid, _ = calibrate_method_thresholds(
-        "m",
-        frame,
-        ThresholdCalibrationConfig(target_auto_same_precision=0.97, max_false_merges_on_dev=0),
-    )
-
-    assert thresholds.threshold_auto_same == 0.90
-    assert thresholds.passed_auto_same_constraints is True
-    selected = same_grid[same_grid["threshold"].eq(0.90)].iloc[0]
-    assert selected["auto_same_recall"] == 1.0
-    assert selected["false_merge_count"] == 0
-
-
-def test_auto_same_threshold_falls_back_above_max_when_constraints_fail() -> None:
-    frame = pd.DataFrame(
-        [
-            _row("m", "dev", 0.90, "different_product", 1),
-            _row("m", "dev", 0.80, "exact_duplicate", 2),
-            _row("m", "dev", 0.70, "different_product", 3),
-        ]
-    )
-
-    thresholds, _, _ = calibrate_method_thresholds(
-        "m",
-        frame,
-        ThresholdCalibrationConfig(target_auto_same_precision=0.97, max_false_merges_on_dev=0),
-    )
-
-    assert thresholds.passed_auto_same_constraints is False
-    assert thresholds.threshold_auto_same > 0.90
-
-
-def test_calibrate_and_evaluate_outputs_dev_and_test_triage_metrics() -> None:
-    frame = pd.DataFrame(
-        [
-            _row("m", "dev", 0.95, "exact_duplicate", 1),
-            _row("m", "dev", 0.90, "same_product_different_pack", 2),
-            _row("m", "dev", 0.20, "different_product", 3),
-            _row("m", "dev", 0.10, "different_product", 4),
             _row("m", "test", 0.96, "exact_duplicate", 5),
             _row("m", "test", 0.50, "different_product", 6),
             _row("m", "test", 0.05, "same_product_different_pack", 7),
@@ -119,55 +74,124 @@ def test_calibrate_and_evaluate_outputs_dev_and_test_triage_metrics() -> None:
     )
 
     results = calibrate_and_evaluate_methods(frame)
-    calibration = results["calibration_on_dev"].iloc[0]
-    evaluation = results["evaluation_on_test"].iloc[0]
+    summary = results["summary"]
     predictions = results["predictions"]
 
-    assert calibration["threshold_auto_same"] == 0.90
-    assert calibration["threshold_auto_diff"] == 0.20
-    assert calibration["auto_coverage"] == 1.0
-    assert evaluation["false_reject_count"] == 1
-    assert math.isclose(evaluation["manual_review_rate"], 1 / 3)
+    max_f1 = summary[
+        summary["split"].eq("dev") & summary["threshold_strategy"].eq("threshold_max_f1")
+    ].iloc[0]
+    cost_sensitive_test = summary[
+        summary["split"].eq("test") & summary["threshold_strategy"].eq("threshold_cost_sensitive")
+    ].iloc[0]
 
-    test_predictions = predictions[predictions["eval_split"].eq("test")]
-    rejects = error_report(test_predictions, "false_reject")
-    manual = error_report(test_predictions, "manual_review")
-    assert rejects["benchmark_pair_key"].tolist() == ["pair-7"]
-    assert manual["benchmark_pair_key"].tolist() == ["pair-6"]
+    assert max_f1["threshold_same"] == 0.90
+    assert cost_sensitive_test["threshold_same"] == 0.90
+    assert cost_sensitive_test["false_merge_count"] == 0
+    assert cost_sensitive_test["false_split_count"] == 1
+    assert math.isclose(cost_sensitive_test["cost"], 1.0)
+    assert set(predictions["threshold_strategy"]) == {"threshold_max_f1", "threshold_cost_sensitive"}
+    assert "manual_review" not in predictions.columns
 
 
-def test_compact_threshold_report_writes_workbook_and_pair_review(tmp_path) -> None:
+def test_cost_sensitive_threshold_penalizes_false_merges() -> None:
     frame = pd.DataFrame(
         [
             _row("m", "dev", 0.95, "exact_duplicate", 1),
-            _row("m", "dev", 0.90, "same_product_different_pack", 2),
-            _row("m", "dev", 0.20, "different_product", 3),
+            _row("m", "dev", 0.90, "different_product", 2),
+            _row("m", "dev", 0.85, "exact_duplicate", 3),
             _row("m", "dev", 0.10, "different_product", 4),
-            _row("m", "test", 0.96, "exact_duplicate", 5),
-            _row("m", "test", 0.50, "different_product", 6),
-            _row("m", "test", 0.05, "same_product_different_pack", 7),
         ]
     )
-    results = calibrate_and_evaluate_methods(frame)
-    results["confusion_matrices"] = pd.DataFrame(
-        [{"method": "m", "eval_split": "test", "matrix_type": "triage", "true_label": "same_base_product"}]
+
+    results = calibrate_and_evaluate_methods(frame, config=BinaryThresholdConfig(fp_cost=5, fn_cost=1))
+    summary = results["summary"]
+
+    max_f1 = summary[
+        summary["split"].eq("dev") & summary["threshold_strategy"].eq("threshold_max_f1")
+    ].iloc[0]
+    cost_sensitive = summary[
+        summary["split"].eq("dev") & summary["threshold_strategy"].eq("threshold_cost_sensitive")
+    ].iloc[0]
+
+    assert max_f1["threshold_same"] == 0.85
+    assert max_f1["false_merge_count"] == 1
+    assert cost_sensitive["threshold_same"] == 0.95
+    assert cost_sensitive["false_merge_count"] == 0
+    assert cost_sensitive["false_split_count"] == 1
+
+
+def test_sales_volume_weights_enable_weighted_strategies() -> None:
+    frame = pd.DataFrame(
+        [
+            {**_row("m", "dev", 0.95, "exact_duplicate", 1), "sales_volume_a": 100, "sales_volume_b": 10},
+            {**_row("m", "dev", 0.90, "different_product", 2), "sales_volume_a": 1000, "sales_volume_b": 5},
+            {**_row("m", "dev", 0.85, "exact_duplicate", 3), "sales_volume_a": 1, "sales_volume_b": 1},
+            {**_row("m", "dev", 0.10, "different_product", 4), "sales_volume_a": 0, "sales_volume_b": 0},
+            {**_row("m", "test", 0.94, "different_product", 5), "sales_volume_a": 500, "sales_volume_b": 2},
+        ]
     )
 
-    paths = write_compact_threshold_report(results, tmp_path)
-    pair_review = threshold_pair_review(results)
+    weighted = add_pair_weights(frame)
+    results = calibrate_and_evaluate_methods(weighted.frame)
+    summary = results["summary"]
 
-    assert paths["summary"].name == "threshold_summary.xlsx"
+    assert results["weights_available"] is True
+    assert {
+        "threshold_max_f1",
+        "threshold_cost_sensitive",
+        "threshold_max_weighted_f1",
+        "threshold_weighted_cost",
+    }.issubset(set(summary["threshold_strategy"]))
+    assert summary["weighted_f1"].notna().any()
+    weighted_cost = summary[
+        summary["split"].eq("dev") & summary["threshold_strategy"].eq("threshold_weighted_cost")
+    ].iloc[0]
+    assert weighted_cost["threshold_same"] == 0.95
+    assert weighted_cost["weighted_total_cost"] < summary[
+        summary["split"].eq("dev") & summary["threshold_strategy"].eq("threshold_max_f1")
+    ].iloc[0]["weighted_total_cost"]
+
+
+def test_unit_weight_fallback_disables_weighted_metrics() -> None:
+    frame = pd.DataFrame(
+        [
+            _row("m", "dev", 0.90, "exact_duplicate", 1),
+            _row("m", "dev", 0.10, "different_product", 2),
+        ]
+    )
+
+    results = calibrate_and_evaluate_methods(frame)
+    summary = results["summary"]
+
+    assert results["weights_available"] is False
+    assert results["weight_source"] == "unit_weight_fallback"
+    assert set(summary["threshold_strategy"]) == {"threshold_max_f1", "threshold_cost_sensitive"}
+    assert summary["weighted_f1"].isna().all()
+
+
+def test_binary_threshold_reports_write_only_compact_csvs(tmp_path) -> None:
+    frame = pd.DataFrame(
+        [
+            {**_row("m", "dev", 0.90, "exact_duplicate", 1), "sales_volume_a": 10, "sales_volume_b": 20},
+            {**_row("m", "dev", 0.10, "different_product", 2), "sales_volume_a": 0, "sales_volume_b": 0},
+            {**_row("m", "test", 0.80, "different_product", 3), "sales_volume_a": 5, "sales_volume_b": 4},
+        ]
+    )
+
+    results = calibrate_and_evaluate_methods(add_pair_weights(frame).frame)
+    paths = write_binary_threshold_reports(results, tmp_path)
+
+    assert paths["summary"].name == "binary_threshold_summary.csv"
+    assert paths["predictions"].name == "binary_threshold_predictions.csv"
+    assert paths["by_volume_bucket"].name == "binary_threshold_by_volume_bucket.csv"
     assert paths["summary"].exists()
-    assert paths["pair_review"].name == "threshold_pair_review.csv"
-    assert paths["pair_review"].exists()
-    assert set(pair_review["issue_type"]) == {"false_reject", "manual_review"}
+    assert paths["predictions"].exists()
+    assert paths["by_volume_bucket"].exists()
 
-    workbook = pd.ExcelFile(paths["summary"])
-    assert workbook.sheet_names == [
-        "readme",
-        "model_ranking",
-        "calibration_dev",
-        "evaluation_test",
-        "confusion_matrices",
-        "pair_review",
-    ]
+    summary = pd.read_csv(paths["summary"])
+    predictions = pd.read_csv(paths["predictions"])
+    by_bucket = summarize_by_volume_bucket(results["predictions"], weight_source=str(results["weight_source"]))
+
+    assert {"method", "split", "threshold_strategy", "threshold_same", "weighted_total_cost"}.issubset(summary.columns)
+    assert {"predicted_binary", "false_merge", "false_split", "pair_weight"}.issubset(predictions.columns)
+    assert not by_bucket.empty

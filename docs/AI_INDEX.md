@@ -81,7 +81,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `research/dedup/fusion.py` | research fusion по архитектуре |
 | `research/dedup/model_registry.py` | единый registry/manager/pool для local-моделей и Polza.ai online embeddings |
 | `research/dedup/matchers/` | baseline matching engines A/B и общий интерфейс |
-| `research/dedup/threshold_calibration.py` | cost-sensitive dev calibration для `threshold_auto_same` / `threshold_auto_diff` |
+| `research/dedup/threshold_calibration.py` | forced binary dev calibration для `threshold_same`, cost/weighted strategies и compact CSV |
 | `research/dedup/annotator.py` | helper для ручной разметки |
 | `research/dedup/tests/` | узкие тесты research-модулей |
 | `research/dedup/data/` | локальные CSV-артефакты, игнорируются `.gitignore` |
@@ -134,16 +134,15 @@ Research-код остаётся независимым: `research/dedup/` не 
   умолчанию `https://polza.ai/api/v1`. `DEDUP_EMBEDDING_BACKEND=polza_embedding`
   или `DEDUP_BI_ENCODER_BACKEND=polza_embedding` нужны только для нового
   прямого Polza model id, которого ещё нет в registry.
-- В конце `03_matching_comparison.ipynb` есть общий benchmark всех
-  matching-моделей на одном срезе: `rule_based_fuzzy`,
+- В конце `03_matching_comparison.ipynb` есть общий forced binary benchmark
+  всех matching-моделей на одном срезе: `rule_based_fuzzy`,
   `bi_encoder_zero_shot`, `cross_encoder_zero_shot`,
   `reranker_qwen3_4b`, `reranker_bge_v2_m3`, `reranker_jina_v3`. Новые
   reranker-модели выбираются alias-ами registry в
   `RERANKER_BENCHMARK_MODELS` или через env
-  `DEDUP_RERANKER_BENCHMARK_MODELS`; главный отчёт для выбора безопасного
-  auto-merge решения теперь `artifacts/reports/threshold_summary.xlsx`
-  (`model_ranking`). Test split используется только для финальной проверки в
-  том же workbook (`evaluation_test`).
+  `DEDUP_RERANKER_BENCHMARK_MODELS`; главный отчёт теперь
+  `artifacts/reports/binary_threshold_summary.csv`. Test split используется
+  только для финальной проверки выбранных на dev `threshold_same`.
   `reranker_qwen3_4b` по умолчанию грузится на CPU, потому что на MPS с
   лимитом около 9GB падает по памяти; для быстрого Qwen-smoke есть alias
   `qwen3_0_6b`.
@@ -158,18 +157,21 @@ Research-код остаётся независимым: `research/dedup/` не 
   negative. Если во входных данных уже есть колонка `same_base_product`, она
   считается источником правды.
 - `notebooks/03_matching_comparison.ipynb` теперь делает stratified dev/test
-  split, калибрует `threshold_auto_same` и `threshold_auto_diff` на dev по
-  cost-sensitive правилам, сравнивает rule-based, bi-encoder, cross-encoder и
-  reranker methods, затем сохраняет отчёты в `artifacts/reports/` и
-  совместимые `matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
-  `matching_false_merges_sauces.csv`.
-- `notebooks/04_clustering_resolution.ipynb` строит partial family graph по
-  `auto_same` triage predictions, а pack graph — по тем же `auto_same`
-  predictions плюс deterministic `same_pack_signature`; сохраняет
-  `clustering_components_sauces.csv`, `clustering_pair_eval_sauces.csv`.
+  split и подбирает один `threshold_same` на dev для стратегий
+  `threshold_max_f1`, `threshold_cost_sensitive` и weighted-стратегий, если
+  доступны объёмы продаж. Raw predictions и старые `matching_*` CSV не
+  перезаписываются; compact outputs:
+  `artifacts/reports/binary_threshold_summary.csv`,
+  `artifacts/reports/binary_threshold_predictions.csv`,
+  `artifacts/reports/binary_threshold_by_volume_bucket.csv` при available
+  sales volume.
+- `notebooks/04_clustering_resolution.ipynb` и `05_evaluation_report.ipynb`
+  относятся к отдельному downstream-слою; после смены benchmark artifacts их
+  нужно адаптировать отдельной правкой перед повторным top-to-bottom запуском.
 - `notebooks/05_evaluation_report.ipynb` собирает текущий research-отчёт.
-  Следующий ML-шаг — улучшать rerank/fusion на hard negatives
-  (cross-encoder/LLM-judge), не переносить код в production pipeline.
+  Следующий ML-шаг — улучшать scorer/rerank/fusion на hard negatives без
+  manual review / LLM-review в текущем benchmark-этапе, не переносить код в
+  production pipeline.
 
 ## Production Web-App: карта проекта
 

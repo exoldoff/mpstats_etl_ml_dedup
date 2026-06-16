@@ -1390,7 +1390,7 @@ rank, score, стратегия отбора и русские флаги: ме�
 
 После завершения разметки не запускайте заново
 `notebooks/02_labeling_dataset.ipynb`, иначе можно перезаписать рабочий CSV
-разметки. Дальше запускайте notebooks сверху вниз:
+разметки. Для текущего threshold benchmark запускайте `03` сверху вниз:
 
 ```bash
 python3 - <<'PY'
@@ -1398,37 +1398,38 @@ from pathlib import Path
 import nbformat
 from nbclient import NotebookClient
 
-for notebook in [
-    "notebooks/03_matching_comparison.ipynb",
-    "notebooks/04_clustering_resolution.ipynb",
-    "notebooks/05_evaluation_report.ipynb",
-]:
-    path = Path(notebook)
-    nb = nbformat.read(path, as_version=4)
-    NotebookClient(
-        nb,
-        timeout=900,
-        kernel_name="python3",
-        resources={"metadata": {"path": str(Path.cwd())}},
-    ).execute()
-    nbformat.write(nb, path)
-    print("ok", notebook)
+path = Path("notebooks/03_matching_comparison.ipynb")
+nb = nbformat.read(path, as_version=4)
+NotebookClient(
+    nb,
+    timeout=900,
+    kernel_name="python3",
+    resources={"metadata": {"path": str(Path.cwd())}},
+).execute()
+nbformat.write(nb, path)
+print("ok", path)
 PY
 ```
 
-`03_matching_comparison.ipynb` делает dev/test split и калибрует два
-cost-sensitive порога на dev:
+`03_matching_comparison.ipynb` делает dev/test split и подбирает один
+`threshold_same` на dev. Правило простое:
 
-- `threshold_auto_same` — когда можно автоматически связать пару как один
-  базовый товар;
-- `threshold_auto_diff` — когда можно автоматически отклонить пару как разные
-  товары;
-- всё между порогами уходит в `manual_review`.
+```python
+predicted_binary = 1 if score >= threshold_same else 0
+```
 
-Главный критерий auto-merge — пройти ограничения `auto_same_precision >= 0.97`
-и `false_merge_count <= 0` на dev. Macro-F1 остаётся только вспомогательной
-forced-метрикой, потому что false merge разных товаров намного опаснее, чем
-ручная проверка дубля.
+`same_base_product = 1` для `exact_duplicate` и legacy
+`same_product_different_pack`; `same_base_product = 0` для
+`different_product`. Manual review, LLM-review и triage на этом этапе не
+запускаются.
+
+Для каждого method считаются стратегии:
+
+- `threshold_max_f1` — максимальный обычный F1 на dev;
+- `threshold_cost_sensitive` — минимум
+  `FP_COST * false_merge_count + FN_COST * false_split_count`;
+- `threshold_max_weighted_f1` и `threshold_weighted_cost`, если доступны
+  объёмы продаж.
 
 Notebook сравнивает текущие методы:
 `rule_based_fuzzy`, `bi_encoder_zero_shot`, `cross_encoder_zero_shot` и
@@ -1437,16 +1438,16 @@ Cross-encoder — более внимательная проверка пары,
 скачивать модель из Hugging Face. Если нужно временно пропустить этот блок,
 запустите notebook с `DEDUP_RUN_CROSS_ENCODER=0`.
 
-После прогона `03` сохраняет совместимые локальные артефакты:
-`matching_summary_sauces.csv`, `matching_predictions_sauces.csv`,
-`matching_false_merges_sauces.csv`.
+После прогона `03` сохраняет только compact-отчёты в `artifacts/reports/`:
 
-Главные production-отчёты лежат в `artifacts/reports/`:
+- `binary_threshold_summary.csv` — одна строка на
+  `method + split + threshold_strategy`;
+- `binary_threshold_predictions.csv` — score, true label, predicted label,
+  `false_merge`, `false_split`, `pair_weight` и контекст пары;
+- `binary_threshold_by_volume_bucket.csv` — появляется только если доступны
+  weighted-метрики по объёму продаж.
 
-- `threshold_summary.xlsx` — один workbook со сводкой моделей, dev/test
-  calibration, confusion matrices и листом `pair_review`;
-- `threshold_pair_review.csv` — один CSV со всеми парами для чтения глазами:
-  `false_merge`, `false_reject` и `manual_review` по dev/test.
+Raw predictions и старые `matching_*` CSV этот benchmark не перезаписывает.
 
 В конце `03_matching_comparison.ipynb` есть общий benchmark всех текущих
 matching-моделей на одном и том же срезе:
@@ -1458,18 +1459,10 @@ matching-моделей на одном и том же срезе:
 - `reranker_qwen3_4b`;
 - `reranker_jina_v3`.
 
-Главный файл для выбора безопасного решения — теперь
-`artifacts/reports/threshold_summary.xlsx`, лист `model_ranking`. Test split
-нельзя использовать ни для выбора порогов, ни для выбора модели; он нужен
-только для финальной проверки.
-
-Совместимые CSV общего benchmark всё ещё сохраняются:
-
-- `all_model_benchmark_summary_sauces.csv`;
-- `all_model_benchmark_predictions_sauces.csv`.
-
-Отдельные `reranker_benchmark_*` CSV тоже сохраняются, но они нужны только
-если хочется посмотреть новые reranker-модели отдельно от старых baseline.
+Главный файл для сравнения методов — теперь
+`artifacts/reports/binary_threshold_summary.csv`. Test split нельзя
+использовать ни для выбора threshold, ни для выбора bucket cutoffs, ни для
+выбора модели; он нужен только для финальной проверки.
 
 Запуск теперь обычный: откройте notebook, найдите ячейку
 `Блок кода 16. Настройки общего бенчмарка` и поменяйте верхний блок
@@ -1488,12 +1481,12 @@ MY_RERANKER_MAX_PAIRS = 120  # 0 = весь размеченный gold-set
 MY_CUSTOM_RERANKER_BACKEND = CROSS_ENCODER_BACKEND
 ```
 
-Пороговые safety-параметры можно менять через env:
+Cost-параметры можно менять через env:
 
 ```bash
-DEDUP_TARGET_AUTO_SAME_PRECISION=0.97
-DEDUP_MAX_FALSE_MERGES_ON_DEV=0
-DEDUP_TARGET_AUTO_DIFF_PRECISION=0.95
+DEDUP_FP_COST=5
+DEDUP_FN_COST=1
+DEDUP_ENABLE_SALES_VOLUME_JOIN=1
 ```
 
 Модели можно писать короткими alias-ами из registry (`bge_m3`, `qwen3_4b`,

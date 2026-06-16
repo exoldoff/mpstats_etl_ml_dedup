@@ -1,78 +1,88 @@
-# SKU Matching Threshold Calibration
+# SKU Matching Binary Threshold Benchmark
 
-Этот отчёт описывает production-критерий для benchmark SKU matching.
+Этот отчёт описывает текущий критерий для benchmark SKU matching.
 Актуальные числа появляются после запуска `notebooks/03_matching_comparison.ipynb`
 и сохраняются в `artifacts/reports/`.
 
-## Главный критерий auto-merge
+## Правило предсказания
 
-Модель больше не выбирает один общий threshold по `macro_f1`.
+Benchmark больше не делает triage и не отправляет пары в ручную проверку.
+Для каждой пары есть один `score` и один порог:
 
-Для каждого `method` на `dev` подбираются два порога:
+```python
+predicted_binary = 1 if score >= threshold_same else 0
+```
 
-- `threshold_auto_same`: `score >= threshold_auto_same` даёт
-  `auto_same_base_product`;
-- `threshold_auto_diff`: `score <= threshold_auto_diff` даёт
-  `auto_different_product`;
-- всё между ними уходит в `manual_review`.
+`same_base_product` строится так:
 
-`threshold_auto_same` выбирается как максимальный recall среди порогов, где:
+- `1`: `exact_duplicate` и legacy `same_product_different_pack`;
+- `0`: `different_product`.
 
-- `auto_same_precision >= 0.97`;
-- `false_merge_count <= 0` на dev.
+`threshold_same` выбирается только на `dev`. `test` используется только для
+финальной оценки выбранного на `dev` порога.
 
-Если таких порогов нет, notebook ставит порог выше максимального score и
-пишет `passed_auto_same_constraints=false`. Это значит: метод не прошёл
-safe auto-merge calibration при текущих правилах.
+## Threshold Strategies
 
-`threshold_auto_diff` выбирается по максимальному покрытию среди порогов, где
-`auto_diff_precision >= 0.95`.
+Для каждого `method` считаются:
 
-## Почему не macro-F1
+- `threshold_max_f1` — максимальный обычный F1 на `dev`;
+- `threshold_cost_sensitive` — минимальная цена ошибки:
+  `FP_COST * false_merge_count + FN_COST * false_split_count`;
+- `threshold_max_weighted_f1` — только если доступны объёмы продаж;
+- `threshold_weighted_cost` — только если доступны объёмы продаж.
 
-`macro_f1` симметрично усредняет качество по классам. Для дедупликации SKU это
-не production-критерий: ложная склейка разных товаров портит группу и может
-заразить downstream-отчёты, а пропущенный дубль можно отправить в
-`manual_review` или обработать позже. Поэтому главный критерий для
-auto-merge — безопасность: высокая precision и ноль false merges на dev.
+Стартовые параметры:
 
-## Где смотреть прошедшие модели
+```python
+FP_COST = 5
+FN_COST = 1
+```
 
-Открой `artifacts/reports/threshold_summary.xlsx`, sheet `model_ranking`.
+False merge дороже false split, потому что ложная склейка разных товаров
+портит справочник и downstream-отчёты.
 
-Модели, прошедшие порог безопасности, это строки, где:
+## Вес по объёму продаж
 
-- `passed_auto_same_constraints=true`;
-- `false_merge_count <= MAX_FALSE_MERGES_ON_DEV`;
-- `auto_same_precision >= TARGET_AUTO_SAME_PRECISION`.
+Основной бизнес-вес ошибки строится по объёму продаж, не по выручке.
+Revenue / turnover / GMV не используются как основной вес.
 
-Для выбора кандидата смотри сначала `passed_auto_same_constraints`, затем
-`auto_coverage`, `auto_same_recall` и `manual_review_rate`.
+Если есть `sales_volume_a` и `sales_volume_b` или notebook может надёжно
+подтянуть `Продажи, шт` из `mpstats_products` по `raw_record_id`, вес пары:
 
-Sheet `evaluation_test` нужен только для финальной проверки выбранных на dev
-порогов. Test split нельзя использовать для подбора threshold или выбора
-модели.
+```python
+pair_importance = max(sales_volume_a, sales_volume_b)
+pair_weight = log1p(pair_importance)
+```
 
-## Manual review
-
-Доля ручной проверки записана в колонке `manual_review_rate`.
-
-Практическое чтение:
-
-- высокая `manual_review_rate` при нуле false merges обычно допустима для
-  первого безопасного production-кандидата;
-- низкая `manual_review_rate` с false merges опасна и не должна побеждать
-  только за счёт красивого coverage;
-- конкретные пары для чтения глазами лежат в
-  `artifacts/reports/threshold_pair_review.csv` и в sheet `pair_review`.
+Если объёмы продаж нельзя подтянуть надёжно, benchmark не пытается матчить по
+названию. Он использует `pair_weight = 1`, оставляет weighted-метрики пустыми
+и пишет `weight_source = unit_weight_fallback`.
 
 ## Основные артефакты
 
-- `artifacts/reports/threshold_summary.xlsx`
-  - `model_ranking` — основной лист для выбора метода;
-  - `calibration_dev` — dev calibration;
-  - `evaluation_test` — held-out проверка выбранных dev-порогов;
-  - `confusion_matrices` — forced и triage confusion matrices;
-  - `pair_review` — пары для ручного чтения.
-- `artifacts/reports/threshold_pair_review.csv` — та же таблица пар отдельным
-  CSV, чтобы её было удобно фильтровать или отправлять на разметку.
+- `artifacts/reports/binary_threshold_summary.csv` — одна строка на
+  `method + split + threshold_strategy`.
+- `artifacts/reports/binary_threshold_predictions.csv` — предсказания по
+  парам: score, true label, predicted label, `false_merge`, `false_split`,
+  `pair_weight` и контекст пары.
+- `artifacts/reports/binary_threshold_by_volume_bucket.csv` — появляется
+  только при доступных weighted-метриках.
+
+Bucket-и объёма продаж: `zero / low / medium / high`. Cutoffs считаются только
+на `dev` и применяются к `test` без пересчёта.
+
+## Как читать итог
+
+В конце notebook выводит компактную таблицу только по `test`:
+
+- `method`;
+- `threshold_strategy`;
+- `threshold_same`;
+- `precision`, `recall`, `f1`;
+- `false_merge_count`, `false_split_count`;
+- `cost`;
+- `weighted_f1`, `weighted_total_cost`;
+- `weight_source`.
+
+Если weighted-метрики недоступны, обычный unweighted binary benchmark всё
+равно считается полностью.
