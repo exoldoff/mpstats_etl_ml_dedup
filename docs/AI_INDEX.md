@@ -91,6 +91,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `notebooks/03_matching_comparison.ipynb` | сравнение baseline A/B/D0 на размеченном gold-set |
 | `notebooks/04_fusion_pack_grouping.ipynb` | выбор fusion-run, family/pack grouping и CSV `fusion_*` |
 | `notebooks/05_evaluation_report.ipynb` | финальный research-отчёт по matching + fusion + graph quality |
+| `notebooks/06_grouped_sku_demo.ipynb` | демонстрация склеенных SKU из DuckDB + `fusion_*` |
 
 Текущие локальные CSV после последнего research-этапа:
 
@@ -174,6 +175,10 @@ Research-код остаётся независимым: `research/dedup/` не 
   `fusion_*`, без старых `matching_*` / `auto_same` / `manual_review`
   артефактов, и собирает текущий research-отчёт вместе с family/pack graph
   diagnostics.
+- `notebooks/06_grouped_sku_demo.ipynb` показывает результат как витрину:
+  реальные SKU из `mpstats_products` в DuckDB + текущие
+  `fusion_family_id` / `fusion_pack_id`; это demo текущего research-среза,
+  а не production identity mapping всего куба.
   Следующий ML-шаг — улучшать scorer/rerank/fusion на hard negatives без
   manual review / LLM-review в текущем benchmark-этапе, не переносить код в
   production pipeline.
@@ -267,6 +272,7 @@ for notebook in [
     "notebooks/03_matching_comparison.ipynb",
     "notebooks/04_fusion_pack_grouping.ipynb",
     "notebooks/05_evaluation_report.ipynb",
+    "notebooks/06_grouped_sku_demo.ipynb",
 ]:
     path = Path(notebook)
     nb = nbformat.read(path, as_version=4)

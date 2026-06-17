@@ -218,6 +218,8 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
 - `05_evaluation_report.ipynb` — финальные сравнительные таблицы для
   презентации жюри плюс проверка family/pack graph resolution на уровне
   связей.
+- `06_grouped_sku_demo.ipynb` — демонстрационная витрина: реальные SKU из
+  DuckDB, на которые наложены текущие `fusion_family_id` / `fusion_pack_id`.
 
 ## 8. Оценка и тестирование (методология)
 

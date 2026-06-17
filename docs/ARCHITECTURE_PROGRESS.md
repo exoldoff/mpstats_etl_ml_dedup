@@ -42,6 +42,35 @@
 - Финальный downstream-отчёт теперь один:
   `notebooks/05_evaluation_report.ipynb` объединяет прежнюю проверку
   family/pack graph resolution и итоговый report по matching + fusion.
+- Для просмотра результата на реальных строках DuckDB добавлен
+  `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
+  `mpstats_products` и показывает склеенные SKU-группы.
+
+## 2026-06-27 — Demo notebook для сгруппированных SKU из DuckDB
+
+### Зачем
+
+После quality-отчёта нужен отдельный человеческий просмотр результата:
+не метрики, а таблица реальных SKU из DuckDB, которые текущий research-run
+склеил в `family` и `pack` группы.
+
+### Что сделано
+
+- Добавлен `notebooks/06_grouped_sku_demo.ipynb`.
+- Notebook автоматически находит `mpstats.duckdb` через
+  `MPSTATS_DUCKDB_PATH`, локальный `mpstats.duckdb` или desktop-путь.
+- Читает `mpstats_products` по категории `Соус` / `Соусы`, агрегирует строки
+  по `marketplace + Артикул`, затем join-ит с
+  `research/dedup/data/fusion_components_sauces.csv`.
+- Показывает coverage, склеенные family-группы, pack-группы, подробную
+  карточку выбранной family и pair-edges, которые склеили группу.
+- Сохраняет просмотренную витрину в ignored CSV:
+  `artifacts/reports/dedup_grouped_sku_demo.csv`.
+
+### Проверки
+
+- `ast.parse` code cells в `notebooks/06_grouped_sku_demo.ipynb` — ok.
+- `nbclient` на `notebooks/06_grouped_sku_demo.ipynb` — ok.
 
 ## 2026-06-27 — Единый downstream evaluation notebook
 

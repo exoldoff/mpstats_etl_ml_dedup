@@ -1579,7 +1579,14 @@ python3 -m pip install -U -r requirements-research.txt
 `05_evaluation_report.ipynb` собирает текущий research-отчёт: качество
 разметки, сравнение methods, false-merge примеры, итог family/pack fusion и
 качество graph resolution с примерами false links / missed links.
-CSV-артефакты лежат в `research/dedup/data/` и не коммитятся.
+
+`06_grouped_sku_demo.ipynb` показывает результат уже как таблицу товаров:
+берёт реальные строки `mpstats_products` из `mpstats.duckdb`, накладывает
+`fusion_family_id` / `fusion_pack_id` из `fusion_components_sauces.csv` и
+показывает склеенные SKU-группы. Дополнительно сохраняет витрину в
+`artifacts/reports/dedup_grouped_sku_demo.csv`.
+Research CSV-артефакты лежат в `research/dedup/data/`, demo-export лежит в
+`artifacts/reports/`; эти рабочие файлы не коммитятся.
 
 ## 23. Безопасные правила работы
 
