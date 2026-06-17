@@ -1537,13 +1537,27 @@ python3 -m pip install -U -r requirements-research.txt
   `multipack_count`.
 
 По умолчанию `04` выбирает `threshold_cost_sensitive`. Если нужно вручную
-зафиксировать вариант, используйте env-переменные:
+зафиксировать вариант, в блоке `Пути и настройки` меняйте `MY_*` значения:
 
-```bash
-DEDUP_FUSION_METHOD=reranker_bge_v2_m3
-DEDUP_FUSION_THRESHOLD_STRATEGY=threshold_cost_sensitive
-DEDUP_FUSION_EVAL_SPLIT=test
-```
+- `MY_FUSION_METHOD = None` — выбрать method автоматически по `dev`.
+  Можно поставить строку из текущего `binary_threshold_summary.csv`, например
+  `"rule_based_fuzzy"`, `"bi_encoder_zero_shot"`,
+  `"cross_encoder_zero_shot"`, `"reranker_bge_v2_m3"`,
+  `"reranker_qwen3_4b"`, `"reranker_qwen3_0_6b"`,
+  `"reranker_jina_v3"`.
+- `MY_FUSION_THRESHOLD_STRATEGY = None` — взять
+  `threshold_cost_sensitive`, если она есть. Можно поставить
+  `"threshold_cost_sensitive"` для более осторожной склейки,
+  `"threshold_max_f1"` для более смелой общей F1-оптимизации,
+  `"threshold_weighted_cost"` или `"threshold_max_weighted_f1"`, если
+  доступны объёмы продаж.
+- `MY_FUSION_EVAL_SPLIT = "test"` — смотреть честную диагностику на test.
+  Можно поставить `"dev"` для просмотра калибровочного среза или `"all"` для
+  просмотра всех пар вместе.
+
+Env-переменные `DEDUP_FUSION_METHOD`,
+`DEDUP_FUSION_THRESHOLD_STRATEGY`, `DEDUP_FUSION_EVAL_SPLIT` тоже работают,
+но в обычном Jupyter проще менять именно `MY_*` в ячейке.
 
 `04_fusion_pack_grouping.ipynb` сохраняет:
 
