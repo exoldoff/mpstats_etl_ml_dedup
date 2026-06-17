@@ -35,6 +35,52 @@
   `artifacts/reports/binary_threshold_predictions.csv` и, если доступны
   объёмы продаж, `artifacts/reports/binary_threshold_by_volume_bucket.csv`.
   Manual review, LLM-review и triage на текущем benchmark-этапе не нужны.
+- Downstream теперь идёт через `notebooks/04_fusion_pack_grouping.ipynb`:
+  notebook выбирает fusion-run только по `dev`, строит `family` и `pack`
+  группы и сохраняет `research/dedup/data/fusion_components_sauces.csv` /
+  `research/dedup/data/fusion_pair_eval_sauces.csv`.
+
+## 2026-06-26 — Fusion/pack grouping после binary benchmark
+
+### Зачем
+
+После `03_matching_comparison.ipynb` нужен отдельный слой, который не
+пересчитывает model scores, а превращает выбранные binary pair predictions в
+понятные группы товаров. Важно не смешивать два уровня: базовый товар
+(`family`) и конкретную фасовку (`pack`).
+
+### Что сделано
+
+- В `research/dedup/fusion.py` добавлены helper-ы:
+  - `select_fusion_run(...)` выбирает `method + threshold_strategy` только по
+    `dev`, по умолчанию среди `threshold_cost_sensitive` строк;
+  - `prepare_fusion_pair_edges(...)` добавляет `fusion_family_edge`,
+    `same_pack_signature`, `fusion_pack_edge` и true/pred labels для графа.
+- Добавлен `notebooks/04_fusion_pack_grouping.ipynb`:
+  - читает `artifacts/reports/binary_threshold_summary.csv` и
+    `artifacts/reports/binary_threshold_predictions.csv`;
+  - поддерживает `DEDUP_FUSION_METHOD`,
+    `DEDUP_FUSION_THRESHOLD_STRATEGY`, `DEDUP_FUSION_EVAL_SPLIT`;
+  - сохраняет `fusion_components_sauces.csv` и
+    `fusion_pair_eval_sauces.csv` в ignored `research/dedup/data/`.
+- Старые downstream notebooks сдвинуты:
+  - `05_clustering_resolution.ipynb` теперь читает `fusion_*` и показывает
+    family/pack link metrics;
+  - `06_evaluation_report.ipynb` собирает итог по binary benchmark и fusion.
+- `docs/AI_INDEX.md`, `docs/ARCHITECTURE.md`,
+  `docs/THRESHOLD_CALIBRATION_REPORT.md` и `docs/USER_GUIDE.md` обновлены под
+  flow `03 -> 04 -> 05 -> 06`.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests/test_fusion.py research/dedup/tests/test_clustering.py research/dedup/tests/test_threshold_calibration.py` — 14 passed.
+- `python3 -m compileall research/dedup` — ok.
+- `ast.parse` code cells в `notebooks/04_fusion_pack_grouping.ipynb`,
+  `notebooks/05_clustering_resolution.ipynb`,
+  `notebooks/06_evaluation_report.ipynb` — ok.
+- `nbclient` на `notebooks/04_fusion_pack_grouping.ipynb`,
+  `notebooks/05_clustering_resolution.ipynb`,
+  `notebooks/06_evaluation_report.ipynb` — ok.
 
 ## 2026-06-26 — Forced binary threshold benchmark для SKU matching
 

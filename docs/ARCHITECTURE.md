@@ -168,6 +168,10 @@ binary benchmark с `pair_weight = 1`.
   → товарная семья / базовый продукт.
 - Level 2: внутри семьи группировка по deterministic pack signature из
   готовых weight/multipack колонок → финальная pack-группа.
+- Research v1 делает это отдельным шагом после `03_matching_comparison.ipynb`:
+  `04_fusion_pack_grouping.ipynb` выбирает `method + threshold_strategy`
+  только по `dev`, затем сохраняет `fusion_components_sauces.csv` и
+  `fusion_pair_eval_sauces.csv` для downstream-отчётов.
 - Текущий threshold benchmark не создаёт `manual_review` / triage-зону.
 
 ## 6.1 Организация кода на research-этапе (пересмотрено по запросу)
@@ -209,9 +213,11 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
   класса. Это и есть gold-set для раздела 8.
 - `03_matching_comparison.ipynb` — A vs B vs C vs D vs E на gold-set из 02,
   метрики — см. раздел 8.
-- `04_clustering_resolution.ipynb` — построение графа, 2-level resolution,
-  оценка на уровне кластеров.
-- `05_evaluation_report.ipynb` — финальные сравнительные таблицы для
+- `04_fusion_pack_grouping.ipynb` — выбор fusion-run по `dev`, family/pack
+  grouping и compact CSV `fusion_*`.
+- `05_clustering_resolution.ipynb` — проверка family/pack graph resolution
+  на уровне связей.
+- `06_evaluation_report.ipynb` — финальные сравнительные таблицы для
   презентации жюри.
 
 ## 8. Оценка и тестирование (методология)
@@ -267,7 +273,7 @@ manual review, LLM-review или triage. Test нельзя использова�
 threshold или модели.
 
 ### 8.5 Качественный анализ
-Отдельно показать 5-10 примеров ошибок каждого типа в `05_evaluation_report.ipynb`
+Отдельно показать 5-10 примеров ошибок каждого типа в `06_evaluation_report.ipynb`
 (особенно hard negatives, смерженные неправильно) — не метрика, но
 полезно и для дебага, и для защиты проекта.
 

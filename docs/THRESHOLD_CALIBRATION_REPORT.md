@@ -86,3 +86,17 @@ Bucket-и объёма продаж: `zero / low / medium / high`. Cutoffs сч�
 
 Если weighted-метрики недоступны, обычный unweighted binary benchmark всё
 равно считается полностью.
+
+## Downstream Fusion
+
+Следующий notebook — `notebooks/04_fusion_pack_grouping.ipynb`. Он читает
+`binary_threshold_summary.csv` и `binary_threshold_predictions.csv`, выбирает
+`method + threshold_strategy` только по `dev`, а затем строит два уровня
+групп:
+
+- `fusion_family_id` — базовый товар;
+- `fusion_pack_id` — конкретная фасовка внутри family по deterministic
+  `unit/total/multipack` полям.
+
+Результаты сохраняются в `research/dedup/data/fusion_components_sauces.csv`
+и `research/dedup/data/fusion_pair_eval_sauces.csv`.

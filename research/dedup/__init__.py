@@ -28,7 +28,13 @@ from .embedding_candidates import (
     generate_faiss_candidate_pairs,
 )
 from .labeling import LabelingSamplingConfig, stratified_labeling_sample
-from .fusion import FusionConfig, decide_label
+from .fusion import (
+    FusionConfig,
+    FusionRun,
+    decide_label,
+    prepare_fusion_pair_edges,
+    select_fusion_run,
+)
 from .model_registry import (
     CROSS_ENCODER_BACKEND,
     DEFAULT_POLZA_BASE_URL,
@@ -106,6 +112,7 @@ __all__ = [
     "FAMILY_EDGE_LABELS",
     "FAISS_CANDIDATE_OUTPUT_COLUMNS",
     "FusionConfig",
+    "FusionRun",
     "FaissCandidateGenerationConfig",
     "JinaRerankerMatcher",
     "LabelingSamplingConfig",
@@ -158,11 +165,13 @@ __all__ = [
     "normalize_title",
     "prepare_product_records",
     "prepare_calibration_frame",
+    "prepare_fusion_pair_edges",
     "resolve_embedding_model_spec",
     "resolve_model_spec",
     "same_pack_signature_mask",
     "same_base_product_from_labels",
     "same_base_product_target",
+    "select_fusion_run",
     "stratified_labeling_sample",
     "summarize_by_volume_bucket",
     "title_similarity",

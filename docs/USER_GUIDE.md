@@ -1527,13 +1527,38 @@ Jina v3 удобна для эксперимента, но перед production
 python3 -m pip install -U -r requirements-research.txt
 ```
 
-`04_clustering_resolution.ipynb` строит partial family/pack graph по
-predictions из 03 и сохраняет `clustering_components_sauces.csv` и
-`clustering_pair_eval_sauces.csv`.
+После `03` запустите `04_fusion_pack_grouping.ipynb`. Он не запускает модели
+заново: берёт `binary_threshold_summary.csv` и
+`binary_threshold_predictions.csv`, выбирает один fusion-run только по `dev`
+и строит два уровня групп:
 
-`05_evaluation_report.ipynb` собирает текущий research-отчёт: качество
-разметки, сравнение baselines, false-merge примеры и partial clustering
-metrics. CSV-артефакты лежат в `research/dedup/data/` и не коммитятся.
+- `family` — один базовый товар, даже если отличается вес или multipack;
+- `pack` — конкретная фасовка внутри family по `Вес, кг (ед.)`, `Вес, кг` и
+  `multipack_count`.
+
+По умолчанию `04` выбирает `threshold_cost_sensitive`. Если нужно вручную
+зафиксировать вариант, используйте env-переменные:
+
+```bash
+DEDUP_FUSION_METHOD=reranker_bge_v2_m3
+DEDUP_FUSION_THRESHOLD_STRATEGY=threshold_cost_sensitive
+DEDUP_FUSION_EVAL_SPLIT=test
+```
+
+`04_fusion_pack_grouping.ipynb` сохраняет:
+
+- `fusion_components_sauces.csv` — товары и номера `fusion_family_id` /
+  `fusion_pack_id`;
+- `fusion_pair_eval_sauces.csv` — пары с флагами `true/pred_same_family` и
+  `true/pred_same_pack`.
+
+`05_clustering_resolution.ipynb` читает эти `fusion_*` CSV и показывает
+качество graph resolution: отдельно family-связи и pack-связи, плюс примеры
+false links и missed links.
+
+`06_evaluation_report.ipynb` собирает текущий research-отчёт: качество
+разметки, сравнение methods, false-merge примеры и итог family/pack fusion.
+CSV-артефакты лежат в `research/dedup/data/` и не коммитятся.
 
 ## 23. Безопасные правила работы
 

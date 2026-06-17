@@ -78,7 +78,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `research/dedup/embedding_candidates.py` | FAISS top-k candidate generation по dense embeddings |
 | `research/dedup/labeling.py` | stratified sampling для ручной разметки gold-set |
 | `research/dedup/metrics.py` | dependency-light classification report и confusion matrix |
-| `research/dedup/fusion.py` | research fusion по архитектуре |
+| `research/dedup/fusion.py` | выбор fusion-run по dev-summary и подготовка family/pack pair edges |
 | `research/dedup/model_registry.py` | единый registry/manager/pool для local-моделей и Polza.ai online embeddings |
 | `research/dedup/matchers/` | baseline matching engines A/B и общий интерфейс |
 | `research/dedup/threshold_calibration.py` | forced binary dev calibration для `threshold_same`, cost/weighted strategies и compact CSV |
@@ -89,8 +89,9 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking, генерация `candidates_sauces.csv` |
 | `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_sauces.csv` |
 | `notebooks/03_matching_comparison.ipynb` | сравнение baseline A/B/D0 на размеченном gold-set |
-| `notebooks/04_clustering_resolution.ipynb` | graph resolution по calibrated pairwise predictions |
-| `notebooks/05_evaluation_report.ipynb` | финальный research-отчёт по текущему baseline-прогону |
+| `notebooks/04_fusion_pack_grouping.ipynb` | выбор fusion-run, family/pack grouping и CSV `fusion_*` |
+| `notebooks/05_clustering_resolution.ipynb` | проверка fusion-графа на уровне family/pack links |
+| `notebooks/06_evaluation_report.ipynb` | финальный research-отчёт по matching + fusion-прогону |
 
 Текущие локальные CSV после последнего research-этапа:
 
@@ -149,7 +150,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 - `03_matching_comparison.ipynb` запускается без разметки и показывает
   заглушки вместо падения.
 
-Текущий следующий шаг:
+Актуальный downstream:
 
 - Gold-set для threshold calibration использует binary target
   `same_base_product`: `exact_duplicate` и legacy
@@ -165,10 +166,15 @@ Research-код остаётся независимым: `research/dedup/` не 
   `artifacts/reports/binary_threshold_predictions.csv`,
   `artifacts/reports/binary_threshold_by_volume_bucket.csv` при available
   sales volume.
-- `notebooks/04_clustering_resolution.ipynb` и `05_evaluation_report.ipynb`
-  относятся к отдельному downstream-слою; после смены benchmark artifacts их
-  нужно адаптировать отдельной правкой перед повторным top-to-bottom запуском.
-- `notebooks/05_evaluation_report.ipynb` собирает текущий research-отчёт.
+- `notebooks/04_fusion_pack_grouping.ipynb` читает compact outputs из `03`,
+  выбирает method/strategy только по `dev` и сохраняет
+  `research/dedup/data/fusion_components_sauces.csv` плюс
+  `research/dedup/data/fusion_pair_eval_sauces.csv`.
+- `notebooks/05_clustering_resolution.ipynb` и
+  `notebooks/06_evaluation_report.ipynb` читают `binary_threshold_*` и
+  `fusion_*`, без старых `matching_*` / `auto_same` / `manual_review`
+  артефактов.
+  `notebooks/06_evaluation_report.ipynb` собирает текущий research-отчёт.
   Следующий ML-шаг — улучшать scorer/rerank/fusion на hard negatives без
   manual review / LLM-review в текущем benchmark-этапе, не переносить код в
   production pipeline.
@@ -260,6 +266,9 @@ for notebook in [
     "notebooks/01_candidate_generation.ipynb",
     "notebooks/02_labeling_dataset.ipynb",
     "notebooks/03_matching_comparison.ipynb",
+    "notebooks/04_fusion_pack_grouping.ipynb",
+    "notebooks/05_clustering_resolution.ipynb",
+    "notebooks/06_evaluation_report.ipynb",
 ]:
     path = Path(notebook)
     nb = nbformat.read(path, as_version=4)
