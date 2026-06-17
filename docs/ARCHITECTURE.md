@@ -215,10 +215,9 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
   метрики — см. раздел 8.
 - `04_fusion_pack_grouping.ipynb` — выбор fusion-run по `dev`, family/pack
   grouping и compact CSV `fusion_*`.
-- `05_clustering_resolution.ipynb` — проверка family/pack graph resolution
-  на уровне связей.
-- `06_evaluation_report.ipynb` — финальные сравнительные таблицы для
-  презентации жюри.
+- `05_evaluation_report.ipynb` — финальные сравнительные таблицы для
+  презентации жюри плюс проверка family/pack graph resolution на уровне
+  связей.
 
 ## 8. Оценка и тестирование (методология)
 
@@ -276,7 +275,7 @@ manual review, LLM-review или triage. Test нельзя использова�
 threshold или модели.
 
 ### 8.5 Качественный анализ
-Отдельно показать 5-10 примеров ошибок каждого типа в `06_evaluation_report.ipynb`
+Отдельно показать 5-10 примеров ошибок каждого типа в `05_evaluation_report.ipynb`
 (особенно hard negatives, смерженные неправильно) — не метрика, но
 полезно и для дебага, и для защиты проекта.
 

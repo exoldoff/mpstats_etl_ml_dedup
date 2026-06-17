@@ -39,6 +39,38 @@
   notebook выбирает fusion-run только по `dev`, строит `family` и `pack`
   группы и сохраняет `research/dedup/data/fusion_components_sauces.csv` /
   `research/dedup/data/fusion_pair_eval_sauces.csv`.
+- Финальный downstream-отчёт теперь один:
+  `notebooks/05_evaluation_report.ipynb` объединяет прежнюю проверку
+  family/pack graph resolution и итоговый report по matching + fusion.
+
+## 2026-06-27 — Единый downstream evaluation notebook
+
+### Зачем
+
+`05_clustering_resolution.ipynb` и `06_evaluation_report.ipynb` читали одни и
+те же `binary_threshold_*` / `fusion_*` артефакты и дублировали смысловой
+слой. Для чтения результата удобнее один финальный notebook после `04`.
+
+### Что сделано
+
+- Вместо двух downstream notebooks добавлен
+  `notebooks/05_evaluation_report.ipynb`.
+- В один notebook объединены:
+  - состояние gold-set;
+  - ranking methods на held-out `test`;
+  - выбранный fusion-run;
+  - family/pack link metrics;
+  - размеры компонентов;
+  - dangerous false merges и graph false/missed links.
+- `notebooks/05_clustering_resolution.ipynb` и
+  `notebooks/06_evaluation_report.ipynb` удалены из текущего workflow.
+- `docs/AI_INDEX.md`, `docs/ARCHITECTURE.md` и `docs/USER_GUIDE.md`
+  обновлены под flow `03 -> 04 -> 05`.
+
+### Проверки
+
+- `ast.parse` code cells в `notebooks/05_evaluation_report.ipynb` — ok.
+- `nbclient` на `notebooks/05_evaluation_report.ipynb` — ok.
 
 ## 2026-06-26 — Fusion/pack grouping после binary benchmark
 
@@ -68,9 +100,11 @@
   - `05_clustering_resolution.ipynb` теперь читает `fusion_*` и показывает
     family/pack link metrics;
   - `06_evaluation_report.ipynb` собирает итог по binary benchmark и fusion.
+  Позже они объединены в `05_evaluation_report.ipynb`.
 - `docs/AI_INDEX.md`, `docs/ARCHITECTURE.md`,
   `docs/THRESHOLD_CALIBRATION_REPORT.md` и `docs/USER_GUIDE.md` обновлены под
-  flow `03 -> 04 -> 05 -> 06`.
+  flow `03 -> 04 -> 05 -> 06`; актуальный flow после объединения —
+  `03 -> 04 -> 05`.
 
 ### Проверки
 

@@ -1576,12 +1576,9 @@ python3 -m pip install -U -r requirements-research.txt
 - `fusion_pair_eval_sauces.csv` — пары с флагами `true/pred_same_family` и
   `true/pred_same_pack`.
 
-`05_clustering_resolution.ipynb` читает эти `fusion_*` CSV и показывает
-качество graph resolution: отдельно family-связи и pack-связи, плюс примеры
-false links и missed links.
-
-`06_evaluation_report.ipynb` собирает текущий research-отчёт: качество
-разметки, сравнение methods, false-merge примеры и итог family/pack fusion.
+`05_evaluation_report.ipynb` собирает текущий research-отчёт: качество
+разметки, сравнение methods, false-merge примеры, итог family/pack fusion и
+качество graph resolution с примерами false links / missed links.
 CSV-артефакты лежат в `research/dedup/data/` и не коммитятся.
 
 ## 23. Безопасные правила работы

@@ -90,8 +90,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_sauces.csv` |
 | `notebooks/03_matching_comparison.ipynb` | сравнение baseline A/B/D0 на размеченном gold-set |
 | `notebooks/04_fusion_pack_grouping.ipynb` | выбор fusion-run, family/pack grouping и CSV `fusion_*` |
-| `notebooks/05_clustering_resolution.ipynb` | проверка fusion-графа на уровне family/pack links |
-| `notebooks/06_evaluation_report.ipynb` | финальный research-отчёт по matching + fusion-прогону |
+| `notebooks/05_evaluation_report.ipynb` | финальный research-отчёт по matching + fusion + graph quality |
 
 Текущие локальные CSV после последнего research-этапа:
 
@@ -171,11 +170,10 @@ Research-код остаётся независимым: `research/dedup/` не 
   с весом продаж, fallback — `threshold_cost_sensitive`; сохраняет
   `research/dedup/data/fusion_components_sauces.csv` плюс
   `research/dedup/data/fusion_pair_eval_sauces.csv`.
-- `notebooks/05_clustering_resolution.ipynb` и
-  `notebooks/06_evaluation_report.ipynb` читают `binary_threshold_*` и
+- `notebooks/05_evaluation_report.ipynb` читает `binary_threshold_*` и
   `fusion_*`, без старых `matching_*` / `auto_same` / `manual_review`
-  артефактов.
-  `notebooks/06_evaluation_report.ipynb` собирает текущий research-отчёт.
+  артефактов, и собирает текущий research-отчёт вместе с family/pack graph
+  diagnostics.
   Следующий ML-шаг — улучшать scorer/rerank/fusion на hard negatives без
   manual review / LLM-review в текущем benchmark-этапе, не переносить код в
   production pipeline.
@@ -268,8 +266,7 @@ for notebook in [
     "notebooks/02_labeling_dataset.ipynb",
     "notebooks/03_matching_comparison.ipynb",
     "notebooks/04_fusion_pack_grouping.ipynb",
-    "notebooks/05_clustering_resolution.ipynb",
-    "notebooks/06_evaluation_report.ipynb",
+    "notebooks/05_evaluation_report.ipynb",
 ]:
     path = Path(notebook)
     nb = nbformat.read(path, as_version=4)
