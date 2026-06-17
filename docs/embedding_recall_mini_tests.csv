@@ -1,0 +1,5 @@
+model,recall_at_5_pct,recall_at_10_pct,recall_at_20_pct,cross_recall_at_20_pct,found_positive_at_20,gold_positive_pairs,found_cross_positive_at_20,gold_cross_marketplace_positive_pairs,candidate_pairs,candidate_cross_marketplace_pairs,total_seconds,note
+embedding_e5_small,52.03,72.97,100.0,100.0,148,148,82,82,176334,83987,0.0,"Current default candidate-generation baseline; gold-set was sampled from this embedding pipeline, so 100% is not an independent win."
+ai-forever/FRIDA,44.59,63.51,87.16,84.15,129,148,69,82,172721,80667,602.069,"Sentence-transformers retrieval model; strongest independent local candidate in this mini-test, but heavier to run."
+cointegrated/rubert-tiny2,39.86,55.41,76.35,68.29,113,148,56,82,175989,80430,29.476,"Small sentence-transformers model; fast, but misses too many positive pairs for blocking."
+deepvk/RuModernBERT-small,37.16,52.7,66.22,57.32,98,148,47,82,180071,77728,57.769,"Masked-LM/raw encoder baseline, not a dedicated sentence-embedding model; weak for this blocking task without fine-tuning."
