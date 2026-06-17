@@ -53,14 +53,15 @@
 
 - В `research/dedup/fusion.py` добавлены helper-ы:
   - `select_fusion_run(...)` выбирает `method + threshold_strategy` только по
-    `dev`, по умолчанию среди `threshold_cost_sensitive` строк;
+    `dev`; по умолчанию сначала берёт `threshold_weighted_cost` с весом
+    продаж, а если weighted-строк нет — `threshold_cost_sensitive`;
   - `prepare_fusion_pair_edges(...)` добавляет `fusion_family_edge`,
     `same_pack_signature`, `fusion_pack_edge` и true/pred labels для графа.
 - Добавлен `notebooks/04_fusion_pack_grouping.ipynb`:
   - читает `artifacts/reports/binary_threshold_summary.csv` и
     `artifacts/reports/binary_threshold_predictions.csv`;
-  - поддерживает `DEDUP_FUSION_METHOD`,
-    `DEDUP_FUSION_THRESHOLD_STRATEGY`, `DEDUP_FUSION_EVAL_SPLIT`;
+  - использует видимые параметры `MY_FUSION_METHOD`,
+    `MY_FUSION_THRESHOLD_STRATEGY`, `MY_FUSION_EVAL_SPLIT` прямо в notebook;
   - сохраняет `fusion_components_sauces.csv` и
     `fusion_pair_eval_sauces.csv` в ignored `research/dedup/data/`.
 - Старые downstream notebooks сдвинуты:

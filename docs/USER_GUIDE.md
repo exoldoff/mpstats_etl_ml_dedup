@@ -1536,28 +1536,38 @@ python3 -m pip install -U -r requirements-research.txt
 - `pack` — конкретная фасовка внутри family по `Вес, кг (ед.)`, `Вес, кг` и
   `multipack_count`.
 
-По умолчанию `04` выбирает `threshold_cost_sensitive`. Если нужно вручную
-зафиксировать вариант, в блоке `Пути и настройки` меняйте `MY_*` значения:
+По умолчанию `04` выбирает бизнес-взвешенный режим: сначала
+`threshold_weighted_cost`, где ошибки на товарах с большими продажами стоят
+дороже. Если в outputs из `03` нет weighted-строк, notebook откатывается на
+`threshold_cost_sensitive`. Если нужно вручную зафиксировать вариант, в блоке
+`Пути и настройки` меняйте `MY_*` значения прямо в notebook:
 
 - `MY_FUSION_METHOD = None` — выбрать method автоматически по `dev`.
   Можно поставить строку из текущего `binary_threshold_summary.csv`, например
   `"rule_based_fuzzy"`, `"bi_encoder_zero_shot"`,
   `"cross_encoder_zero_shot"`, `"reranker_bge_v2_m3"`,
   `"reranker_qwen3_4b"`, `"reranker_qwen3_0_6b"`,
-  `"reranker_jina_v3"`.
-- `MY_FUSION_THRESHOLD_STRATEGY = None` — взять
-  `threshold_cost_sensitive`, если она есть. Можно поставить
-  `"threshold_cost_sensitive"` для более осторожной склейки,
-  `"threshold_max_f1"` для более смелой общей F1-оптимизации,
-  `"threshold_weighted_cost"` или `"threshold_max_weighted_f1"`, если
-  доступны объёмы продаж.
+  `"reranker_jina_v3"`. Автовыбор method идёт по `cost`, затем по
+  `false_merge_count`, `false_split_count` и `f1` на `dev`.
+- `MY_FUSION_THRESHOLD_STRATEGY = None` — рекомендуемый режим: взять
+  `threshold_weighted_cost`, если `03` подтянул объёмы продаж; иначе взять
+  `threshold_cost_sensitive`.
+- `MY_FUSION_THRESHOLD_STRATEGY = "threshold_weighted_cost"` — жёстко взять
+  sales-weighted cost. Если weighted-строк нет, notebook упадёт, чтобы было
+  видно: веса продаж не подтянулись.
+- `MY_FUSION_THRESHOLD_STRATEGY = "threshold_cost_sensitive"` — обычная цена
+  ошибок без веса продаж: false merge дороже false split, но каждая пара весит
+  одинаково.
+- `MY_FUSION_THRESHOLD_STRATEGY = "threshold_max_weighted_f1"` — диагностика
+  по weighted F1; может быть смелее, чем weighted cost.
+- `MY_FUSION_THRESHOLD_STRATEGY = "threshold_max_f1"` — диагностика по
+  обычному F1 без веса продаж.
 - `MY_FUSION_EVAL_SPLIT = "test"` — смотреть честную диагностику на test.
   Можно поставить `"dev"` для просмотра калибровочного среза или `"all"` для
   просмотра всех пар вместе.
 
-Env-переменные `DEDUP_FUSION_METHOD`,
-`DEDUP_FUSION_THRESHOLD_STRATEGY`, `DEDUP_FUSION_EVAL_SPLIT` тоже работают,
-но в обычном Jupyter проще менять именно `MY_*` в ячейке.
+Окружение/env не используется как скрытый override для `04`: что написано в
+`MY_*`, то и применяется.
 
 `04_fusion_pack_grouping.ipynb` сохраняет:
 

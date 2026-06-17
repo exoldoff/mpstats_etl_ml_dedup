@@ -6,7 +6,7 @@ import pytest
 from research.dedup.fusion import FusionRun, prepare_fusion_pair_edges, select_fusion_run
 
 
-def test_select_fusion_run_prefers_cost_sensitive_dev_rows() -> None:
+def test_select_fusion_run_prefers_weighted_strategy_then_ranks_methods_by_cost() -> None:
     summary = pd.DataFrame(
         [
             {
@@ -14,30 +14,88 @@ def test_select_fusion_run_prefers_cost_sensitive_dev_rows() -> None:
                 "split": "dev",
                 "threshold_strategy": "threshold_cost_sensitive",
                 "threshold_same": 0.91,
-                "cost": 20,
+                "cost": 2,
                 "false_merge_count": 1,
-                "false_split_count": 15,
-                "f1": 0.50,
+                "false_split_count": 1,
+                "f1": 0.90,
+                "weighted_total_cost": 500.0,
+                "weighted_false_merge_cost": 10.0,
+                "weighted_f1": 0.90,
             },
             {
                 "method": "reranker_bge_v2_m3",
                 "split": "dev",
-                "threshold_strategy": "threshold_cost_sensitive",
+                "threshold_strategy": "threshold_weighted_cost",
                 "threshold_same": 0.42,
-                "cost": 9,
+                "cost": 1,
                 "false_merge_count": 0,
-                "false_split_count": 9,
+                "false_split_count": 1,
                 "f1": 0.72,
+                "weighted_total_cost": 520.0,
+                "weighted_false_merge_cost": 20.0,
+                "weighted_f1": 0.80,
+            },
+            {
+                "method": "rule_based_fuzzy",
+                "split": "dev",
+                "threshold_strategy": "threshold_weighted_cost",
+                "threshold_same": 0.91,
+                "cost": 5,
+                "false_merge_count": 1,
+                "false_split_count": 0,
+                "f1": 0.60,
+                "weighted_total_cost": 20.0,
+                "weighted_false_merge_cost": 5.0,
+                "weighted_f1": 0.60,
             },
             {
                 "method": "reranker_bge_v2_m3",
                 "split": "test",
-                "threshold_strategy": "threshold_cost_sensitive",
+                "threshold_strategy": "threshold_weighted_cost",
                 "threshold_same": 0.01,
                 "cost": 0,
                 "false_merge_count": 0,
                 "false_split_count": 0,
                 "f1": 1.0,
+                "weighted_total_cost": 0.0,
+                "weighted_false_merge_cost": 0.0,
+                "weighted_f1": 1.0,
+            },
+        ]
+    )
+
+    run = select_fusion_run(summary)
+
+    assert run == FusionRun(
+        method="reranker_bge_v2_m3",
+        threshold_strategy="threshold_weighted_cost",
+        threshold_same=0.42,
+        selection_split="dev",
+    )
+
+
+def test_select_fusion_run_falls_back_to_cost_sensitive_without_weighted_rows() -> None:
+    summary = pd.DataFrame(
+        [
+            {
+                "method": "rule_based_fuzzy",
+                "split": "dev",
+                "threshold_strategy": "threshold_max_f1",
+                "threshold_same": 0.50,
+                "cost": 20,
+                "false_merge_count": 4,
+                "false_split_count": 0,
+                "f1": 0.90,
+            },
+            {
+                "method": "reranker_bge_v2_m3",
+                "split": "dev",
+                "threshold_strategy": "threshold_cost_sensitive",
+                "threshold_same": 0.88,
+                "cost": 12,
+                "false_merge_count": 0,
+                "false_split_count": 12,
+                "f1": 0.60,
             },
         ]
     )
@@ -47,7 +105,7 @@ def test_select_fusion_run_prefers_cost_sensitive_dev_rows() -> None:
     assert run == FusionRun(
         method="reranker_bge_v2_m3",
         threshold_strategy="threshold_cost_sensitive",
-        threshold_same=0.42,
+        threshold_same=0.88,
         selection_split="dev",
     )
 

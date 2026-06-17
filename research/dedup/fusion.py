@@ -24,6 +24,12 @@ class FusionRun:
     selection_split: str = "dev"
 
 
+DEFAULT_PREFERRED_STRATEGIES: tuple[str, ...] = (
+    "threshold_weighted_cost",
+    "threshold_cost_sensitive",
+)
+
+
 def get_pair_value(pair: Any, *names: str, default: Any = None) -> Any:
     for name in names:
         if isinstance(pair, dict) and name in pair:
@@ -83,15 +89,63 @@ def _to_float(value: object) -> float:
     return number
 
 
+def _fill_numeric_column(frame: pd.DataFrame, column: str, default: float) -> None:
+    if column not in frame.columns:
+        frame[column] = default
+    frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(default)
+
+
+def _select_default_strategy(
+    candidates: pd.DataFrame,
+    strategy_col: str,
+    preferred_strategy: str | None,
+) -> tuple[pd.DataFrame, str | None]:
+    preferred_strategies = (
+        (preferred_strategy,) if preferred_strategy is not None else DEFAULT_PREFERRED_STRATEGIES
+    )
+    for strategy in preferred_strategies:
+        preferred = candidates[candidates[strategy_col].astype(str).eq(strategy)].copy()
+        if not preferred.empty:
+            return preferred, strategy
+    return candidates, None
+
+
+def _rank_fusion_candidates(
+    candidates: pd.DataFrame,
+    *,
+    strategy_col: str,
+    threshold_col: str,
+) -> pd.DataFrame:
+    ranked = candidates.copy()
+    for column, default in [
+        ("cost", math.inf),
+        ("false_merge_count", math.inf),
+        ("false_split_count", math.inf),
+        ("f1", -math.inf),
+        (threshold_col, math.inf),
+    ]:
+        _fill_numeric_column(ranked, column, default)
+
+    return ranked.sort_values(
+        ["cost", "false_merge_count", "false_split_count", "f1", threshold_col],
+        ascending=[True, True, True, False, True],
+    )
+
+
 def select_fusion_run(
     summary: pd.DataFrame,
     *,
     method: str | None = None,
     threshold_strategy: str | None = None,
     split: str = "dev",
-    preferred_strategy: str = "threshold_cost_sensitive",
+    preferred_strategy: str | None = None,
 ) -> FusionRun:
-    """Select a single method/threshold strategy using only the requested split."""
+    """Select one method/threshold strategy using only the requested split.
+
+    By default the downstream fusion step uses sales-volume weighted cost when
+    it is available. If the benchmark did not produce weighted rows, selection
+    falls back to the unweighted cost-sensitive strategy.
+    """
     if summary.empty:
         raise ValueError("Cannot select fusion run from empty threshold summary")
 
@@ -116,26 +170,9 @@ def select_fusion_run(
                 f"No threshold summary rows for strategy={threshold_strategy!r} on split={split!r}"
             )
     else:
-        preferred = candidates[candidates[strategy_col].astype(str).eq(preferred_strategy)].copy()
-        if not preferred.empty:
-            candidates = preferred
+        candidates, _ = _select_default_strategy(candidates, strategy_col, preferred_strategy)
 
-    ranked = candidates.copy()
-    for column, default in [
-        ("cost", math.inf),
-        ("false_merge_count", math.inf),
-        ("false_split_count", math.inf),
-        ("f1", -math.inf),
-        (threshold_col, math.inf),
-    ]:
-        if column not in ranked.columns:
-            ranked[column] = default
-        ranked[column] = pd.to_numeric(ranked[column], errors="coerce").fillna(default)
-
-    ranked = ranked.sort_values(
-        ["cost", "false_merge_count", "false_split_count", "f1", threshold_col],
-        ascending=[True, True, True, False, True],
-    )
+    ranked = _rank_fusion_candidates(candidates, strategy_col=strategy_col, threshold_col=threshold_col)
     selected = ranked.iloc[0]
     return FusionRun(
         method=str(selected[method_col]),

@@ -167,7 +167,8 @@ Research-код остаётся независимым: `research/dedup/` не 
   `artifacts/reports/binary_threshold_by_volume_bucket.csv` при available
   sales volume.
 - `notebooks/04_fusion_pack_grouping.ipynb` читает compact outputs из `03`,
-  выбирает method/strategy только по `dev` и сохраняет
+  выбирает method/strategy только по `dev`; дефолт — `threshold_weighted_cost`
+  с весом продаж, fallback — `threshold_cost_sensitive`; сохраняет
   `research/dedup/data/fusion_components_sauces.csv` плюс
   `research/dedup/data/fusion_pair_eval_sauces.csv`.
 - `notebooks/05_clustering_resolution.ipynb` и

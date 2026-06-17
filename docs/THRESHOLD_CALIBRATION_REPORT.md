@@ -92,7 +92,9 @@ Bucket-и объёма продаж: `zero / low / medium / high`. Cutoffs сч�
 Следующий notebook — `notebooks/04_fusion_pack_grouping.ipynb`. Он читает
 `binary_threshold_summary.csv` и `binary_threshold_predictions.csv`, выбирает
 `method + threshold_strategy` только по `dev`, а затем строит два уровня
-групп:
+групп. Дефолт для downstream — `threshold_weighted_cost`, то есть минимальная
+цена ошибок с весом продаж; если weighted-строк нет, fallback —
+`threshold_cost_sensitive`.
 
 - `fusion_family_id` — базовый товар;
 - `fusion_pack_id` — конкретная фасовка внутри family по deterministic
