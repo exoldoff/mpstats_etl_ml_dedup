@@ -44,7 +44,9 @@ def test_resolve_known_aliases_and_custom_model_ids() -> None:
     custom = resolve_model_spec("vendor/custom-e5-model", backend=SENTENCE_TRANSFORMER_BACKEND)
     assert custom.alias == "vendor/custom-e5-model"
     assert custom.model_name == "vendor/custom-e5-model"
-    assert model_text_prefix("vendor/custom-e5-model") == "passage: "
+    assert model_text_prefix("embedding_e5_small") == "query: "
+    assert model_text_prefix("bi_encoder_e5_small") == "query: "
+    assert model_text_prefix("vendor/custom-e5-model") == "query: "
 
     custom_embedding = resolve_embedding_model_spec("vendor/custom-e5-model")
     assert custom_embedding.backend == SENTENCE_TRANSFORMER_BACKEND

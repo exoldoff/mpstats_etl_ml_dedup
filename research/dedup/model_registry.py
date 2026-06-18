@@ -20,6 +20,7 @@ DEFAULT_POLZA_BASE_URL = "https://polza.ai/api/v1"
 POLZA_API_KEY_ENV = "POLZA_API_KEY"
 POLZA_AI_API_KEY_ENV = "POLZA_AI_API_KEY"
 POLZA_BASE_URL_ENV = "POLZA_BASE_URL"
+E5_SYMMETRIC_TEXT_PREFIX = "query: "
 
 SKU_RERANKER_INSTRUCTION = (
     "Decide whether two ecommerce sauce products are the same SKU. "
@@ -52,7 +53,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         model_name="intfloat/multilingual-e5-small",
         backend=SENTENCE_TRANSFORMER_BACKEND,
         batch_size=64,
-        text_prefix="passage: ",
+        text_prefix=E5_SYMMETRIC_TEXT_PREFIX,
     ),
     "bi_encoder_e5_small": ModelSpec(
         alias="bi_encoder_e5_small",
@@ -60,7 +61,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         backend=SENTENCE_TRANSFORMER_BACKEND,
         method_name="bi_encoder_zero_shot",
         batch_size=32,
-        text_prefix="passage: ",
+        text_prefix=E5_SYMMETRIC_TEXT_PREFIX,
         fusion_threshold_high=0.86,
         fusion_threshold_low=0.58,
     ),
@@ -235,7 +236,7 @@ def model_text_prefix(alias_or_name: str, *, backend: str | None = None) -> str 
     if spec.text_prefix is not None:
         return spec.text_prefix
     if "e5" in spec.model_name.lower():
-        return "passage: "
+        return E5_SYMMETRIC_TEXT_PREFIX
     return None
 
 

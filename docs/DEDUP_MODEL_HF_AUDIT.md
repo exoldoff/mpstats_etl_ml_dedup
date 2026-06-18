@@ -9,8 +9,8 @@ pooling, normalization и runtime-настройки. Это не финальн
 
 ## Короткий вывод
 
-1. `intfloat/multilingual-e5-small` сейчас используется у нас с
-   `passage: ` prefix. По HF card это спорно для SKU-to-SKU symmetric
+1. `intfloat/multilingual-e5-small` теперь используется у нас с
+   `query: ` prefix. По HF card это правильнее для SKU-to-SKU symmetric
    similarity: E5 рекомендует `query: ` для symmetric similarity,
    paraphrase retrieval, bitext mining и embeddings-as-features.
 2. `sergeyzh/BERTA` действительно mean-pooling sentence embedding model, но у
@@ -60,8 +60,8 @@ model card; для них нужен отдельный API/provider-аудит.
 
 | Model | Our current usage | HF-documented formatting/settings | Status |
 | --- | --- | --- | --- |
-| `intfloat/multilingual-e5-small` | `SentenceTransformer`, mean pooling + normalize from ST module; registry `text_prefix="passage: "` | Inputs should start with `query: ` or `passage: `. For symmetric similarity/paraphrase retrieval/features, use `query: `. Mean pooling + Normalize module, max length 512. | Mismatch risk: use/benchmark `query: ` for SKU symmetric retrieval. |
-| `intfloat/multilingual-e5-base` | Code default in `BiEncoderConfig`, not notebook default; E5 fallback prefix currently `passage: ` | Same E5 rules as small; mean pooling + normalize, max length 512. | Same mismatch if used directly. |
+| `intfloat/multilingual-e5-small` | `SentenceTransformer`, mean pooling + normalize from ST module; registry `text_prefix="query: "` | Inputs should start with `query: ` or `passage: `. For symmetric similarity/paraphrase retrieval/features, use `query: `. Mean pooling + Normalize module, max length 512. | Fixed for SKU symmetric retrieval. |
+| `intfloat/multilingual-e5-base` | Code default in `BiEncoderConfig`, not notebook default; E5 fallback prefix now `query: ` | Same E5 rules as small; mean pooling + normalize, max length 512. | Fixed for SKU symmetric retrieval. |
 | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | `CrossEncoder.predict([(a,b)])`, raw score, no prefix | Query-passage text-ranking cross-encoder. Default activation is Identity; max length 512. | OK as raw rerank baseline, but asymmetric. |
 | `cross-encoder/ms-marco-MiniLM-L6-v2` | Custom model example in reranker benchmark | Query-passage text-ranking cross-encoder. Default activation is Identity; max length 512. | OK as raw rerank baseline, but asymmetric and English/MS MARCO-biased. |
 | `BAAI/bge-reranker-v2-m3` | `CrossEncoder`, raw score, batch 8 | Reranker gets query and passage, outputs relevance score; sigmoid/normalize optional. HF example uses `FlagReranker(..., use_fp16=True)` and `max_length=512` in raw Transformers example; tokenizer max length is 8192. | OK raw reranker; thresholds must match raw vs sigmoid choice. |
@@ -96,15 +96,15 @@ Important details:
 - Pooling config: mean tokens, not CLS/max.
 - Max length: 512.
 
-Our current mismatch:
+Our current registry setting:
 
-- `MODEL_REGISTRY["embedding_e5_small"].text_prefix` is `passage: `.
-- `MODEL_REGISTRY["bi_encoder_e5_small"].text_prefix` is `passage: `.
-- `model_text_prefix()` fallback returns `passage: ` for unknown E5 ids.
+- `MODEL_REGISTRY["embedding_e5_small"].text_prefix` is `query: `.
+- `MODEL_REGISTRY["bi_encoder_e5_small"].text_prefix` is `query: `.
+- `model_text_prefix()` fallback returns `query: ` for unknown E5 ids.
 
 For SKU candidate generation, the task is closer to symmetric
-product-to-product retrieval than web query-to-document retrieval. The next
-controlled test should compare:
+product-to-product retrieval than web query-to-document retrieval. The current
+default is therefore `query: `. A later controlled test can still compare:
 
 - `query: `;
 - `passage: `;
@@ -376,15 +376,15 @@ Known gaps:
 
 Recommended next changes, in order:
 
-1. Add a tiny E5 prefix benchmark on sauces:
+1. Optional: add a tiny E5 prefix benchmark on sauces to measure the size of
+   the already-applied default change:
    - `query: `;
    - `passage: `;
    - no prefix.
-2. Change E5 default only after benchmark or at least after an explicit decision.
-3. Make Qwen reranker instruction category-neutral/category-aware.
-4. Add `categorize: ` and `categorize_entailment: ` to BERTA prefix smoke only
+2. Make Qwen reranker instruction category-neutral/category-aware.
+3. Add `categorize: ` and `categorize_entailment: ` to BERTA prefix smoke only
    if the three current variants are inconclusive.
-5. If rerankers become serious candidates, add bidirectional scoring mode for
+4. If rerankers become serious candidates, add bidirectional scoring mode for
    cross-encoder/Qwen/BGE/Jina.
-6. For Qwen3 Embedding through Polza, inspect live Polza model metadata before
+5. For Qwen3 Embedding through Polza, inspect live Polza model metadata before
    assuming HF prompt/dimension controls.

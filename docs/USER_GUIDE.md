@@ -1385,8 +1385,10 @@ python3 -m pip install -r requirements-research.txt
 ```
 
 `notebooks/01_candidate_generation.ipynb` строит пары-кандидаты через dense
-embeddings и FAISS top-k. Затем `notebooks/02_labeling_dataset.ipynb` выбирает
-из них CSV для ручной разметки.
+embeddings и FAISS top-k. Для локального E5 embedding по умолчанию используется
+`query:` prefix, потому что товары сравниваются друг с другом как symmetric
+similarity, а не как поисковый запрос против документа. Затем
+`notebooks/02_labeling_dataset.ipynb` выбирает из них CSV для ручной разметки.
 
 Для запуска новой категории достаточно поменять `.env` и открыть notebook.
 Если нужен разовый override без изменения `.env`, запускайте так:
