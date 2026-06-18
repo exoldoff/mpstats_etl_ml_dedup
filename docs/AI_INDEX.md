@@ -50,6 +50,10 @@
   `soap`. Базовый legacy-run `sauces` остаётся совместимым со старыми
   `*_sauces.csv`; новые категории пишут в отдельные папки и не перетирают
   sauce-артефакты.
+- Research env: локальный `.env` в корне репозитория загружается автоматически
+  при импорте `research.dedup`. Там можно держать `DEDUP_CATEGORY_RUN`,
+  `MPSTATS_DUCKDB_PATH`, `POLZA_API_KEY`/`POLZA_AI_API_KEY`, `POLZA_BASE_URL`
+  и остальные `DEDUP_*`; переменные, явно заданные в shell, приоритетнее `.env`.
 - Переключатель research-ноутбуков: `DEDUP_CATEGORY_RUN=sauces|coconut_oil|soap`.
   Встроенные project filters:
   - `sauces` -> `Соусы_тест` / `Соус`, `Соусы`;

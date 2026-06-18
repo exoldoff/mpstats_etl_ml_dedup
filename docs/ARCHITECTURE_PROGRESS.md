@@ -70,6 +70,8 @@
   - `coconut_oil` -> проект `кокос_тест`, категория `Кокосовое масло`;
   - `soap` -> проект `мыло_тест`, категория `Мыло`.
 - Ноутбуки `00`-`06` теперь читают `DEDUP_CATEGORY_RUN`.
+- `research.dedup` автоматически загружает локальный `.env` при импорте;
+  shell-переменные остаются приоритетнее `.env`.
 - Для `sauces` сохранены legacy-пути:
   `research/dedup/data/*_sauces.csv`, `artifacts/reports/binary_threshold_*`.
 - Для новых category-runs пути изолированы:

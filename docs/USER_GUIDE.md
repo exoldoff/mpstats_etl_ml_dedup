@@ -1350,7 +1350,21 @@ category-run:
 - `coconut_oil` — проект `кокос_тест`, категория `Кокосовое масло`;
 - `soap` — проект `мыло_тест`, категория `Мыло`.
 
-Выбор run задаётся переменной окружения:
+Локальные переменные для research-сценария можно хранить в `.env` в корне
+репозитория:
+
+```env
+DEDUP_CATEGORY_RUN=soap
+MPSTATS_DUCKDB_PATH=/absolute/path/to/mpstats.duckdb
+POLZA_API_KEY=...
+```
+
+Research helpers автоматически читают `.env` при импорте `research.dedup`.
+Туда можно класть `DEDUP_*`, `MPSTATS_DUCKDB_PATH`, `POLZA_*` и другие
+переменные, которые уже использует dedup-пайплайн. Переменные, явно заданные в
+shell перед запуском, главнее значений из `.env`.
+
+Также run можно задать разово через переменную окружения:
 
 ```bash
 DEDUP_CATEGORY_RUN=soap
@@ -1374,7 +1388,8 @@ python3 -m pip install -r requirements-research.txt
 embeddings и FAISS top-k. Затем `notebooks/02_labeling_dataset.ipynb` выбирает
 из них CSV для ручной разметки.
 
-Для запуска новой категории откройте notebook с нужным окружением, например:
+Для запуска новой категории достаточно поменять `.env` и открыть notebook.
+Если нужен разовый override без изменения `.env`, запускайте так:
 
 ```bash
 DEDUP_CATEGORY_RUN=soap jupyter notebook notebooks/00_eda.ipynb

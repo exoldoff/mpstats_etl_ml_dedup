@@ -4,6 +4,10 @@ This package is intentionally independent from ``pipeline/`` and
 ``mpstats_app/``.  It is imported by research notebooks only.
 """
 
+from .env import find_project_root, load_research_dotenv, parse_dotenv
+
+load_research_dotenv()
+
 from .candidates import (
     CandidateGenerationConfig,
     add_cross_marketplace_flags,
@@ -167,11 +171,13 @@ __all__ = [
     "decide_label",
     "detect_sales_volume_columns",
     "fetch_polza_models",
+    "find_project_root",
     "generate_faiss_candidate_pairs",
     "generate_candidate_pairs",
     "get_model_cache_dir",
     "get_polza_base_url",
     "list_model_specs",
+    "load_research_dotenv",
     "meaningful_title_tokens",
     "model_pool_size",
     "model_text_prefix",
@@ -180,6 +186,7 @@ __all__ = [
     "prepare_product_records",
     "prepare_calibration_frame",
     "prepare_fusion_pair_edges",
+    "parse_dotenv",
     "resolve_category_run",
     "resolve_embedding_model_spec",
     "resolve_model_spec",
