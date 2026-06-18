@@ -1343,7 +1343,25 @@ XLSX/CSV из `Данные` -> `Выгрузка` лежат в папке `exp
 ## 22. Research-only разметка SKU-дублей
 
 Этот сценарий не относится к основному web-приложению и нужен только для
-исследовательского gold-set по дедупликации категории `Соусы`.
+исследовательских gold-set по SKU-дедупликации. Сейчас поддержаны три
+category-run:
+
+- `sauces` — проект `Соусы_тест`, категории `Соусы` / `Соус`;
+- `coconut_oil` — проект `кокос_тест`, категория `Кокосовое масло`;
+- `soap` — проект `мыло_тест`, категория `Мыло`.
+
+Выбор run задаётся переменной окружения:
+
+```bash
+DEDUP_CATEGORY_RUN=soap
+```
+
+Если переменная не задана, используется `sauces`. Для `sauces` сохранены
+старые пути `research/dedup/data/*_sauces.csv` и
+`artifacts/reports/binary_threshold_*.csv`. Для новых категорий файлы
+изолированы и не перетирают sauce-артефакты:
+`research/dedup/data/coconut_oil/`, `artifacts/reports/coconut_oil/`,
+`research/dedup/data/soap/`, `artifacts/reports/soap/`.
 
 Перед выполнением research-ноутбуков установите зависимости для embedding
 blocking:
@@ -1356,6 +1374,16 @@ python3 -m pip install -r requirements-research.txt
 embeddings и FAISS top-k. Затем `notebooks/02_labeling_dataset.ipynb` выбирает
 из них CSV для ручной разметки.
 
+Для запуска новой категории откройте notebook с нужным окружением, например:
+
+```bash
+DEDUP_CATEGORY_RUN=soap jupyter notebook notebooks/00_eda.ipynb
+```
+
+Все research-ноутбуки фильтруют DuckDB не только по `Категория`, но и по
+`__project_name`, чтобы `Мыло` из проекта `мыло_тест` не смешивалось с другими
+проектами той же категории.
+
 После выполнения этих двух ноутбуков запустите терминальный аннотатор:
 
 ```bash
@@ -1363,8 +1391,14 @@ python3 -m research.dedup.annotator
 ```
 
 По умолчанию он открывает
-`research/dedup/data/labeling_sauces.csv`. Можно передать другой CSV первым
-аргументом.
+`research/dedup/data/labeling_sauces.csv`. Для новых category-run можно
+запустить так:
+
+```bash
+DEDUP_CATEGORY_RUN=soap python3 -m research.dedup.annotator
+```
+
+Можно также передать любой CSV первым аргументом.
 
 На экране аннотатор компактно показывает пару A/B: title, SKU, marketplace,
 brand, unit/total/multipack. В строке `Сигналы` видны источник кандидата,
@@ -1438,7 +1472,9 @@ Cross-encoder — более внимательная проверка пары,
 скачивать модель из Hugging Face. Если нужно временно пропустить этот блок,
 запустите notebook с `DEDUP_RUN_CROSS_ENCODER=0`.
 
-После прогона `03` сохраняет только compact-отчёты в `artifacts/reports/`:
+После прогона `03` сохраняет только compact-отчёты в reports-папку текущего
+run: для `sauces` это `artifacts/reports/`, для новых категорий —
+`artifacts/reports/<slug>/`.
 
 - `binary_threshold_summary.csv` — одна строка на
   `method + split + threshold_strategy`;
@@ -1460,7 +1496,7 @@ matching-моделей на одном и том же срезе:
 - `reranker_jina_v3`.
 
 Главный файл для сравнения методов — теперь
-`artifacts/reports/binary_threshold_summary.csv`. Test split нельзя
+`binary_threshold_summary.csv` в reports-папке текущего run. Test split нельзя
 использовать ни для выбора threshold, ни для выбора bucket cutoffs, ни для
 выбора модели; он нужен только для финальной проверки.
 
@@ -1527,10 +1563,11 @@ Jina v3 удобна для эксперимента, но перед production
 python3 -m pip install -U -r requirements-research.txt
 ```
 
-После `03` запустите `04_fusion_pack_grouping.ipynb`. Он не запускает модели
-заново: берёт `binary_threshold_summary.csv` и
-`binary_threshold_predictions.csv`, выбирает один fusion-run только по `dev`
-и строит два уровня групп:
+После `03` запустите `04_fusion_pack_grouping.ipynb` с тем же
+`DEDUP_CATEGORY_RUN`. Он не запускает модели заново: берёт
+`binary_threshold_summary.csv` и `binary_threshold_predictions.csv` из
+reports-папки текущего run, выбирает один fusion-run только по `dev` и строит
+два уровня групп:
 
 - `family` — один базовый товар, даже если отличается вес или multipack;
 - `pack` — конкретная фасовка внутри family по `Вес, кг (ед.)`, `Вес, кг` и
@@ -1571,9 +1608,9 @@ python3 -m pip install -U -r requirements-research.txt
 
 `04_fusion_pack_grouping.ipynb` сохраняет:
 
-- `fusion_components_sauces.csv` — товары и номера `fusion_family_id` /
+- `fusion_components_<suffix>.csv` — товары и номера `fusion_family_id` /
   `fusion_pack_id`;
-- `fusion_pair_eval_sauces.csv` — пары с флагами `true/pred_same_family` и
+- `fusion_pair_eval_<suffix>.csv` — пары с флагами `true/pred_same_family` и
   `true/pred_same_pack`.
 
 `05_evaluation_report.ipynb` собирает текущий research-отчёт: качество
@@ -1582,11 +1619,12 @@ python3 -m pip install -U -r requirements-research.txt
 
 `06_grouped_sku_demo.ipynb` показывает результат уже как таблицу товаров:
 берёт реальные строки `mpstats_products` из `mpstats.duckdb`, накладывает
-`fusion_family_id` / `fusion_pack_id` из `fusion_components_sauces.csv` и
+`fusion_family_id` / `fusion_pack_id` из `fusion_components_<suffix>.csv` и
 показывает склеенные SKU-группы. Дополнительно сохраняет витрину в
-`artifacts/reports/dedup_grouped_sku_demo.csv`.
-Research CSV-артефакты лежат в `research/dedup/data/`, demo-export лежит в
-`artifacts/reports/`; эти рабочие файлы не коммитятся.
+reports-папку текущего run.
+Research CSV-артефакты лежат в `research/dedup/data/` или
+`research/dedup/data/<slug>/`, demo-export лежит в `artifacts/reports/` или
+`artifacts/reports/<slug>/`; эти рабочие файлы не коммитятся.
 
 ## 23. Безопасные правила работы
 

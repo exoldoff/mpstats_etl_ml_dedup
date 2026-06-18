@@ -2,7 +2,12 @@
 
 ## 0. Контекст и цель
 Дедупликация и нормализация SKU из MPStats для аналитического куба.
-Текущий scope: одна категория — **«Соусы»**.
+Стартовый research scope был одной категорией — **«Соусы»**. Текущий
+research-run расширяется до трёх изолированных category-runs:
+`sauces`, `coconut_oil`, `soap`. Модельная задача остаётся общей, но
+gold-set, threshold calibration и отчёты должны считаться отдельно по run,
+чтобы `Мыло` или `Кокосовое масло` не перетирали и не маскировали результаты
+`Соусы`.
 Проект конкурсный (JMLC) → пайплайн должен явно демонстрировать ML-глубину
 (embeddings, fine-tuning, cross-encoder), а не только rule-based эвристики.
 
@@ -170,8 +175,9 @@ binary benchmark с `pair_weight = 1`.
   готовых weight/multipack колонок → финальная pack-группа.
 - Research v1 делает это отдельным шагом после `03_matching_comparison.ipynb`:
   `04_fusion_pack_grouping.ipynb` выбирает `method + threshold_strategy`
-  только по `dev`, затем сохраняет `fusion_components_sauces.csv` и
-  `fusion_pair_eval_sauces.csv` для downstream-отчётов.
+  только по `dev`, затем сохраняет `fusion_components_<suffix>.csv` и
+  `fusion_pair_eval_<suffix>.csv` для downstream-отчётов выбранного
+  category-run.
 - Текущий threshold benchmark не создаёт `manual_review` / triage-зону.
 
 ## 6.1 Организация кода на research-этапе (пересмотрено по запросу)
@@ -196,8 +202,8 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
 
 ## 7. Деливераблы конкурса — план ноутбуков (обновлено по итогам EDA)
 - `00_eda.ipynb` — готово (раздел 1.2).
-- `01_candidate_generation.ipynb` — простой baseline candidate generation
-  внутри category «Соусы»: title similarity (token overlap / fuzzy) как
+- `01_candidate_generation.ipynb` — candidate generation внутри выбранного
+  `DEDUP_CATEGORY_RUN`: title similarity (token overlap / fuzzy) как
   главный сигнал, brand/weight — вспомогательные признаки (не гейты).
   Явный блок hard-negative mining: пары с похожим brand+weight, но разными
   flavor-токенами (EDA уже нашла 10 таких примеров вручную — нужно находить

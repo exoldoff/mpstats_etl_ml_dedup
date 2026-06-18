@@ -12,9 +12,16 @@
 
 ## Текущий статус
 
-- Scope: категория `Соусы`, research-only.
+- Scope: category-runs `sauces`, `coconut_oil`, `soap`, research-only.
 - Главная ветка работ: кандидаты -> ручная разметка gold-set -> сравнение
   matching engines -> кластеризация.
+- `sauces` сохраняет legacy-пути `research/dedup/data/*_sauces.csv` и
+  `artifacts/reports/binary_threshold_*.csv`.
+- `coconut_oil` и `soap` пишут в отдельные ignored-папки:
+  `research/dedup/data/<slug>/` и `artifacts/reports/<slug>/`, поэтому новые
+  прогоны не перетирают старые sauce-артефакты.
+- Все notebook-загрузки для category-run фильтруют DuckDB не только по
+  `Категория`, но и по `__project_name`.
 - Primary blocking для `01_candidate_generation.ipynb` теперь соответствует
   целевой архитектуре: dense embeddings -> FAISS top-k.
 - Research-модели управляются через `research/dedup/model_registry.py`:
@@ -30,21 +37,55 @@
   отчёты.
 - Benchmark SKU matching перешёл на forced binary evaluation:
   для каждого method выбирается один `threshold_same` только на dev, а test
-  используется только для финальной проверки. Главные отчёты теперь:
-  `artifacts/reports/binary_threshold_summary.csv`,
-  `artifacts/reports/binary_threshold_predictions.csv` и, если доступны
-  объёмы продаж, `artifacts/reports/binary_threshold_by_volume_bucket.csv`.
+  используется только для финальной проверки. Главные отчёты теперь лежат в
+  reports-папке текущего category-run:
+  `binary_threshold_summary.csv`,
+  `binary_threshold_predictions.csv` и, если доступны объёмы продаж,
+  `binary_threshold_by_volume_bucket.csv`.
   Manual review, LLM-review и triage на текущем benchmark-этапе не нужны.
 - Downstream теперь идёт через `notebooks/04_fusion_pack_grouping.ipynb`:
   notebook выбирает fusion-run только по `dev`, строит `family` и `pack`
-  группы и сохраняет `research/dedup/data/fusion_components_sauces.csv` /
-  `research/dedup/data/fusion_pair_eval_sauces.csv`.
+  группы и сохраняет `fusion_components_<suffix>.csv` /
+  `fusion_pair_eval_<suffix>.csv` в data-папку текущего category-run.
 - Финальный downstream-отчёт теперь один:
   `notebooks/05_evaluation_report.ipynb` объединяет прежнюю проверку
   family/pack graph resolution и итоговый report по matching + fusion.
 - Для просмотра результата на реальных строках DuckDB добавлен
   `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
   `mpstats_products` и показывает склеенные SKU-группы.
+
+## 2026-06-27 — Category-runs для `Кокосовое масло` и `Мыло`
+
+### Зачем
+
+Нужно расширить research benchmark за пределы `Соусы`, но не перетирать
+готовые sauce CSV/отчёты. Особенно важно для `Мыло`: в локальном dev-кубе
+есть другой проект с той же категорией, поэтому фильтр только по `Категория`
+смешивает срезы.
+
+### Что сделано
+
+- Добавлен `research/dedup/category_runs.py`:
+  - `sauces` -> проект `Соусы_тест`, категории `Соусы` / `Соус`;
+  - `coconut_oil` -> проект `кокос_тест`, категория `Кокосовое масло`;
+  - `soap` -> проект `мыло_тест`, категория `Мыло`.
+- Ноутбуки `00`-`06` теперь читают `DEDUP_CATEGORY_RUN`.
+- Для `sauces` сохранены legacy-пути:
+  `research/dedup/data/*_sauces.csv`, `artifacts/reports/binary_threshold_*`.
+- Для новых category-runs пути изолированы:
+  `research/dedup/data/coconut_oil/`, `artifacts/reports/coconut_oil/`,
+  `research/dedup/data/soap/`, `artifacts/reports/soap/`.
+- Загрузки из `mpstats_products` и sales-volume join дополнительно фильтруют
+  `__project_name`, чтобы `soap` не подхватил чужой проект `тест`.
+- Аннотатор без аргументов тоже понимает `DEDUP_CATEGORY_RUN`; старый запуск
+  без env по-прежнему открывает sauce gold-set.
+
+### Проверки
+
+- `ast.parse` code cells в `notebooks/00_eda.ipynb` -
+  `notebooks/06_grouped_sku_demo.ipynb` — ok.
+- Узкие pytest/compile проверки см. в commit/финальном ответе текущего
+  изменения.
 
 ## 2026-06-27 — Demo notebook для сгруппированных SKU из DuckDB
 

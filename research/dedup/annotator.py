@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from .category_runs import resolve_category_run, resolve_run_paths
+
 try:
     from wcwidth import wcwidth, wcswidth
 except ImportError:  # pragma: no cover - wcwidth is present in the notebook env
@@ -13,7 +15,12 @@ except ImportError:  # pragma: no cover - wcwidth is present in the notebook env
     wcswidth = None
 
 
-DEFAULT_LABELING_PATH = Path(__file__).resolve().parent / "data" / "labeling_sauces.csv"
+def default_labeling_path() -> Path:
+    project_root = Path(__file__).resolve().parents[2]
+    return resolve_run_paths(project_root, resolve_category_run()).labeling_path
+
+
+DEFAULT_LABELING_PATH = default_labeling_path()
 
 LABEL_BY_KEY = {
     "w": "exact_duplicate",

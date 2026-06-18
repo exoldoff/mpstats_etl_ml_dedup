@@ -46,7 +46,15 @@
 
 Источник: `docs/ARCHITECTURE.md`.
 
-- Scope: SKU deduplication для категории `Соусы`.
+- Scope: SKU deduplication для category-run `sauces`, `coconut_oil`,
+  `soap`. Базовый legacy-run `sauces` остаётся совместимым со старыми
+  `*_sauces.csv`; новые категории пишут в отдельные папки и не перетирают
+  sauce-артефакты.
+- Переключатель research-ноутбуков: `DEDUP_CATEGORY_RUN=sauces|coconut_oil|soap`.
+  Встроенные project filters:
+  - `sauces` -> `Соусы_тест` / `Соус`, `Соусы`;
+  - `coconut_oil` -> `кокос_тест` / `Кокосовое масло`;
+  - `soap` -> `мыло_тест` / `Мыло`.
 - Входной контракт: `mpstats_products` после classification, где
   `Артикул` — id карточки, `SKU` — title товара.
 - Готовые структурные поля:
@@ -76,6 +84,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | --- | --- |
 | `research/dedup/candidates.py` | product records и вспомогательные feature-флаги для candidate pairs |
 | `research/dedup/embedding_candidates.py` | FAISS top-k candidate generation по dense embeddings |
+| `research/dedup/category_runs.py` | единый конфиг category-run: project/category aliases и изолированные пути артефактов |
 | `research/dedup/labeling.py` | stratified sampling для ручной разметки gold-set |
 | `research/dedup/metrics.py` | dependency-light classification report и confusion matrix |
 | `research/dedup/fusion.py` | выбор fusion-run по dev-summary и подготовка family/pack pair edges |
@@ -85,13 +94,13 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `research/dedup/annotator.py` | helper для ручной разметки |
 | `research/dedup/tests/` | узкие тесты research-модулей |
 | `research/dedup/data/` | локальные CSV-артефакты, игнорируются `.gitignore` |
-| `notebooks/00_eda.ipynb` | EDA по `Соусы` |
-| `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking, генерация `candidates_sauces.csv` |
-| `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_sauces.csv` |
-| `notebooks/03_matching_comparison.ipynb` | сравнение baseline A/B/D0 на размеченном gold-set |
-| `notebooks/04_fusion_pack_grouping.ipynb` | выбор fusion-run, family/pack grouping и CSV `fusion_*` |
-| `notebooks/05_evaluation_report.ipynb` | финальный research-отчёт по matching + fusion + graph quality |
-| `notebooks/06_grouped_sku_demo.ipynb` | демонстрация склеенных SKU из DuckDB + `fusion_*` |
+| `notebooks/00_eda.ipynb` | EDA по выбранному `DEDUP_CATEGORY_RUN` |
+| `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking, генерация `candidates_<suffix>.csv` |
+| `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_<suffix>.csv` |
+| `notebooks/03_matching_comparison.ipynb` | сравнение baseline/reranker methods на размеченном gold-set выбранного run |
+| `notebooks/04_fusion_pack_grouping.ipynb` | выбор fusion-run, family/pack grouping и CSV `fusion_*_<suffix>.csv` |
+| `notebooks/05_evaluation_report.ipynb` | финальный research-отчёт по matching + fusion + graph quality выбранного run |
+| `notebooks/06_grouped_sku_demo.ipynb` | демонстрация склеенных SKU из DuckDB + `fusion_*` выбранного run |
 
 Текущие локальные CSV после последнего research-этапа:
 
@@ -102,13 +111,21 @@ Research-код остаётся независимым: `research/dedup/` не 
 
 Эти CSV — рабочие данные, они не коммитятся.
 
+Для новых category-runs пути изолированы:
+
+- `research/dedup/data/coconut_oil/` и `artifacts/reports/coconut_oil/`;
+- `research/dedup/data/soap/` и `artifacts/reports/soap/`.
+
 ## Research Dedup: текущий статус
 
 Смотри подробности в `docs/ARCHITECTURE_PROGRESS.md`.
 
 Сделано:
 
-- `00_eda.ipynb` по категории `Соусы`.
+- Ноутбуки `00`-`06` принимают `DEDUP_CATEGORY_RUN`; `sauces` сохраняет
+  legacy-пути, `coconut_oil` и `soap` пишут в изолированные папки.
+- `00_eda.ipynb` уже был выполнен по категории `Соусы`; для новых категорий
+  его нужно запускать отдельно с нужным `DEDUP_CATEGORY_RUN`.
 - Candidate generation по `marketplace + Артикул`, без потери
   cross-marketplace дублей: primary blocking теперь идёт через dense
   embeddings + FAISS top-k. Default notebook alias:
@@ -141,8 +158,9 @@ Research-код остаётся независимым: `research/dedup/` не 
   `reranker_qwen3_4b`, `reranker_bge_v2_m3`, `reranker_jina_v3`. Новые
   reranker-модели выбираются alias-ами registry в
   `RERANKER_BENCHMARK_MODELS` или через env
-  `DEDUP_RERANKER_BENCHMARK_MODELS`; главный отчёт теперь
-  `artifacts/reports/binary_threshold_summary.csv`. Test split используется
+  `DEDUP_RERANKER_BENCHMARK_MODELS`; главный отчёт лежит в reports-папке
+  текущего `DEDUP_CATEGORY_RUN` как `binary_threshold_summary.csv`.
+  Test split используется
   только для финальной проверки выбранных на dev `threshold_same`.
   `reranker_qwen3_4b` по умолчанию грузится на CPU, потому что на MPS с
   лимитом около 9GB падает по памяти; для быстрого Qwen-smoke есть alias
@@ -161,16 +179,15 @@ Research-код остаётся независимым: `research/dedup/` не 
   split и подбирает один `threshold_same` на dev для стратегий
   `threshold_max_f1`, `threshold_cost_sensitive` и weighted-стратегий, если
   доступны объёмы продаж. Raw predictions и старые `matching_*` CSV не
-  перезаписываются; compact outputs:
-  `artifacts/reports/binary_threshold_summary.csv`,
-  `artifacts/reports/binary_threshold_predictions.csv`,
-  `artifacts/reports/binary_threshold_by_volume_bucket.csv` при available
-  sales volume.
+  перезаписываются; compact outputs пишутся в reports-папку текущего
+  category-run: `binary_threshold_summary.csv`,
+  `binary_threshold_predictions.csv`,
+  `binary_threshold_by_volume_bucket.csv` при available sales volume.
 - `notebooks/04_fusion_pack_grouping.ipynb` читает compact outputs из `03`,
   выбирает method/strategy только по `dev`; дефолт — `threshold_weighted_cost`
   с весом продаж, fallback — `threshold_cost_sensitive`; сохраняет
-  `research/dedup/data/fusion_components_sauces.csv` плюс
-  `research/dedup/data/fusion_pair_eval_sauces.csv`.
+  `fusion_components_<suffix>.csv` плюс `fusion_pair_eval_<suffix>.csv` в
+  data-папку текущего category-run.
 - `notebooks/05_evaluation_report.ipynb` читает `binary_threshold_*` и
   `fusion_*`, без старых `matching_*` / `auto_same` / `manual_review`
   артефактов, и собирает текущий research-отчёт вместе с family/pack graph
