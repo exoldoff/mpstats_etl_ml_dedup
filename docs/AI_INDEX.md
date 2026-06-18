@@ -35,6 +35,7 @@
 | `docs/ARCHITECTURE.md` | источник research-архитектуры | задачи по dedup, matching, evaluation, notebooks, ML-методологии |
 | `docs/ARCHITECTURE_PROGRESS.md` | журнал research-этапов | понять, что уже сделано, какие CSV/ноутбуки/проверки актуальны |
 | `docs/THRESHOLD_CALIBRATION_REPORT.md` | критерии SKU matching benchmark | cost-sensitive пороги, manual review, почему macro-F1 не главный критерий |
+| `docs/DEDUP_MODEL_HF_AUDIT.md` | HF-аудит моделей dedup research | prefixes, pooling, prompts, reranker settings, known mismatches |
 | `README.md` | краткий обзор | запуск, структура, состояние проекта |
 | `docs/USER_GUIDE.md` | пользовательская инструкция web-app | изменения UI, workflow, расчётов, статусов, справочника, классификатора |
 | `docs/PIPELINE_OVERVIEW.md` | краткое объяснение pipeline | вопросы про текущие шаги pipeline и pandas/SQL |
@@ -147,6 +148,10 @@ Research-код остаётся независимым: `research/dedup/` не 
   `ModelManager` управляет локальным кэшем `research/dedup/models/`,
   in-process pool и offline-флагом `DEDUP_MODEL_LOCAL_ONLY=1`.
   Cache dir можно заменить через `DEDUP_MODEL_CACHE_DIR`.
+- Перед добавлением/сменой embedding/reranker модели смотри
+  `docs/DEDUP_MODEL_HF_AUDIT.md`: там зафиксированы HF prefixes, pooling,
+  prompts, max length и known mismatches для E5, BERTA, RuModernBERT, Qwen,
+  BGE, Jina и cross-encoders.
 - Online embedding-модели подключаются только через Polza.ai backend:
   известные Polza model ids `openai/text-embedding-3-small`,
   `openai/text-embedding-3-large`, `qwen/qwen3-embedding-4b` можно писать
