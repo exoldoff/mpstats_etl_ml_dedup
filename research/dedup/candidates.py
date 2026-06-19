@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+import hashlib
 from itertools import combinations
 from typing import Iterable
 
@@ -59,6 +60,7 @@ class CandidateGenerationConfig:
     max_candidates: int | None = 50_000
     weight_abs_tolerance: float = 0.02
     weight_rel_tolerance: float = 0.05
+    collapse_empty_brand_exact_titles: bool = True
 
 
 def _resolve_column(df: pd.DataFrame, explicit: str | None, aliases: Iterable[str], *, required: bool) -> str | None:
@@ -96,6 +98,33 @@ def _unique_text_values(series: pd.Series) -> list[str]:
             continue
         values.append(text)
         seen.add(key)
+    return values
+
+
+def _unique_nested_text_values(series: pd.Series) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for value in series:
+        if isinstance(value, (list, tuple, set)):
+            items = value
+        else:
+            items = (value,)
+        for item in items:
+            if item is None:
+                continue
+            try:
+                if bool(item != item):
+                    continue
+            except TypeError:
+                continue
+            text = str(item).strip()
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            values.append(text)
+            seen.add(key)
     return values
 
 
@@ -137,6 +166,63 @@ def _derive_multipack(unit_amount: object, total_amount: object) -> float | None
     if ratio <= 0:
         return None
     return max(1.0, float(round(ratio)))
+
+
+def _exact_title_key(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if bool(value != value):
+            return ""
+    except TypeError:
+        return ""
+    return " ".join(str(value).casefold().replace("ё", "е").split())
+
+
+def _empty_brand_title_record_id(title_key: object) -> str:
+    digest = hashlib.sha1(str(title_key).encode("utf-8")).hexdigest()[:16]
+    return f"empty_brand_title::{digest}"
+
+
+def _collapse_empty_brand_exact_title_records(records: pd.DataFrame) -> pd.DataFrame:
+    if records.empty:
+        return records.drop(columns=["_empty_brand_title_key"], errors="ignore")
+
+    result = records.copy()
+    title_counts = result.loc[
+        result["brand_norm"].eq("") & result["_empty_brand_title_key"].ne(""),
+        "_empty_brand_title_key",
+    ].value_counts()
+    collapse_mask = (
+        result["brand_norm"].eq("")
+        & result["_empty_brand_title_key"].ne("")
+        & result["_empty_brand_title_key"].map(title_counts).fillna(0).gt(1)
+    )
+
+    result["_collapse_group"] = result["raw_record_id"]
+    result.loc[collapse_mask, "_collapse_group"] = result.loc[collapse_mask, "_empty_brand_title_key"].map(
+        _empty_brand_title_record_id
+    )
+
+    collapsed = (
+        result.groupby("_collapse_group", as_index=False, sort=False)
+        .agg(
+            sku=("sku", _first_present),
+            marketplace=("marketplace", _first_present),
+            marketplaces=("marketplaces", _unique_nested_text_values),
+            title=("title", _first_present),
+            brand=("brand", _first_present),
+            unit_amount=("unit_amount", _first_present),
+            total_amount=("total_amount", _first_present),
+            multipack_count=("multipack_count", _first_present),
+            source_raw_record_ids=("raw_record_id", _unique_text_values),
+            source_skus=("sku", _unique_text_values),
+            collapsed_record_count=("raw_record_id", "nunique"),
+        )
+        .rename(columns={"_collapse_group": "raw_record_id"})
+        .reset_index(drop=True)
+    )
+    return collapsed
 
 
 def prepare_product_records(
@@ -228,6 +314,13 @@ def prepare_product_records(
     )
     grouped["brand_norm"] = grouped["brand"].map(normalize_brand)
     grouped["title_norm"] = grouped["title"].map(normalize_title)
+    grouped["_empty_brand_title_key"] = grouped["title"].map(_exact_title_key)
+    if cfg.collapse_empty_brand_exact_titles:
+        grouped = _collapse_empty_brand_exact_title_records(grouped)
+        grouped["brand_norm"] = grouped["brand"].map(normalize_brand)
+        grouped["title_norm"] = grouped["title"].map(normalize_title)
+    else:
+        grouped = grouped.drop(columns=["_empty_brand_title_key"], errors="ignore")
     grouped["title_tokens"] = grouped["title"].map(meaningful_title_tokens)
     grouped["flavor_tokens"] = grouped["title"].map(flavor_token_set)
     return grouped

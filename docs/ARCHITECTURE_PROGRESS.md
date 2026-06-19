@@ -58,6 +58,31 @@
   `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
   `mpstats_products` и показывает склеенные SKU-группы.
 
+## 2026-06-27 — Pre-embedding collapse для пустого бренда
+
+### Зачем
+
+В категориях с пустым `Бренд` одинаковые title могут попадать в FAISS как
+отдельные записи и занимать ближайшие embedding-соседи друг друга. Для
+research blocking это шум: такие SKU уже очевидно один и тот же record до
+модельного сравнения.
+
+### Что сделано
+
+- `prepare_product_records()` теперь по умолчанию схлопывает строки с пустым
+  брендом и одинаковым title после лёгкой нормализации регистра/пробелов.
+- Схлопывание происходит до построения embedding-текстов в
+  `01_candidate_generation.ipynb`, потому что notebook использует
+  `prepare_product_records()`.
+- Для диагностики в record остаются `source_raw_record_ids`, `source_skus` и
+  `collapsed_record_count`; поведение можно отключить через
+  `CandidateGenerationConfig(collapse_empty_brand_exact_titles=False)`.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests/test_candidates.py research/dedup/tests/test_embedding_candidates.py`
+- `python3 -m compileall research/dedup`
+
 ## 2026-06-27 — Category-runs для `Кокосовое масло` и `Мыло`
 
 ### Зачем

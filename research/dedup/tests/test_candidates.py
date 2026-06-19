@@ -74,6 +74,54 @@ def test_product_records_use_marketplace_article_key_not_article_only() -> None:
     assert pairs.iloc[0]["sku_a"] == pairs.iloc[0]["sku_b"] == "100"
 
 
+def test_empty_brand_exact_title_records_collapse_before_embeddings() -> None:
+    df = pd.DataFrame(
+        [
+            {"Маркетплейс": "WB", "Артикул": "100", "SKU": "Мыло детское 90 г", "Бренд": ""},
+            {"Маркетплейс": "Ozon", "Артикул": "200", "SKU": "мыло  детское 90 г", "Бренд": None},
+            {"Маркетплейс": "WB", "Артикул": "300", "SKU": "Мыло хозяйственное 180 г", "Бренд": ""},
+        ]
+    )
+
+    records = prepare_product_records(df)
+
+    assert len(records) == 2
+    collapsed = records[records["title_norm"].eq("мыло детское 90 г")].iloc[0]
+    assert collapsed["raw_record_id"].startswith("empty_brand_title::")
+    assert collapsed["collapsed_record_count"] == 2
+    assert set(collapsed["source_raw_record_ids"]) == {"wb::100", "ozon::200"}
+    assert set(collapsed["source_skus"]) == {"100", "200"}
+    assert set(collapsed["marketplaces"]) == {"WB", "Ozon"}
+
+
+def test_empty_brand_exact_title_collapse_can_be_disabled() -> None:
+    df = pd.DataFrame(
+        [
+            {"Маркетплейс": "WB", "Артикул": "100", "SKU": "Мыло детское 90 г", "Бренд": ""},
+            {"Маркетплейс": "Ozon", "Артикул": "200", "SKU": "мыло  детское 90 г", "Бренд": ""},
+        ]
+    )
+
+    records = prepare_product_records(df, CandidateGenerationConfig(collapse_empty_brand_exact_titles=False))
+
+    assert len(records) == 2
+    assert set(records["raw_record_id"]) == {"wb::100", "ozon::200"}
+
+
+def test_exact_title_records_with_brands_stay_separate() -> None:
+    df = pd.DataFrame(
+        [
+            {"Маркетплейс": "WB", "Артикул": "100", "SKU": "Мыло детское 90 г", "Бренд": "A"},
+            {"Маркетплейс": "Ozon", "Артикул": "200", "SKU": "мыло  детское 90 г", "Бренд": "A"},
+        ]
+    )
+
+    records = prepare_product_records(df)
+
+    assert len(records) == 2
+    assert set(records["raw_record_id"]) == {"wb::100", "ozon::200"}
+
+
 def test_hard_negative_same_brand_weight_different_flavor() -> None:
     pairs = pd.DataFrame(
         [
