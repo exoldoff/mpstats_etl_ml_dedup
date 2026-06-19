@@ -60,6 +60,7 @@ class CandidateGenerationConfig:
     max_candidates: int | None = 50_000
     weight_abs_tolerance: float = 0.02
     weight_rel_tolerance: float = 0.05
+    collapse_exact_title_same_brand: bool = True
     collapse_empty_brand_exact_titles: bool = True
 
 
@@ -179,29 +180,42 @@ def _exact_title_key(value: object) -> str:
     return " ".join(str(value).casefold().replace("ё", "е").split())
 
 
-def _empty_brand_title_record_id(title_key: object) -> str:
-    digest = hashlib.sha1(str(title_key).encode("utf-8")).hexdigest()[:16]
-    return f"empty_brand_title::{digest}"
+def _exact_title_record_id(collapse_key: object) -> str:
+    digest = hashlib.sha1(str(collapse_key).encode("utf-8")).hexdigest()[:16]
+    return f"exact_title::{digest}"
 
 
-def _collapse_empty_brand_exact_title_records(records: pd.DataFrame) -> pd.DataFrame:
+def _collapse_exact_title_records(records: pd.DataFrame, cfg: CandidateGenerationConfig) -> pd.DataFrame:
     if records.empty:
         return records.drop(columns=["_empty_brand_title_key"], errors="ignore")
 
     result = records.copy()
-    title_counts = result.loc[
-        result["brand_norm"].eq("") & result["_empty_brand_title_key"].ne(""),
-        "_empty_brand_title_key",
+    result["_exact_title_collapse_key"] = ""
+    has_title = result["_empty_brand_title_key"].ne("")
+    has_brand = result["brand_norm"].ne("")
+    if cfg.collapse_empty_brand_exact_titles:
+        empty_brand_mask = has_title & ~has_brand
+        result.loc[empty_brand_mask, "_exact_title_collapse_key"] = (
+            "empty::" + result.loc[empty_brand_mask, "_empty_brand_title_key"]
+        )
+    if cfg.collapse_exact_title_same_brand:
+        same_brand_mask = has_title & has_brand
+        result.loc[same_brand_mask, "_exact_title_collapse_key"] = (
+            "brand::"
+            + result.loc[same_brand_mask, "brand_norm"]
+            + "::"
+            + result.loc[same_brand_mask, "_empty_brand_title_key"]
+        )
+
+    collapse_counts = result.loc[
+        result["_exact_title_collapse_key"].ne(""),
+        "_exact_title_collapse_key",
     ].value_counts()
-    collapse_mask = (
-        result["brand_norm"].eq("")
-        & result["_empty_brand_title_key"].ne("")
-        & result["_empty_brand_title_key"].map(title_counts).fillna(0).gt(1)
-    )
+    collapse_mask = result["_exact_title_collapse_key"].map(collapse_counts).fillna(0).gt(1)
 
     result["_collapse_group"] = result["raw_record_id"]
-    result.loc[collapse_mask, "_collapse_group"] = result.loc[collapse_mask, "_empty_brand_title_key"].map(
-        _empty_brand_title_record_id
+    result.loc[collapse_mask, "_collapse_group"] = result.loc[collapse_mask, "_exact_title_collapse_key"].map(
+        _exact_title_record_id
     )
 
     collapsed = (
@@ -315,8 +329,8 @@ def prepare_product_records(
     grouped["brand_norm"] = grouped["brand"].map(normalize_brand)
     grouped["title_norm"] = grouped["title"].map(normalize_title)
     grouped["_empty_brand_title_key"] = grouped["title"].map(_exact_title_key)
-    if cfg.collapse_empty_brand_exact_titles:
-        grouped = _collapse_empty_brand_exact_title_records(grouped)
+    if cfg.collapse_empty_brand_exact_titles or cfg.collapse_exact_title_same_brand:
+        grouped = _collapse_exact_title_records(grouped, cfg)
         grouped["brand_norm"] = grouped["brand"].map(normalize_brand)
         grouped["title_norm"] = grouped["title"].map(normalize_title)
     else:

@@ -64,8 +64,14 @@ def test_product_records_use_marketplace_article_key_not_article_only() -> None:
         ]
     )
 
-    records = prepare_product_records(df)
-    pairs = generate_candidate_pairs(df, CandidateGenerationConfig(min_similarity=0.4, max_candidates=None))
+    config = CandidateGenerationConfig(
+        min_similarity=0.4,
+        max_candidates=None,
+        collapse_empty_brand_exact_titles=False,
+        collapse_exact_title_same_brand=False,
+    )
+    records = prepare_product_records(df, config)
+    pairs = generate_candidate_pairs(df, config)
 
     assert len(records) == 2
     assert set(records["raw_record_id"]) == {"wb::100", "ozon::100"}
@@ -87,7 +93,7 @@ def test_empty_brand_exact_title_records_collapse_before_embeddings() -> None:
 
     assert len(records) == 2
     collapsed = records[records["title_norm"].eq("мыло детское 90 г")].iloc[0]
-    assert collapsed["raw_record_id"].startswith("empty_brand_title::")
+    assert collapsed["raw_record_id"].startswith("exact_title::")
     assert collapsed["collapsed_record_count"] == 2
     assert set(collapsed["source_raw_record_ids"]) == {"wb::100", "ozon::200"}
     assert set(collapsed["source_skus"]) == {"100", "200"}
@@ -102,17 +108,41 @@ def test_empty_brand_exact_title_collapse_can_be_disabled() -> None:
         ]
     )
 
-    records = prepare_product_records(df, CandidateGenerationConfig(collapse_empty_brand_exact_titles=False))
+    records = prepare_product_records(
+        df,
+        CandidateGenerationConfig(
+            collapse_empty_brand_exact_titles=False,
+            collapse_exact_title_same_brand=False,
+        ),
+    )
 
     assert len(records) == 2
     assert set(records["raw_record_id"]) == {"wb::100", "ozon::200"}
 
 
-def test_exact_title_records_with_brands_stay_separate() -> None:
+def test_exact_title_records_with_same_brand_collapse_before_embeddings() -> None:
     df = pd.DataFrame(
         [
             {"Маркетплейс": "WB", "Артикул": "100", "SKU": "Мыло детское 90 г", "Бренд": "A"},
             {"Маркетплейс": "Ozon", "Артикул": "200", "SKU": "мыло  детское 90 г", "Бренд": "A"},
+            {"Маркетплейс": "WB", "Артикул": "300", "SKU": "Мыло хозяйственное 180 г", "Бренд": "A"},
+        ]
+    )
+
+    records = prepare_product_records(df)
+
+    assert len(records) == 2
+    collapsed = records[records["title_norm"].eq("мыло детское 90 г")].iloc[0]
+    assert collapsed["raw_record_id"].startswith("exact_title::")
+    assert collapsed["collapsed_record_count"] == 2
+    assert set(collapsed["source_raw_record_ids"]) == {"wb::100", "ozon::200"}
+
+
+def test_exact_title_records_with_different_brands_stay_separate() -> None:
+    df = pd.DataFrame(
+        [
+            {"Маркетплейс": "WB", "Артикул": "100", "SKU": "Мыло детское 90 г", "Бренд": "A"},
+            {"Маркетплейс": "Ozon", "Артикул": "200", "SKU": "мыло  детское 90 г", "Бренд": "B"},
         ]
     )
 
