@@ -147,7 +147,7 @@ class WebApiTest(unittest.TestCase):
 
             legacy_file = root / "legacy-weight.csv"
             write_semicolon_csv(
-                pd.DataFrame([{"SKU": "sku-pack", "Вес, кг": "0,5", "Вес, кг (сумм.)": "1,5", "Продажи, шт": 1}]),
+                pd.DataFrame([{"SKU": "sku-pack", "Вес, кг": "0,5", "Вес, кг (сумм.)": "1,5", "Продажи, шт": 20}]),
                 legacy_file,
             )
             repository.import_products_file_idempotent(
@@ -245,7 +245,7 @@ class WebApiTest(unittest.TestCase):
                         {
                             "Дата": "01.01.2025",
                             "SKU": "sku-1",
-                            "Продажи, шт": "5",
+                            "Продажи, шт": "20",
                             "Объем, кг": "1,5",
                         }
                     ]
@@ -331,8 +331,8 @@ class WebApiTest(unittest.TestCase):
             write_semicolon_csv(
                 pd.DataFrame(
                     [
-                        {"SKU": "sku-1", "Продажи, шт": "5", "Объем, кг": "1.5"},
-                        {"SKU": "sku-2", "Продажи, шт": "7", "Объем, кг": "2.5"},
+                        {"SKU": "sku-1", "Продажи, шт": "20", "Объем, кг": "1.5"},
+                        {"SKU": "sku-2", "Продажи, шт": "21", "Объем, кг": "2.5"},
                     ]
                 ),
                 source_file,
@@ -392,7 +392,7 @@ class WebApiTest(unittest.TestCase):
                             "Маркетплейс": "Ozon",
                             "Категория": "Сахар",
                             "SKU": "sku-1",
-                            "Продажи, шт": "5",
+                            "Продажи, шт": "20",
                             "Объем, кг": "1.5",
                         }
                     ]
@@ -433,7 +433,7 @@ class WebApiTest(unittest.TestCase):
                             "Маркетплейс": "Ozon",
                             "Категория": "Сахар",
                             "SKU": "sku-2",
-                            "Продажи, шт": "7",
+                            "Продажи, шт": "21",
                             "Объем, кг": "2.5",
                         }
                     ]
@@ -511,7 +511,7 @@ class WebApiTest(unittest.TestCase):
                         "SKU": "sku-1",
                         "Название": "лимон дубль",
                         "Бренд": "Brand",
-                        "Продажи, шт": "5",
+                        "Продажи, шт": "20",
                         "Выручка, руб": "50",
                     }
                 ]
@@ -569,7 +569,7 @@ class WebApiTest(unittest.TestCase):
 
             source_file = root / "products.csv"
             write_semicolon_csv(
-                pd.DataFrame([{"SKU": "sku-1", "Продажи, шт": "5", "Объем, кг": "1.5"}]),
+                pd.DataFrame([{"SKU": "sku-1", "Продажи, шт": "20", "Объем, кг": "1.5"}]),
                 source_file,
             )
             inserted = repository.import_products_file_idempotent(
@@ -586,7 +586,7 @@ class WebApiTest(unittest.TestCase):
 
             replacement_file = root / "replacement.csv"
             write_semicolon_csv(
-                pd.DataFrame([{"SKU": "sku-2", "Продажи, шт": "9", "Объем, кг": "3.5"}]),
+                pd.DataFrame([{"SKU": "sku-2", "Продажи, шт": "21", "Объем, кг": "3.5"}]),
                 replacement_file,
             )
             with patch(
@@ -937,8 +937,8 @@ class WebApiTest(unittest.TestCase):
             write_semicolon_csv(
                 pd.DataFrame(
                     [
-                        {"Маркетплейс": "Ozon", "Категория": "Лимонная кислота", "SKU": "sku-1", "Название": "лимон 1 кг", "Бренд": "Brand A", "Продажи, шт": 3, "Вес, кг": "1,0", "Вес, кг (ед.)": "1,0"},
-                        {"Маркетплейс": "Ozon", "Категория": "Лимонная кислота", "SKU": "sku-2", "Название": "лимон 2 кг", "Бренд": "Brand B", "Продажи, шт": 5, "Вес, кг": "1,5", "Вес, кг (ед.)": "0,5"},
+                        {"Маркетплейс": "Ozon", "Категория": "Лимонная кислота", "SKU": "sku-1", "Название": "лимон 1 кг", "Бренд": "Brand A", "Продажи, шт": 20, "Вес, кг": "1,0", "Вес, кг (ед.)": "1,0"},
+                        {"Маркетплейс": "Ozon", "Категория": "Лимонная кислота", "SKU": "sku-2", "Название": "лимон 2 кг", "Бренд": "Brand B", "Продажи, шт": 20, "Вес, кг": "1,5", "Вес, кг (ед.)": "0,5"},
                         {"Маркетплейс": "Ozon", "Категория": "Лимонная кислота", "SKU": "sku-0", "Название": "лимон без продаж", "Бренд": "Brand Z", "Продажи, шт": 0},
                     ]
                 ),
@@ -1082,7 +1082,7 @@ class WebApiTest(unittest.TestCase):
                 self.assertNotIn("__row_hash", headers)
                 self.assertIsNone(worksheet.auto_filter.ref)
                 self.assertIsInstance(worksheet["D2"].value, (int, float))
-                self.assertEqual(worksheet["D2"].value, 5)
+                self.assertEqual(worksheet["D2"].value, 20)
                 self.assertIsInstance(worksheet["E2"].value, (int, float))
                 self.assertIsInstance(worksheet["F2"].value, (int, float))
                 self.assertEqual(worksheet["E2"].value, 1.5)
@@ -1173,7 +1173,7 @@ class WebApiTest(unittest.TestCase):
                             "Название": "лимон 1 кг",
                             "Бренд": "Brand A",
                             "Тип": "Кислота",
-                            "Продажи, шт": 3,
+                            "Продажи, шт": 20,
                             "Выручка, руб": 30,
                             "Объем, кг": 1.5,
                         },
@@ -1184,7 +1184,7 @@ class WebApiTest(unittest.TestCase):
                             "Название": "лимон 2 кг",
                             "Бренд": "Brand A",
                             "Тип": "Кислота",
-                            "Продажи, шт": 5,
+                            "Продажи, шт": 20,
                             "Выручка, руб": 50,
                             "Объем, кг": 2.5,
                         },
@@ -1245,7 +1245,7 @@ class WebApiTest(unittest.TestCase):
                 preview_payload_response = preview.json()
                 self.assertEqual(preview_payload_response["total"], 1)
                 self.assertEqual(preview_payload_response["rows"][0]["Бренд"], "Brand A")
-                self.assertEqual(preview_payload_response["rows"][0]["Продажи, шт"], 8)
+                self.assertEqual(preview_payload_response["rows"][0]["Продажи, шт"], 40)
                 self.assertEqual(preview_payload_response["rows"][0]["Выручка, руб"], 80)
                 self.assertEqual(preview_payload_response["rows"][0]["Объем, кг"], 4)
 
@@ -1301,7 +1301,7 @@ class WebApiTest(unittest.TestCase):
                             "SKU": "sku-1",
                             "Название": "лимон 1 кг",
                             "Бренд": "Brand A",
-                            "Продажи, шт": 3,
+                            "Продажи, шт": 20,
                             "Выручка, руб": 30,
                             "Объем, кг": 1.5,
                         },
@@ -1311,7 +1311,7 @@ class WebApiTest(unittest.TestCase):
                             "SKU": "sku-2",
                             "Название": "лимон 2 кг",
                             "Бренд": "Brand A",
-                            "Продажи, шт": 5,
+                            "Продажи, шт": 20,
                             "Выручка, руб": 50,
                             "Объем, кг": 2.5,
                         },
@@ -1339,7 +1339,7 @@ class WebApiTest(unittest.TestCase):
                             "SKU": "soap-1",
                             "Название": "мыло",
                             "Бренд": "Brand B",
-                            "Продажи, шт": 9,
+                            "Продажи, шт": 20,
                             "Выручка, руб": 90,
                             "Объем, кг": 3,
                         }
@@ -1397,7 +1397,7 @@ class WebApiTest(unittest.TestCase):
             self.assertEqual(row["Маркетплейс"], "Ozon")
             self.assertEqual(row["Категория"], "Лимонная кислота")
             self.assertEqual(row["Бренд"], "Brand A")
-            self.assertEqual(float(row["Продажи, шт"].replace(",", ".")), 8.0)
+            self.assertEqual(float(row["Продажи, шт"].replace(",", ".")), 40.0)
             self.assertEqual(float(row["Выручка, руб"].replace(",", ".")), 80.0)
             self.assertNotIn("Мыло", csv_text)
             self.assertNotIn("2025-02", csv_text)
@@ -1453,7 +1453,7 @@ class WebApiTest(unittest.TestCase):
                         {
                             "Дата": "01.01.2025",
                             "SKU": "sku-1",
-                            "Продажи, шт": "5",
+                            "Продажи, шт": "20",
                             "Объем, кг": "1,5",
                         }
                     ]
@@ -1638,7 +1638,7 @@ class WebApiTest(unittest.TestCase):
                             "SKU": "123",
                             "Бренд": "Brand",
                             "Название": "лимон тест",
-                            "Продажи, шт": 5,
+                            "Продажи, шт": 20,
                         }
                     ]
                 ),
@@ -2134,7 +2134,7 @@ class WebApiTest(unittest.TestCase):
                                     "Артикул": f"sku-{index}",
                                     "SKU": f"лимон исправленный {index}",
                                     "Бренд": "brand",
-                                    "Продажи, шт": 5,
+                                    "Продажи, шт": 20,
                                     "Средняя цена, руб": 10,
                                     "Выручка, руб": 50,
                                 }
@@ -2152,7 +2152,7 @@ class WebApiTest(unittest.TestCase):
                                     "SKU": f"лимон тест {index}",
                                     "Бренд": "brand",
                                     "Тип": "Старая классификация",
-                                    "Продажи, шт": 5,
+                                    "Продажи, шт": 20,
                                     "Средняя цена, руб": 10,
                                     "Выручка, руб": 50,
                                 }
@@ -2208,7 +2208,7 @@ class WebApiTest(unittest.TestCase):
                                     "SKU": f"raw-{index}",
                                     "Brand": "brand",
                                     "Name": f"лимон сырой {index} 3 x 175 г",
-                                    "Sales": 5,
+                                    "Sales": 20,
                                     "Average price": 100,
                                     "Revenue": 500,
                                     "Seller": "seller",
@@ -2447,7 +2447,7 @@ class WebApiTest(unittest.TestCase):
                             "SKU": "лимон удаление",
                             "Бренд": "brand",
                             "Тип": "Кислота",
-                            "Продажи, шт": 5,
+                            "Продажи, шт": 20,
                         }
                     ]
                 )
@@ -2515,7 +2515,7 @@ class WebApiTest(unittest.TestCase):
                                 "Артикул": f"bulk-{index}",
                                 "SKU": f"bulk-delete-{index}",
                                 "Бренд": "brand",
-                                "Продажи, шт": 5,
+                                "Продажи, шт": 20,
                                 "Объем, кг": 1,
                             }
                         ]
@@ -2605,8 +2605,8 @@ class WebApiTest(unittest.TestCase):
             write_semicolon_csv(
                 pd.DataFrame(
                     [
-                        {"Дата": "01.01.2025", "Название": "Лимон 1 кг", "Маркетплейс": "Ozon", "Категория": "Кислота", "SKU": "sku-1", "Продажи, шт": 10, "Средняя цена, руб": 10, "Выручка, руб": 100, "Объем, кг": 1.0},
-                        {"Дата": "01.01.2025", "Название": "Лимон 2 кг", "Маркетплейс": "Ozon", "Категория": "Кислота", "SKU": "sku-2", "Продажи, шт": 12, "Средняя цена, руб": 10, "Выручка, руб": 120, "Объем, кг": 1.0},
+                        {"Дата": "01.01.2025", "Название": "Лимон 1 кг", "Маркетплейс": "Ozon", "Категория": "Кислота", "SKU": "sku-1", "Продажи, шт": 20, "Средняя цена, руб": 10, "Выручка, руб": 200, "Объем, кг": 1.0},
+                        {"Дата": "01.01.2025", "Название": "Лимон 2 кг", "Маркетплейс": "Ozon", "Категория": "Кислота", "SKU": "sku-2", "Продажи, шт": 20, "Средняя цена, руб": 10, "Выручка, руб": 200, "Объем, кг": 1.0},
                     ]
                 ),
                 cube_file,

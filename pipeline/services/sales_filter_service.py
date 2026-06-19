@@ -5,7 +5,8 @@ from collections.abc import Iterable
 import pandas as pd
 
 
-DEFAULT_SALES_MIN_QUANTILE = 0.20
+DEFAULT_SALES_MIN_QUANTILE: float | None = None
+DEFAULT_SALES_MIN_UNITS = 15.0
 SALES_COLUMN_CANDIDATES = ("Продажи, шт", "Продажи", "sales")
 DEFAULT_SALES_FILTER_GROUP_COLUMNS = ("__project_name", "__marketplace_code", "Категория", "__year", "__month")
 
@@ -27,12 +28,15 @@ def resolve_sales_column(columns: Iterable[object], *, candidates: Iterable[str]
 def filter_sales_by_quantile(
     df: pd.DataFrame,
     *,
-    quantile: float = DEFAULT_SALES_MIN_QUANTILE,
+    quantile: float | None = DEFAULT_SALES_MIN_QUANTILE,
+    min_sales: float = DEFAULT_SALES_MIN_UNITS,
     sales_column: str | None = None,
     group_columns: Iterable[str] | None = None,
 ) -> pd.DataFrame:
-    if not 0 <= quantile < 1:
+    if quantile is not None and not 0 <= quantile < 1:
         raise ValueError(f"sales quantile must be >= 0 and < 1, got {quantile!r}")
+    if min_sales < 0:
+        raise ValueError(f"minimum sales must be >= 0, got {min_sales!r}")
 
     column = sales_column or resolve_sales_column(df.columns)
     if column is None:
@@ -44,14 +48,20 @@ def filter_sales_by_quantile(
     if not positive_mask.any():
         return out.iloc[0:0].copy()
 
+    min_sales_mask = positive_mask & (out[column] >= float(min_sales))
+    if quantile is None:
+        return out.loc[min_sales_mask].copy()
+
     groups = [group for group in (group_columns or []) if group in out.columns]
     keep_mask = pd.Series(False, index=out.index)
     if groups:
         positive = out.loc[positive_mask, groups + [column]].copy()
         thresholds = positive.groupby(groups, dropna=False)[column].transform(lambda values: values.quantile(quantile))
-        keep_mask.loc[positive.index] = positive[column] >= thresholds
+        effective_thresholds = thresholds.clip(lower=float(min_sales))
+        keep_mask.loc[positive.index] = positive[column] >= effective_thresholds
     else:
         threshold = out.loc[positive_mask, column].quantile(quantile)
-        keep_mask = positive_mask & (out[column] >= threshold)
+        effective_threshold = max(float(threshold), float(min_sales))
+        keep_mask = positive_mask & (out[column] >= effective_threshold)
 
     return out.loc[keep_mask].copy()

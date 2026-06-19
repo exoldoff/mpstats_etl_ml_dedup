@@ -14,7 +14,7 @@ import pandas as pd
 from pipeline.models import StepResult
 from pipeline.repositories.file_repository import list_csv_files
 from pipeline.repositories.sql_repository import duckdb_connection, measure_duckdb_operation, resolve_duckdb_temp_directory, sql_literal
-from pipeline.services.sales_filter_service import DEFAULT_SALES_MIN_QUANTILE, filter_sales_by_quantile
+from pipeline.services.sales_filter_service import DEFAULT_SALES_MIN_QUANTILE, DEFAULT_SALES_MIN_UNITS, filter_sales_by_quantile
 
 
 MERGE_RENAME_COLUMNS = {
@@ -60,7 +60,7 @@ def normalize_sales_column(df: pd.DataFrame) -> pd.DataFrame:
 def merge_dataframes(
     frames: list[pd.DataFrame],
     *,
-    min_sales: float = 0,
+    min_sales: float = DEFAULT_SALES_MIN_UNITS,
     max_sales: float = 40_000,
     sales_quantile: float | None = DEFAULT_SALES_MIN_QUANTILE,
 ) -> pd.DataFrame:
@@ -69,9 +69,18 @@ def merge_dataframes(
     filtered_frames: list[pd.DataFrame] = []
     for frame in frames:
         normalized = normalize_sales_column(frame)
-        normalized = normalized[(normalized["Продажи, шт"] > min_sales) & (normalized["Продажи, шт"] < max_sales)].copy()
+        normalized = normalized[
+            (normalized["Продажи, шт"] > 0)
+            & (normalized["Продажи, шт"] >= min_sales)
+            & (normalized["Продажи, шт"] < max_sales)
+        ].copy()
         if sales_quantile is not None:
-            normalized = filter_sales_by_quantile(normalized, sales_column="Продажи, шт", quantile=sales_quantile)
+            normalized = filter_sales_by_quantile(
+                normalized,
+                sales_column="Продажи, шт",
+                quantile=sales_quantile,
+                min_sales=min_sales,
+            )
         filtered_frames.append(normalized)
     result = pd.concat(filtered_frames, ignore_index=True)
     return result.drop_duplicates()
@@ -84,7 +93,7 @@ def merge_csv_files_with_duckdb(
     delimiter: str = ";",
     encoding: str = "utf-8-sig",
     *,
-    min_sales: float = 0,
+    min_sales: float = DEFAULT_SALES_MIN_UNITS,
     max_sales: float = 40_000,
     sales_quantile: float | None = DEFAULT_SALES_MIN_QUANTILE,
     duckdb_threads: int | None = None,
@@ -125,11 +134,12 @@ def merge_csv_files_with_duckdb(
     )
     quoted_output_columns = ", ".join(_quote_name(column) for column in output_columns)
     sales_column = _quote_name("Продажи, шт")
-    filter_sql = f"COALESCE({sales_column}, 0) > ? AND COALESCE({sales_column}, 0) < ?"
+    filter_sql = f"COALESCE({sales_column}, 0) > 0 AND COALESCE({sales_column}, 0) >= ? AND COALESCE({sales_column}, 0) < ?"
     filtered_source_sql = "SELECT * FROM merge_stage WHERE " + filter_sql
     filter_params: list[float] = [float(min_sales), float(max_sales)]
     if sales_quantile is not None:
         _validate_sales_quantile(sales_quantile)
+        sales_min_units = float(min_sales)
         filtered_source_sql = f"""
             SELECT * EXCLUDE (__sales_quantile_threshold)
             FROM (
@@ -139,7 +149,7 @@ def merge_csv_files_with_duckdb(
                 FROM merge_stage
                 WHERE {filter_sql}
             )
-            WHERE {sales_column} >= __sales_quantile_threshold
+            WHERE {sales_column} >= GREATEST(__sales_quantile_threshold, {sales_min_units})
         """
     order_sql = "__source_file_index, __source_row_number"
     header_prefix = _csv_header_prefix(output_columns, delimiter=clean_delimiter)

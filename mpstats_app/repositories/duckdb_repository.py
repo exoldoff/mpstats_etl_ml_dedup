@@ -24,7 +24,7 @@ from pipeline.repositories.sql_repository import (
     sql_literal,
     table_exists,
 )
-from pipeline.services.sales_filter_service import DEFAULT_SALES_MIN_QUANTILE
+from pipeline.services.sales_filter_service import DEFAULT_SALES_MIN_QUANTILE, DEFAULT_SALES_MIN_UNITS
 
 from mpstats_app.config import AppSettings
 from mpstats_app.utils import clean_record, clean_records, quote_duckdb_name
@@ -78,6 +78,7 @@ CSV_DECIMAL_COMMA_PROTECTED_COLUMNS = {
 CSV_DECIMAL_DOT_PATTERN = r"([0-9])\.([0-9])"
 CSV_DECIMAL_COMMA_REPLACEMENT = r"\1,\2"
 CUBE_SALES_MIN_QUANTILE = DEFAULT_SALES_MIN_QUANTILE
+CUBE_SALES_MIN_UNITS = DEFAULT_SALES_MIN_UNITS
 
 
 class DuplicateCubeSliceError(ValueError):
@@ -232,6 +233,15 @@ def _sales_quantile_source_sql(raw_table: str, columns: list[str], positive_filt
         return f"SELECT * FROM {quoted_raw_table} WHERE {positive_filter}"
 
     sales_expr = _number_expr(sales_column)
+    sales_min_units = float(CUBE_SALES_MIN_UNITS)
+    if CUBE_SALES_MIN_QUANTILE is None:
+        return f"""
+            SELECT *
+            FROM {quoted_raw_table}
+            WHERE {positive_filter}
+              AND {sales_expr} >= {sales_min_units}
+        """
+
     return f"""
         SELECT * EXCLUDE (__sales_quantile_threshold)
         FROM (
@@ -241,7 +251,7 @@ def _sales_quantile_source_sql(raw_table: str, columns: list[str], positive_filt
             FROM {quoted_raw_table}
             WHERE {positive_filter}
         )
-        WHERE {sales_expr} >= __sales_quantile_threshold
+        WHERE {sales_expr} >= GREATEST(__sales_quantile_threshold, {sales_min_units})
     """
 
 

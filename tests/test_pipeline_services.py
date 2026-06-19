@@ -338,13 +338,13 @@ class PipelineServicesTest(unittest.TestCase):
     def test_merge_dataframes_filters_sales_and_deduplicates(self) -> None:
         frame = pd.DataFrame(
             [
-                {"SKU": "a", "Продажи": "10", "Название": "one"},
-                {"SKU": "a", "Продажи": "10", "Название": "one"},
+                {"SKU": "a", "Продажи": "20", "Название": "one"},
+                {"SKU": "a", "Продажи": "20", "Название": "one"},
                 {"SKU": "b", "Продажи": "0", "Название": "two"},
                 {"SKU": "c", "Продажи": "50000", "Название": "three"},
             ]
         )
-        merged = merge_dataframes([frame], min_sales=0, max_sales=40_000)
+        merged = merge_dataframes([frame], min_sales=0, max_sales=40_000, sales_quantile=0.2)
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged.iloc[0]["SKU"], "a")
         self.assertIn("Продажи, шт", merged.columns)
@@ -360,7 +360,7 @@ class PipelineServicesTest(unittest.TestCase):
             ]
         )
 
-        merged = merge_dataframes([frame], min_sales=0, max_sales=40_000)
+        merged = merge_dataframes([frame], min_sales=0, max_sales=40_000, sales_quantile=0.2)
 
         self.assertEqual(merged["SKU"].tolist(), ["mid", "high", "top"])
 
@@ -374,8 +374,8 @@ class PipelineServicesTest(unittest.TestCase):
             write_semicolon_csv(
                 pd.DataFrame(
                     [
-                        {"SKU": "a", "Продажи": "10", "Название": "one"},
-                        {"SKU": "a", "Продажи": "10", "Название": "one"},
+                        {"SKU": "a", "Продажи": "20", "Название": "one"},
+                        {"SKU": "a", "Продажи": "20", "Название": "one"},
                         {"SKU": "b", "Продажи": "0", "Название": "two"},
                         {"SKU": "c", "Продажи": "50000", "Название": "three"},
                     ]
@@ -385,9 +385,9 @@ class PipelineServicesTest(unittest.TestCase):
             write_semicolon_csv(
                 pd.DataFrame(
                     [
-                        {"SKU": "d", "Продажи": "11", "Название": "four"},
-                        {"SKU": "a", "Продажи": "10", "Название": "one"},
-                        {"SKU": "e", "Продажи": "12", "Название": "five"},
+                        {"SKU": "d", "Продажи": "21", "Название": "four"},
+                        {"SKU": "a", "Продажи": "20", "Название": "one"},
+                        {"SKU": "e", "Продажи": "22", "Название": "five"},
                     ]
                 ),
                 file_b,
@@ -405,9 +405,9 @@ class PipelineServicesTest(unittest.TestCase):
             self.assertTrue(new_output.read_bytes().startswith(b"\xef\xbb\xbf"))
             self.assertEqual(new_output.read_text(encoding="utf-8-sig").splitlines()[0], "SKU;Продажи, шт;Название")
             self.assertEqual(result.rows_in, 7)
-            self.assertEqual(result.filtered_rows, 4)
+            self.assertEqual(result.filtered_rows, 5)
             self.assertEqual(result.rows_out, 3)
-            self.assertEqual(result.duplicates_removed, 1)
+            self.assertEqual(result.duplicates_removed, 2)
             self.assertEqual(result.input_files_count, 2)
 
             old_saved = read_semicolon_csv(old_output)
@@ -434,7 +434,7 @@ class PipelineServicesTest(unittest.TestCase):
             )
             output_file = root / "out.csv"
 
-            result = merge_csv_files_with_duckdb([file_path], output_file, min_sales=0, max_sales=40_000)
+            result = merge_csv_files_with_duckdb([file_path], output_file, min_sales=0, max_sales=40_000, sales_quantile=0.2)
 
             self.assertEqual(result.filtered_rows, 3)
             self.assertEqual(result.rows_out, 3)
@@ -446,7 +446,7 @@ class PipelineServicesTest(unittest.TestCase):
             root = Path(temp_dir)
             input_dir = root / "input"
             input_dir.mkdir()
-            write_semicolon_csv(pd.DataFrame([{"SKU": "a", "Продажи, шт": 1, "Название": "one"}]), input_dir / "a.csv")
+            write_semicolon_csv(pd.DataFrame([{"SKU": "a", "Продажи, шт": 20, "Название": "one"}]), input_dir / "a.csv")
             output_file = root / "merged.csv"
 
             with patch("pipeline.services.merge_service.pd.concat", side_effect=AssertionError("merge_directory must not use pandas concat")):
@@ -475,7 +475,7 @@ class PipelineServicesTest(unittest.TestCase):
             )
             output_file = root / "out.csv"
 
-            result = merge_csv_files_with_duckdb([file_path], output_file, dedup_columns=["SKU"], sales_quantile=None)
+            result = merge_csv_files_with_duckdb([file_path], output_file, dedup_columns=["SKU"], min_sales=0, sales_quantile=None)
 
             self.assertEqual(result.rows_out, 2)
             self.assertEqual(result.duplicates_removed, 1)

@@ -41,10 +41,10 @@ class WeightParserServiceTest(unittest.TestCase):
                     "SKU": "123",
                     "Бренд": "Brand",
                     "Название": "Мыло 3 шт. - 175 г",
-                    "Продажи": "10",
+                    "Продажи": "20",
                     "Продавец": "Seller",
                     "Средняя цена": "100",
-                    "Выручка": "1000",
+                    "Выручка": "2000",
                 }
             ]
         )
@@ -52,7 +52,7 @@ class WeightParserServiceTest(unittest.TestCase):
         self.assertEqual(parsed.iloc[0]["Дата"], "01.06.2025")
         self.assertAlmostEqual(parsed.iloc[0]["Вес, кг (ед.)"], 0.175)
         self.assertAlmostEqual(parsed.iloc[0]["Вес, кг"], 0.525)
-        self.assertAlmostEqual(parsed.iloc[0]["Объем, кг"], 5.25)
+        self.assertAlmostEqual(parsed.iloc[0]["Объем, кг"], 10.5)
         self.assertFalse(bool(parsed.iloc[0]["Вес аномалия"]))
         self.assertAlmostEqual(parsed.iloc[0]["Цена за кг"], 100 / 0.525)
 
