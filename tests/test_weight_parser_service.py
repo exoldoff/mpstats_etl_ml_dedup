@@ -56,6 +56,29 @@ class WeightParserServiceTest(unittest.TestCase):
         self.assertFalse(bool(parsed.iloc[0]["Вес аномалия"]))
         self.assertAlmostEqual(parsed.iloc[0]["Цена за кг"], 100 / 0.525)
 
+    def test_parse_weights_dataframe_filters_bottom_sales_quantile(self) -> None:
+        rows = []
+        for sku, sales in [("zero", 0), ("low", 10), ("mid", 20), ("high", 30), ("top", 40)]:
+            rows.append(
+                {
+                    "Дата": "01.06.2025",
+                    "Маркетплейс": "Ozon",
+                    "Категория": "Мыло",
+                    "SKU": sku,
+                    "Бренд": "Brand",
+                    "Название": f"Мыло {sku} 1 кг",
+                    "Продажи": str(sales),
+                    "Продавец": "Seller",
+                    "Средняя цена": "100",
+                    "Выручка": str(sales * 100),
+                }
+            )
+
+        parsed = parse_weights_dataframe(pd.DataFrame(rows))
+
+        self.assertEqual(parsed["SKU"].tolist(), ["mid", "high", "top"])
+        self.assertTrue((parsed["Продажи, шт"] > 0).all())
+
 
 if __name__ == "__main__":
     unittest.main()

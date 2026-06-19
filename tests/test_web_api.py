@@ -269,7 +269,7 @@ class WebApiTest(unittest.TestCase):
                 values = con.execute(f'SELECT "Дата" FROM "{settings.products_table}"').fetchall()
             self.assertEqual(values, [("01.01.2025",)])
 
-    def test_db_import_filters_zero_sales_and_volume_rows(self) -> None:
+    def test_db_import_filters_low_sales_quantile_and_bad_volume_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             seed_project(root)
@@ -280,7 +280,8 @@ class WebApiTest(unittest.TestCase):
             write_semicolon_csv(
                 pd.DataFrame(
                     [
-                        {"SKU": "valid", "Продажи, шт": "5", "Объем, т": "0,25"},
+                        {"SKU": "valid-low-sales", "Продажи, шт": "5", "Объем, т": "0,25"},
+                        {"SKU": "valid-high-sales", "Продажи, шт": "100", "Объем, т": "0,25"},
                         {"SKU": "zero-sales", "Продажи, шт": "0", "Объем, т": "0,25"},
                         {"SKU": "zero-volume", "Продажи, шт": "5", "Объем, т": "0"},
                         {"SKU": "bad-sales", "Продажи, шт": "мусор", "Объем, т": "0,25"},
@@ -316,7 +317,7 @@ class WebApiTest(unittest.TestCase):
                        OR {quote_duckdb_name('__row_hash')} IS NULL
                     """
                 ).fetchone()[0]
-            self.assertEqual(rows, [("valid",)])
+            self.assertEqual(rows, [("valid-high-sales",)])
             self.assertEqual(null_metadata, 0)
 
     def test_db_import_idempotent_rerun_does_not_duplicate_rows(self) -> None:

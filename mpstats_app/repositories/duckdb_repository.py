@@ -24,6 +24,7 @@ from pipeline.repositories.sql_repository import (
     sql_literal,
     table_exists,
 )
+from pipeline.services.sales_filter_service import DEFAULT_SALES_MIN_QUANTILE
 
 from mpstats_app.config import AppSettings
 from mpstats_app.utils import clean_record, clean_records, quote_duckdb_name
@@ -76,6 +77,7 @@ CSV_DECIMAL_COMMA_PROTECTED_COLUMNS = {
 }
 CSV_DECIMAL_DOT_PATTERN = r"([0-9])\.([0-9])"
 CSV_DECIMAL_COMMA_REPLACEMENT = r"\1,\2"
+CUBE_SALES_MIN_QUANTILE = DEFAULT_SALES_MIN_QUANTILE
 
 
 class DuplicateCubeSliceError(ValueError):
@@ -223,6 +225,26 @@ def _positive_import_filter(columns: list[str]) -> str:
     return " AND ".join(filters) if filters else "TRUE"
 
 
+def _sales_quantile_source_sql(raw_table: str, columns: list[str], positive_filter: str) -> str:
+    sales_column = _first_existing_column(columns, CUBE_SALES_FILTER_COLUMNS)
+    quoted_raw_table = quote_identifier(raw_table)
+    if not sales_column:
+        return f"SELECT * FROM {quoted_raw_table} WHERE {positive_filter}"
+
+    sales_expr = _number_expr(sales_column)
+    return f"""
+        SELECT * EXCLUDE (__sales_quantile_threshold)
+        FROM (
+            SELECT
+                *,
+                QUANTILE_CONT({sales_expr}, {float(CUBE_SALES_MIN_QUANTILE)}) OVER () AS __sales_quantile_threshold
+            FROM {quoted_raw_table}
+            WHERE {positive_filter}
+        )
+        WHERE {sales_expr} >= __sales_quantile_threshold
+    """
+
+
 def _hash_expr(
     columns: list[str],
     *,
@@ -337,6 +359,7 @@ def _create_products_stage(
         f"AS {quote_duckdb_name('__business_row_hash')}"
     )
     positive_filter = _positive_import_filter(source_columns)
+    stage_source_sql = _sales_quantile_source_sql(raw_table, source_columns, positive_filter)
     con.execute(
         f"""
         CREATE OR REPLACE TEMP TABLE {quote_identifier(stage_table)} AS
@@ -348,8 +371,7 @@ def _create_products_stage(
                     PARTITION BY {_hash_expr(source_columns, project_name=project_name, year=year, month=month, marketplace_code=marketplace_code, category_key=category_key)}
                     ORDER BY {_hash_expr(source_columns, project_name=project_name, year=year, month=month, marketplace_code=marketplace_code, category_key=category_key)}
                 ) AS __row_number
-            FROM {quote_identifier(raw_table)}
-            WHERE {positive_filter}
+            FROM ({stage_source_sql}) AS filtered_raw
         )
         WHERE __row_number = 1
         """

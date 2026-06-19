@@ -349,6 +349,21 @@ class PipelineServicesTest(unittest.TestCase):
         self.assertEqual(merged.iloc[0]["SKU"], "a")
         self.assertIn("Продажи, шт", merged.columns)
 
+    def test_merge_dataframes_filters_bottom_sales_quantile_per_frame(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {"SKU": "zero", "Продажи": "0", "Название": "zero"},
+                {"SKU": "low", "Продажи": "10", "Название": "low"},
+                {"SKU": "mid", "Продажи": "20", "Название": "mid"},
+                {"SKU": "high", "Продажи": "30", "Название": "high"},
+                {"SKU": "top", "Продажи": "40", "Название": "top"},
+            ]
+        )
+
+        merged = merge_dataframes([frame], min_sales=0, max_sales=40_000)
+
+        self.assertEqual(merged["SKU"].tolist(), ["mid", "high", "top"])
+
     def test_duckdb_merge_matches_pandas_merge_and_preserves_first_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -390,9 +405,9 @@ class PipelineServicesTest(unittest.TestCase):
             self.assertTrue(new_output.read_bytes().startswith(b"\xef\xbb\xbf"))
             self.assertEqual(new_output.read_text(encoding="utf-8-sig").splitlines()[0], "SKU;Продажи, шт;Название")
             self.assertEqual(result.rows_in, 7)
-            self.assertEqual(result.filtered_rows, 5)
+            self.assertEqual(result.filtered_rows, 4)
             self.assertEqual(result.rows_out, 3)
-            self.assertEqual(result.duplicates_removed, 2)
+            self.assertEqual(result.duplicates_removed, 1)
             self.assertEqual(result.input_files_count, 2)
 
             old_saved = read_semicolon_csv(old_output)
@@ -400,6 +415,31 @@ class PipelineServicesTest(unittest.TestCase):
             self.assertEqual(list(new_saved.columns), list(old_saved.columns))
             self.assertEqual(new_saved["SKU"].tolist(), ["a", "d", "e"])
             pd.testing.assert_frame_equal(old_saved, new_saved, check_dtype=False)
+
+    def test_duckdb_merge_filters_bottom_sales_quantile_per_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            file_path = root / "input.csv"
+            write_semicolon_csv(
+                pd.DataFrame(
+                    [
+                        {"SKU": "zero", "Продажи": "0", "Название": "zero"},
+                        {"SKU": "low", "Продажи": "10", "Название": "low"},
+                        {"SKU": "mid", "Продажи": "20", "Название": "mid"},
+                        {"SKU": "high", "Продажи": "30", "Название": "high"},
+                        {"SKU": "top", "Продажи": "40", "Название": "top"},
+                    ]
+                ),
+                file_path,
+            )
+            output_file = root / "out.csv"
+
+            result = merge_csv_files_with_duckdb([file_path], output_file, min_sales=0, max_sales=40_000)
+
+            self.assertEqual(result.filtered_rows, 3)
+            self.assertEqual(result.rows_out, 3)
+            saved = read_semicolon_csv(output_file)
+            self.assertEqual(saved["SKU"].tolist(), ["mid", "high", "top"])
 
     def test_merge_directory_uses_duckdb_without_pandas_concat(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -435,7 +475,7 @@ class PipelineServicesTest(unittest.TestCase):
             )
             output_file = root / "out.csv"
 
-            result = merge_csv_files_with_duckdb([file_path], output_file, dedup_columns=["SKU"])
+            result = merge_csv_files_with_duckdb([file_path], output_file, dedup_columns=["SKU"], sales_quantile=None)
 
             self.assertEqual(result.rows_out, 2)
             self.assertEqual(result.duplicates_removed, 1)

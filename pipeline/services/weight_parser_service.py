@@ -10,6 +10,7 @@ import pandas as pd
 
 from pipeline.models import StepResult
 from pipeline.repositories.file_repository import list_csv_files, read_semicolon_csv, write_semicolon_csv
+from pipeline.services.sales_filter_service import coerce_sales_series, filter_sales_by_quantile
 
 
 MG_UNITS = r"(?:мг|mg|milligram(?:s)?|milligramme(?:s)?)"
@@ -255,10 +256,8 @@ def parse_weights_dataframe(df: pd.DataFrame, *, max_weight_kg: float = 40.0) ->
         raise ValueError(f"Не найдены колонки {missing}. Сейчас есть: {list(df.columns)}")
 
     out = df.copy()
-    out["Продажи"] = (
-        out["Продажи"].astype(str).str.replace("\u00a0", "", regex=False).str.replace(" ", "", regex=False).str.replace(",", ".", regex=False)
-    )
-    out["Продажи"] = pd.to_numeric(out["Продажи"], errors="coerce").fillna(0)
+    out["Продажи"] = coerce_sales_series(out["Продажи"])
+    out = filter_sales_by_quantile(out, sales_column="Продажи").reset_index(drop=True)
     names = out["Название"].tolist()
     extracted_weights = [extract_weight_from_name(name) for name in names]
     raw_unit_weights = [value.unit_kg if value else np.nan for value in extracted_weights]

@@ -14,6 +14,7 @@ import pandas as pd
 from pipeline.models import StepResult
 from pipeline.repositories.file_repository import list_csv_files
 from pipeline.repositories.sql_repository import duckdb_connection, measure_duckdb_operation, resolve_duckdb_temp_directory, sql_literal
+from pipeline.services.sales_filter_service import DEFAULT_SALES_MIN_QUANTILE, filter_sales_by_quantile
 
 
 MERGE_RENAME_COLUMNS = {
@@ -56,12 +57,24 @@ def normalize_sales_column(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def merge_dataframes(frames: list[pd.DataFrame], *, min_sales: float = 0, max_sales: float = 40_000) -> pd.DataFrame:
+def merge_dataframes(
+    frames: list[pd.DataFrame],
+    *,
+    min_sales: float = 0,
+    max_sales: float = 40_000,
+    sales_quantile: float | None = DEFAULT_SALES_MIN_QUANTILE,
+) -> pd.DataFrame:
     if not frames:
         raise RuntimeError("Нет файлов для склейки.")
-    result = pd.concat(frames, ignore_index=True)
-    result = normalize_sales_column(result)
-    return result[(result["Продажи, шт"] > min_sales) & (result["Продажи, шт"] < max_sales)].copy().drop_duplicates()
+    filtered_frames: list[pd.DataFrame] = []
+    for frame in frames:
+        normalized = normalize_sales_column(frame)
+        normalized = normalized[(normalized["Продажи, шт"] > min_sales) & (normalized["Продажи, шт"] < max_sales)].copy()
+        if sales_quantile is not None:
+            normalized = filter_sales_by_quantile(normalized, sales_column="Продажи, шт", quantile=sales_quantile)
+        filtered_frames.append(normalized)
+    result = pd.concat(filtered_frames, ignore_index=True)
+    return result.drop_duplicates()
 
 
 def merge_csv_files_with_duckdb(
@@ -73,6 +86,7 @@ def merge_csv_files_with_duckdb(
     *,
     min_sales: float = 0,
     max_sales: float = 40_000,
+    sales_quantile: float | None = DEFAULT_SALES_MIN_QUANTILE,
     duckdb_threads: int | None = None,
     duckdb_memory_limit: str | None = None,
     duckdb_temp_directory: Path | None = None,
@@ -112,6 +126,21 @@ def merge_csv_files_with_duckdb(
     quoted_output_columns = ", ".join(_quote_name(column) for column in output_columns)
     sales_column = _quote_name("Продажи, шт")
     filter_sql = f"COALESCE({sales_column}, 0) > ? AND COALESCE({sales_column}, 0) < ?"
+    filtered_source_sql = "SELECT * FROM merge_stage WHERE " + filter_sql
+    filter_params: list[float] = [float(min_sales), float(max_sales)]
+    if sales_quantile is not None:
+        _validate_sales_quantile(sales_quantile)
+        filtered_source_sql = f"""
+            SELECT * EXCLUDE (__sales_quantile_threshold)
+            FROM (
+                SELECT
+                    *,
+                    QUANTILE_CONT({sales_column}, {float(sales_quantile)}) OVER (PARTITION BY __source_file_index) AS __sales_quantile_threshold
+                FROM merge_stage
+                WHERE {filter_sql}
+            )
+            WHERE {sales_column} >= __sales_quantile_threshold
+        """
     order_sql = "__source_file_index, __source_row_number"
     header_prefix = _csv_header_prefix(output_columns, delimiter=clean_delimiter)
 
@@ -153,7 +182,7 @@ def merge_csv_files_with_duckdb(
                     """
                 ).fetchall()
             ]
-            filtered_rows = _fetch_int(con, f"SELECT COUNT(*) FROM merge_stage WHERE {filter_sql}", [float(min_sales), float(max_sales)])
+            filtered_rows = _fetch_int(con, f"SELECT COUNT(*) FROM ({filtered_source_sql}) AS filtered_sales", filter_params)
             if effective_dedup_columns:
                 partition_sql = ", ".join(_quote_name(column) for column in effective_dedup_columns)
                 con.execute(
@@ -161,8 +190,7 @@ def merge_csv_files_with_duckdb(
                     CREATE TEMP TABLE merge_output AS
                     WITH filtered AS (
                         SELECT *
-                        FROM merge_stage
-                        WHERE {filter_sql}
+                        FROM ({filtered_source_sql}) AS filtered_sales
                     ),
                     ranked AS (
                         SELECT
@@ -177,17 +205,16 @@ def merge_csv_files_with_duckdb(
                     FROM ranked
                     WHERE __dedup_rank = 1
                     """,
-                    [float(min_sales), float(max_sales)],
+                    filter_params,
                 )
             else:
                 con.execute(
                     f"""
                     CREATE TEMP TABLE merge_output AS
                     SELECT *
-                    FROM merge_stage
-                    WHERE {filter_sql}
+                    FROM ({filtered_source_sql}) AS filtered_sales
                     """,
-                    [float(min_sales), float(max_sales)],
+                    filter_params,
                 )
             rows_out = _fetch_int(con, "SELECT COUNT(*) FROM merge_output")
             con.execute(
@@ -224,6 +251,7 @@ def merge_directory(
     *,
     min_sales: float = 0,
     max_sales: float = 40_000,
+    sales_quantile: float | None = DEFAULT_SALES_MIN_QUANTILE,
 ) -> tuple[MergeResult, StepResult]:
     result = StepResult(name="step5_merge", output=Path(output_file))
     input_paths = list_csv_files(input_dir)
@@ -233,6 +261,7 @@ def merge_directory(
             Path(output_file),
             min_sales=min_sales,
             max_sales=max_sales,
+            sales_quantile=sales_quantile,
         )
         result.ok = merged.input_files_count
         result.rows = merged.rows_out
@@ -265,6 +294,11 @@ def _validate_delimiter(delimiter: str) -> str:
     if len(clean) != 1 or clean in {"\n", "\r"}:
         raise ValueError("CSV-разделитель должен быть одним символом без перевода строки.")
     return clean
+
+
+def _validate_sales_quantile(quantile: float) -> None:
+    if not 0 <= quantile < 1:
+        raise ValueError(f"sales quantile must be >= 0 and < 1, got {quantile!r}")
 
 
 def _read_header(path: Path, *, delimiter: str, encoding: str) -> list[str]:

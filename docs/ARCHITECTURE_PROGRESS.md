@@ -22,6 +22,10 @@
   прогоны не перетирают старые sauce-артефакты.
 - Все notebook-загрузки для category-run фильтруют DuckDB не только по
   `Категория`, но и по `__project_name`.
+- Входные строки для production pipeline и research-ноутбуков дополнительно
+  фильтруются по продажам: нули отбрасываются, а внутри каждого среза
+  остаются верхние 80% положительных строк (`Продажи` не ниже нижнего
+  20%-квантиля).
 - Primary blocking для `01_candidate_generation.ipynb` теперь соответствует
   целевой архитектуре: dense embeddings -> FAISS top-k.
 - Research-модели управляются через `research/dedup/model_registry.py`:
@@ -79,6 +83,9 @@
   `research/dedup/data/soap/`, `artifacts/reports/soap/`.
 - Загрузки из `mpstats_products` и sales-volume join дополнительно фильтруют
   `__project_name`, чтобы `soap` не подхватил чужой проект `тест`.
+- Загрузки из `mpstats_products` в `00`, `01`, `03` и `06` применяют
+  sales-фильтр нижнего 20%-квантиля, чтобы старые кубы без нового
+  processing-фильтра давали тот же research-вход.
 - Аннотатор без аргументов тоже понимает `DEDUP_CATEGORY_RUN`; старый запуск
   без env по-прежнему открывает sauce gold-set.
 
