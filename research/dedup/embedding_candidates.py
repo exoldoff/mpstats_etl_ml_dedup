@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Any
 
@@ -16,6 +17,13 @@ from .candidates import (
 )
 from .normalization import title_similarity
 
+
+SUPPLEMENTAL_PAIRS_ENV = "DEDUP_SUPPLEMENTAL_PAIRS"
+SUPPLEMENTAL_LEXICAL_PAIRS_ENV = "DEDUP_SUPPLEMENTAL_LEXICAL_PAIRS"
+SUPPLEMENTAL_SAME_BRAND_PACK_PAIRS_ENV = "DEDUP_SUPPLEMENTAL_SAME_BRAND_PACK_PAIRS"
+SUPPLEMENTAL_CROSS_MARKETPLACE_RANDOM_PAIRS_ENV = "DEDUP_SUPPLEMENTAL_CROSS_MARKETPLACE_RANDOM_PAIRS"
+SUPPLEMENTAL_RANDOM_PAIRS_ENV = "DEDUP_SUPPLEMENTAL_RANDOM_PAIRS"
+SUPPLEMENTAL_RANDOM_STATE_ENV = "DEDUP_SUPPLEMENTAL_RANDOM_STATE"
 
 FAISS_CANDIDATE_OUTPUT_COLUMNS = [
     "raw_record_id_a",
@@ -50,6 +58,31 @@ FAISS_CANDIDATE_OUTPUT_COLUMNS = [
 ]
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw_value = os.environ.get(name)
+    if raw_value is None or raw_value.strip() == "":
+        return default
+    value = raw_value.strip().lower()
+    if value in {"1", "true", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean-like value, got {raw_value!r}")
+
+
+def _env_int(name: str, default: int) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value is None or raw_value.strip() == "":
+        return default
+    return int(raw_value)
+
+
+def _supplemental_budget(name: str, default: int) -> int:
+    if not _env_flag(SUPPLEMENTAL_PAIRS_ENV, True):
+        return 0
+    return _env_int(name, default)
+
+
 @dataclass(frozen=True)
 class FaissCandidateGenerationConfig:
     """Configuration for embedding top-k blocking with FAISS."""
@@ -62,11 +95,21 @@ class FaissCandidateGenerationConfig:
     global_safety_top_k: int = 5
     unknown_subcategory_top_k: int = 30
     candidate_features: CandidateGenerationConfig = CandidateGenerationConfig()
-    supplemental_lexical_pairs: int = 8_000
-    supplemental_same_brand_pack_pairs: int = 6_000
-    supplemental_cross_marketplace_random_pairs: int = 3_000
-    supplemental_random_pairs: int = 3_000
-    supplemental_random_state: int = 42
+    supplemental_lexical_pairs: int = field(
+        default_factory=lambda: _supplemental_budget(SUPPLEMENTAL_LEXICAL_PAIRS_ENV, 8_000)
+    )
+    supplemental_same_brand_pack_pairs: int = field(
+        default_factory=lambda: _supplemental_budget(SUPPLEMENTAL_SAME_BRAND_PACK_PAIRS_ENV, 6_000)
+    )
+    supplemental_cross_marketplace_random_pairs: int = field(
+        default_factory=lambda: _supplemental_budget(SUPPLEMENTAL_CROSS_MARKETPLACE_RANDOM_PAIRS_ENV, 3_000)
+    )
+    supplemental_random_pairs: int = field(
+        default_factory=lambda: _supplemental_budget(SUPPLEMENTAL_RANDOM_PAIRS_ENV, 3_000)
+    )
+    supplemental_random_state: int = field(
+        default_factory=lambda: _env_int(SUPPLEMENTAL_RANDOM_STATE_ENV, 42)
+    )
 
 
 def _load_faiss(faiss_module: Any | None = None) -> Any:

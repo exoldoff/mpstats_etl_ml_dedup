@@ -18,6 +18,15 @@ SUPPLEMENTS_DISABLED = {
     "supplemental_random_pairs": 0,
 }
 
+SUPPLEMENTAL_ENV_KEYS = [
+    "DEDUP_SUPPLEMENTAL_PAIRS",
+    "DEDUP_SUPPLEMENTAL_LEXICAL_PAIRS",
+    "DEDUP_SUPPLEMENTAL_SAME_BRAND_PACK_PAIRS",
+    "DEDUP_SUPPLEMENTAL_CROSS_MARKETPLACE_RANDOM_PAIRS",
+    "DEDUP_SUPPLEMENTAL_RANDOM_PAIRS",
+    "DEDUP_SUPPLEMENTAL_RANDOM_STATE",
+]
+
 
 class _FakeIndexFlatIP:
     def __init__(self, dimension: int) -> None:
@@ -242,3 +251,35 @@ def test_candidate_generation_adds_training_coverage_supplements() -> None:
     assert "faiss_embedding_topk" in sources
     assert any(source.startswith("supplemental_") for source in sources)
     assert len(pairs) == 6
+
+
+def test_faiss_config_can_disable_supplemental_pairs_from_env(monkeypatch) -> None:
+    for key in SUPPLEMENTAL_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DEDUP_SUPPLEMENTAL_PAIRS", "0")
+
+    config = FaissCandidateGenerationConfig()
+
+    assert config.supplemental_lexical_pairs == 0
+    assert config.supplemental_same_brand_pack_pairs == 0
+    assert config.supplemental_cross_marketplace_random_pairs == 0
+    assert config.supplemental_random_pairs == 0
+
+
+def test_faiss_config_reads_supplemental_pair_budgets_from_env(monkeypatch) -> None:
+    for key in SUPPLEMENTAL_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DEDUP_SUPPLEMENTAL_PAIRS", "1")
+    monkeypatch.setenv("DEDUP_SUPPLEMENTAL_LEXICAL_PAIRS", "11")
+    monkeypatch.setenv("DEDUP_SUPPLEMENTAL_SAME_BRAND_PACK_PAIRS", "12")
+    monkeypatch.setenv("DEDUP_SUPPLEMENTAL_CROSS_MARKETPLACE_RANDOM_PAIRS", "13")
+    monkeypatch.setenv("DEDUP_SUPPLEMENTAL_RANDOM_PAIRS", "14")
+    monkeypatch.setenv("DEDUP_SUPPLEMENTAL_RANDOM_STATE", "99")
+
+    config = FaissCandidateGenerationConfig()
+
+    assert config.supplemental_lexical_pairs == 11
+    assert config.supplemental_same_brand_pack_pairs == 12
+    assert config.supplemental_cross_marketplace_random_pairs == 13
+    assert config.supplemental_random_pairs == 14
+    assert config.supplemental_random_state == 99
