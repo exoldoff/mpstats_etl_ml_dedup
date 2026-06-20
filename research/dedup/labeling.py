@@ -11,6 +11,9 @@ from .candidates import add_cross_marketplace_flags, add_pack_variant_flags
 class LabelingSamplingConfig:
     target_size: int = 400
     random_state: int = 42
+    score_stratification: str = "quantile"
+    high_similarity_top_share: float = 0.25
+    easy_negative_bottom_share: float = 0.25
     high_similarity_threshold: float = 0.72
     medium_similarity_lower: float = 0.50
     medium_similarity_upper: float = 0.72
@@ -70,6 +73,74 @@ def _sample_pool(
     return sampled
 
 
+def _empty_mask(index: pd.Index) -> pd.Series:
+    return pd.Series(False, index=index)
+
+
+def _position_score_masks(score: pd.Series, cfg: LabelingSamplingConfig) -> dict[str, pd.Series]:
+    if not 0 <= cfg.high_similarity_top_share <= 1:
+        raise ValueError("high_similarity_top_share must be between 0 and 1")
+    if not 0 <= cfg.easy_negative_bottom_share <= 1:
+        raise ValueError("easy_negative_bottom_share must be between 0 and 1")
+    if cfg.high_similarity_top_share + cfg.easy_negative_bottom_share > 1:
+        raise ValueError("high/easy score shares must not overlap")
+
+    high_mask = _empty_mask(score.index)
+    medium_mask = _empty_mask(score.index)
+    easy_mask = _empty_mask(score.index)
+    if score.empty:
+        return {
+            "high_similarity": high_mask,
+            "medium_similarity": medium_mask,
+            "random_easy_negative": easy_mask,
+        }
+
+    ordered_index = score.sort_values(ascending=False, kind="mergesort").index.tolist()
+    row_count = len(ordered_index)
+    high_count = round(row_count * cfg.high_similarity_top_share)
+    easy_count = round(row_count * cfg.easy_negative_bottom_share)
+    if cfg.high_similarity_top_share > 0:
+        high_count = max(1, high_count)
+    if cfg.easy_negative_bottom_share > 0:
+        easy_count = max(1, easy_count)
+
+    high_count = min(high_count, row_count)
+    easy_count = min(easy_count, row_count - high_count)
+    medium_start = high_count
+    medium_end = row_count - easy_count
+
+    high_mask.loc[ordered_index[:high_count]] = True
+    medium_mask.loc[ordered_index[medium_start:medium_end]] = True
+    if easy_count:
+        easy_mask.loc[ordered_index[medium_end:]] = True
+    return {
+        "high_similarity": high_mask,
+        "medium_similarity": medium_mask,
+        "random_easy_negative": easy_mask,
+    }
+
+
+def labeling_score_strata_masks(
+    candidates_df: pd.DataFrame,
+    config: LabelingSamplingConfig | None = None,
+) -> dict[str, pd.Series]:
+    """Return score-bucket masks used by the labeling sampler."""
+    cfg = config or LabelingSamplingConfig()
+    if "baseline_similarity_score" not in candidates_df.columns:
+        raise KeyError("baseline_similarity_score is required for labeling score strata")
+
+    score = pd.to_numeric(candidates_df["baseline_similarity_score"], errors="coerce").fillna(0.0)
+    if cfg.score_stratification == "quantile":
+        return _position_score_masks(score, cfg)
+    if cfg.score_stratification == "absolute":
+        return {
+            "high_similarity": score >= cfg.high_similarity_threshold,
+            "medium_similarity": (score >= cfg.medium_similarity_lower) & (score < cfg.medium_similarity_upper),
+            "random_easy_negative": score < cfg.easy_negative_upper,
+        }
+    raise ValueError("score_stratification must be 'quantile' or 'absolute'")
+
+
 def stratified_labeling_sample(
     candidates_df: pd.DataFrame,
     config: LabelingSamplingConfig | None = None,
@@ -83,17 +154,15 @@ def stratified_labeling_sample(
         candidates = add_cross_marketplace_flags(candidates)
     candidates["_pair_key"] = candidates.apply(_pair_key, axis=1)
 
-    score = pd.to_numeric(candidates["baseline_similarity_score"], errors="coerce").fillna(0.0)
+    score_masks = labeling_score_strata_masks(candidates, cfg)
     quotas = _quota_counts(cfg.target_size)
     pools = {
         "cross_marketplace_candidate": candidates[candidates["is_cross_marketplace_pair"].fillna(False)],
         "hard_negative_candidate": candidates[candidates["is_hard_negative_candidate"].fillna(False)],
         "pack_variant_candidate": candidates[candidates["is_pack_variant_candidate"].fillna(False)],
-        "high_similarity": candidates[score >= cfg.high_similarity_threshold],
-        "medium_similarity": candidates[
-            (score >= cfg.medium_similarity_lower) & (score < cfg.medium_similarity_upper)
-        ],
-        "random_easy_negative": candidates[score < cfg.easy_negative_upper],
+        "high_similarity": candidates[score_masks["high_similarity"]],
+        "medium_similarity": candidates[score_masks["medium_similarity"]],
+        "random_easy_negative": candidates[score_masks["random_easy_negative"]],
     }
 
     used_keys: set[str] = set()

@@ -1398,6 +1398,14 @@ embeddings и FAISS top-k. По умолчанию notebook берёт `FAISS_TO
 сравниваются друг с другом как symmetric similarity, а не как поисковый запрос
 против документа. Затем `notebooks/02_labeling_dataset.ipynb` выбирает из них
 CSV для ручной разметки.
+Score-страты в `02` по умолчанию считаются относительно текущего списка
+FAISS-кандидатов: top 25% score идут в `high_similarity`, bottom 25% — в
+`random_easy_negative`, середина — в `medium_similarity`. Это важно, потому
+что cosine scores зависят от embedding-модели и категории. Старый режим
+абсолютных порогов можно включить через
+`DEDUP_LABELING_SCORE_STRATIFICATION=absolute`; доли quantile-режима меняются
+через `DEDUP_LABELING_HIGH_TOP_SHARE` и
+`DEDUP_LABELING_EASY_BOTTOM_SHARE`.
 Если в срезе есть заполненная колонка `Подкатегория`, FAISS по умолчанию
 ищет основной top-k внутри одной подкатегории. Это сокращает пул кандидатов
 для `Мыло` и `Соусы`: `жидкое` не конкурирует с `твердое`, а `соевые` не

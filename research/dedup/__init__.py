@@ -40,7 +40,11 @@ from .embedding_candidates import (
     FaissCandidateGenerationConfig,
     generate_faiss_candidate_pairs,
 )
-from .labeling import LabelingSamplingConfig, stratified_labeling_sample
+from .labeling import (
+    LabelingSamplingConfig,
+    labeling_score_strata_masks,
+    stratified_labeling_sample,
+)
 from .fusion import (
     FusionConfig,
     FusionRun,
@@ -178,6 +182,7 @@ __all__ = [
     "get_polza_base_url",
     "list_model_specs",
     "load_research_dotenv",
+    "labeling_score_strata_masks",
     "meaningful_title_tokens",
     "model_pool_size",
     "model_text_prefix",

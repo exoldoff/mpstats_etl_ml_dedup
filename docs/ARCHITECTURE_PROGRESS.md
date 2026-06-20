@@ -30,6 +30,10 @@
   заполнена, основной top-k считается внутри неё; пустые подкатегории и
   маленький `global_safety` остаются full-global, а полностью пустой срез
   автоматически откатывается в старый global FAISS.
+- `02_labeling_dataset.ipynb` выбирает high/medium/low score-страты
+  относительно текущего распределения `baseline_similarity_score`, потому что
+  после FAISS это embedding cosine, а абсолютный масштаб зависит от модели и
+  категории.
 - Research-модели управляются через `research/dedup/model_registry.py`:
   alias -> backend/model id, общий cache dir `research/dedup/models/`,
   in-process pool и offline-режим `DEDUP_MODEL_LOCAL_ONLY=1`.
@@ -59,6 +63,38 @@
 - Для просмотра результата на реальных строках DuckDB добавлен
   `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
   `mpstats_products` и показывает склеенные SKU-группы.
+
+## 2026-06-28 — Labeling sampler score buckets for FAISS candidates
+
+### Зачем
+
+`notebooks/01_candidate_generation.ipynb` теперь пишет
+`baseline_similarity_score = embedding_similarity_score`. Старые абсолютные
+пороги в `02_labeling_dataset.ipynb` (`0.72/0.50`) были рассчитаны на
+lexical-score и на текущих FAISS-кандидатах превращали весь score-пул в
+`high_similarity`: `medium_similarity` и `random_easy_negative` были пустыми,
+а их квоты уходили в `backfill_other_candidate`.
+
+### Что сделано
+
+- В `research/dedup/labeling.py` добавлен общий helper
+  `labeling_score_strata_masks()`.
+- Дефолтная стратификация score-пулов стала относительной:
+  top 25% -> `high_similarity`, bottom 25% -> `random_easy_negative`,
+  середина -> `medium_similarity`.
+- Старый absolute-режим сохранён через
+  `score_stratification="absolute"` /
+  `DEDUP_LABELING_SCORE_STRATIFICATION=absolute`.
+- `notebooks/02_labeling_dataset.ipynb` теперь показывает доступность и
+  score-диапазоны по тем же buckets, которые реально использует sampler.
+
+### Проверки
+
+- Сухой прогон sampler на текущих
+  `candidates_sauces.csv`, `candidates_coconut_oil.csv`,
+  `candidates_soap.csv`: score-страты снова дают отдельные high/medium/low
+  выборки; backfill остаётся только при нехватке специальных флаговых пулов.
+- Узкие pytest/compile проверки см. в финальном ответе текущего изменения.
 
 ## 2026-06-28 — Subcategory-aware FAISS blocking
 
