@@ -6,6 +6,19 @@ from pathlib import Path
 
 import pandas as pd
 
+from .annotation import (
+    LABEL_BY_KEY,
+    LABEL_HINTS,
+    apply_label,
+    cell as _cell,
+    clear_label,
+    item_summary as _item_summary,
+    labeled_count,
+    load_labeling_file,
+    next_unlabeled_index,
+    save_labeling_file,
+    signal_summary as _signal_summary,
+)
 from .category_runs import resolve_category_run, resolve_run_paths
 
 try:
@@ -21,127 +34,6 @@ def default_labeling_path() -> Path:
 
 
 DEFAULT_LABELING_PATH = default_labeling_path()
-
-LABEL_BY_KEY = {
-    "w": "exact_duplicate",
-    "s": "different_product",
-    "d": "uncertain",
-}
-
-LABEL_HINTS = {
-    "w": "same base product",
-    "s": "different product",
-    "d": "uncertain",
-}
-
-
-def normalize_label_value(value: object) -> str:
-    if value is None:
-        return ""
-    try:
-        if bool(value != value):
-            return ""
-    except TypeError:
-        return ""
-    return str(value).strip()
-
-
-def load_labeling_file(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        raise FileNotFoundError(f"Labeling CSV not found: {path}")
-    frame = pd.read_csv(path)
-    for column in ("label", "notes"):
-        if column not in frame.columns:
-            frame.insert(0 if column == "label" else 1, column, "")
-    frame["label"] = frame["label"].map(normalize_label_value)
-    frame["notes"] = frame["notes"].map(normalize_label_value)
-    return frame
-
-
-def save_labeling_file(frame: pd.DataFrame, path: Path) -> None:
-    temp_path = path.with_suffix(path.suffix + ".tmp")
-    frame.to_csv(temp_path, index=False)
-    temp_path.replace(path)
-
-
-def is_labeled(value: object) -> bool:
-    return normalize_label_value(value) != ""
-
-
-def labeled_count(frame: pd.DataFrame) -> int:
-    return int(frame["label"].map(is_labeled).sum())
-
-
-def next_unlabeled_index(frame: pd.DataFrame, start: int = 0) -> int | None:
-    if frame.empty:
-        return None
-    start = max(0, min(start, len(frame) - 1))
-    for idx in range(start, len(frame)):
-        if not is_labeled(frame.at[idx, "label"]):
-            return idx
-    for idx in range(0, start):
-        if not is_labeled(frame.at[idx, "label"]):
-            return idx
-    return None
-
-
-def apply_label(frame: pd.DataFrame, row_index: int, key: str) -> str:
-    label = LABEL_BY_KEY[key.lower()]
-    frame.at[row_index, "label"] = label
-    return label
-
-
-def clear_label(frame: pd.DataFrame, row_index: int) -> None:
-    frame.at[row_index, "label"] = ""
-
-
-def _cell(row: pd.Series, column: str) -> str:
-    return normalize_label_value(row.get(column, ""))
-
-
-def _first_cell(row: pd.Series, *columns: str) -> str:
-    for column in columns:
-        value = _cell(row, column)
-        if value:
-            return value
-    return "-"
-
-
-def _yes_no(value: str) -> str:
-    normalized = value.strip().casefold()
-    if normalized in {"true", "1", "yes", "y"}:
-        return "да"
-    if normalized in {"false", "0", "no", "n"}:
-        return "нет"
-    return value or "-"
-
-
-def _item_summary(row: pd.Series, side: str) -> str:
-    marketplace = _first_cell(row, f"marketplace_{side}")
-    sku = _first_cell(row, f"sku_{side}")
-    brand = _first_cell(row, f"brand_{side}")
-    subcategory = _first_cell(row, f"subcategory_{side}")
-    unit = _first_cell(row, f"unit_amount_{side}")
-    total = _first_cell(row, f"total_amount_{side}")
-    pack = _first_cell(row, f"multipack_count_{side}")
-    return f"{marketplace} | sku {sku} | brand {brand} | subcat {subcategory} | unit {unit} | total {total} | x{pack}"
-
-
-def _signal_summary(row: pd.Series) -> str:
-    source = _first_cell(row, "candidate_source")
-    rank = _first_cell(row, "candidate_rank")
-    score = _first_cell(row, "embedding_similarity_score", "baseline_similarity_score")
-    blocking_scope = _first_cell(row, "blocking_scope")
-    subcategory = _first_cell(row, "subcategory_relation")
-    stratum = _first_cell(row, "labeling_stratum")
-    cross = _yes_no(_cell(row, "is_cross_marketplace_pair"))
-    hard_negative = _yes_no(_cell(row, "is_hard_negative_candidate"))
-    pack_variant = _yes_no(_cell(row, "is_pack_variant_candidate"))
-    return (
-        f"источник={source} | scope={blocking_scope} | subcat={subcategory} | "
-        f"rank={rank} | score={score} | стратегия={stratum} | "
-        f"межмаркетплейс={cross} | сложный негатив={hard_negative} | вариант упаковки={pack_variant}"
-    )
 
 
 def _display_width(text: str) -> int:

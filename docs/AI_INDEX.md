@@ -99,6 +99,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `research/dedup/threshold_calibration.py` | forced binary dev calibration для `threshold_same`, cost/weighted strategies и compact CSV |
 | `research/dedup/annotator.py` | helper для ручной разметки |
 | `research/dedup/tests/` | узкие тесты research-модулей |
+| `tools/dedup_labeling_bot/` | отдельный Telegram-бот для многопользовательской разметки `labeling_*.csv` |
 | `research/dedup/data/` | локальные CSV-артефакты, игнорируются `.gitignore` |
 | `notebooks/00_eda.ipynb` | EDA по выбранному `DEDUP_CATEGORY_RUN` |
 | `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking + supplemental training coverage pairs, генерация `candidates_<suffix>.csv` |

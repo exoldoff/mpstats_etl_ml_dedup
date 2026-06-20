@@ -1519,6 +1519,80 @@ rank, score, стратегия отбора и русские флаги: ме�
 
 Аннотатор сохраняет CSV после каждого нажатия `w/s/d/c`.
 
+### 22.1. Telegram-бот для совместной разметки
+
+Если разметку нужно делать нескольким людям онлайн, используйте отдельный
+Telegram-бот из `tools/dedup_labeling_bot/`. Он работает с теми же
+`labeling_*.csv`, но ведёт назначения, голоса, авторизации и статистику в
+локальной SQLite-базе рядом с CSV. Это не production-БД и не часть
+`mpstats_app`.
+
+Сначала обновите research-зависимости:
+
+```bash
+python3 -m pip install -r requirements-research.txt
+```
+
+Запуск на конкретном CSV:
+
+```bash
+DEDUP_TELEGRAM_BOT_TOKEN="123:telegram-token" \
+DEDUP_TELEGRAM_ACCESS_PASSWORD="secret-password" \
+python3 -m tools.dedup_labeling_bot research/dedup/data/labeling_sauces.csv
+```
+
+Пароль хранится только в переменной окружения. Пользователь входит командой:
+
+```text
+/start secret-password
+```
+
+После успешного входа бот запоминает Telegram user id в локальном state-файле.
+Если нужно ограничить общую статистику только админами, укажите id через
+запятую:
+
+```bash
+DEDUP_TELEGRAM_ADMIN_USER_IDS="123456,789012"
+```
+
+Основные настройки:
+
+- `DEDUP_TELEGRAM_BATCH_SIZE=10` — сколько строк назначать пользователю за раз;
+- `DEDUP_TELEGRAM_ASSIGNMENT_MODE=unique` — дефолт: строка выдаётся одному
+  активному пользователю и сразу после ответа пишется в CSV;
+- `DEDUP_TELEGRAM_ASSIGNMENT_MODE=overlap` — строку могут разметить несколько
+  человек, итог пишется в CSV только после консенсуса;
+- `DEDUP_TELEGRAM_OVERLAP_VOTES=2` — сколько одинаковых голосов нужно для
+  консенсуса в overlap-режиме;
+- `DEDUP_TELEGRAM_ASSIGNMENT_TTL_HOURS=24` — через сколько часов неразмеченные
+  назначения считаются протухшими и могут быть выданы заново;
+- `DEDUP_TELEGRAM_STATE_PATH=/path/to/state.sqlite` — явный путь к state DB.
+
+Если `DEDUP_TELEGRAM_STATE_PATH` не задан, state хранится рядом с CSV:
+`<labeling_csv>.telegram_state.sqlite`. Файлы SQLite и WAL/SHM игнорируются
+git.
+
+Команды бота:
+
+- `/start <пароль>` — войти;
+- `/help` — подсказка;
+- `/next` — получить следующую пару;
+- `/me` — личная статистика;
+- `/stats` — общий прогресс и статистика по пользователям;
+- `/release` — освободить свои неразмеченные пары;
+- `/logout` — выйти и освободить активные пары.
+
+Кнопки под парой:
+
+- `Дубль` — `exact_duplicate`;
+- `Разные` — `different_product`;
+- `Не уверен` — `uncertain`;
+- `Дальше` — показать следующую назначенную пару.
+
+В overlap-режиме, если голоса разошлись, бот не пишет итог в CSV и помечает
+строку как `conflict` в SQLite-state. Такие конфликты видны в `/stats` и
+разбираются вручную.
+
 После завершения разметки не запускайте заново
 `notebooks/02_labeling_dataset.ipynb`, иначе можно перезаписать рабочий CSV
 разметки. Для текущего threshold benchmark запускайте `03` сверху вниз:

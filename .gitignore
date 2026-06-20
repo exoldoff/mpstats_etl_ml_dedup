@@ -31,6 +31,8 @@ mpstats.duckdb
 *.db
 *.sqlite
 *.sqlite3
+*.sqlite-shm
+*.sqlite-wal
 *.parquet
 
 # Переменные окружения
