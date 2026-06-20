@@ -1393,7 +1393,7 @@ python3 -m pip install -r requirements-research.txt
 ```
 
 `notebooks/01_candidate_generation.ipynb` строит пары-кандидаты через dense
-embeddings и FAISS top-k. По умолчанию notebook берёт `FAISS_TOP_K=50`; для
+embeddings и FAISS top-k. По умолчанию notebook берёт `FAISS_TOP_K=30`; для
 локального E5 embedding используется `query:` prefix, потому что товары
 сравниваются друг с другом как symmetric similarity, а не как поисковый запрос
 против документа. Затем `notebooks/02_labeling_dataset.ipynb` выбирает из них
@@ -1410,7 +1410,7 @@ FAISS-поиск без ограничения по подкатегории.
 `DEDUP_FAISS_SUBCATEGORY_BLOCKING=0` отключает режим,
 `DEDUP_FAISS_GLOBAL_SAFETY_TOP_K` задаёт размер safety-net,
 `DEDUP_FAISS_UNKNOWN_SUBCATEGORY_TOP_K` задаёт top-k для строк с пустой
-подкатегорией.
+подкатегорией; если переменная не задана, используется тот же `FAISS_TOP_K=30`.
 Перед расчётом embeddings строки с одинаковым title и одинаковым `Бренд`
 автоматически схлопываются в один research-record. Пустой `Бренд` считается
 отдельным значением, поэтому одинаковые безбрендовые SKU тоже схлопываются.

@@ -52,13 +52,13 @@ FAISS_CANDIDATE_OUTPUT_COLUMNS = [
 class FaissCandidateGenerationConfig:
     """Configuration for embedding top-k blocking with FAISS."""
 
-    top_k: int = 20
+    top_k: int = 30
     max_candidates: int | None = 60_000
     min_similarity: float | None = None
     normalize_vectors: bool = True
     subcategory_blocking: bool = True
     global_safety_top_k: int = 5
-    unknown_subcategory_top_k: int = 20
+    unknown_subcategory_top_k: int = 30
     candidate_features: CandidateGenerationConfig = CandidateGenerationConfig()
 
 
