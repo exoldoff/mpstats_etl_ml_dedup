@@ -11,7 +11,21 @@ def test_build_keyboard_contains_label_and_next_callbacks() -> None:
     assert "label:7:exact_duplicate" in callback_data
     assert "label:7:different_product" in callback_data
     assert "label:7:uncertain" in callback_data
-    assert "next" in callback_data
+    assert "nav:7:prev" in callback_data
+    assert "nav:7:next" in callback_data
+
+
+def test_build_keyboard_marks_selected_label() -> None:
+    markup = build_keyboard(7, selected_label="exact_duplicate")
+    buttons = [button for row in markup.inline_keyboard for button in row]
+    texts = {button.text for button in buttons}
+    callback_data = {button.callback_data for button in buttons}
+
+    assert "✓ Дубль" in texts
+    assert "noop:7" in callback_data
+    assert "label:7:different_product" not in callback_data
+    assert "nav:7:prev" in callback_data
+    assert "nav:7:next" in callback_data
 
 
 def test_build_discussion_keyboard_has_vote_buttons_without_next() -> None:

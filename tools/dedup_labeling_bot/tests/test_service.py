@@ -83,6 +83,40 @@ def test_unique_batches_do_not_overlap_and_write_csv(tmp_path) -> None:
     assert pd.read_csv(csv_path).at[first.row_index, "label"] == "exact_duplicate"
 
 
+def test_navigation_moves_within_batch_and_back_to_labeled_pair(tmp_path) -> None:
+    service, _ = make_service(tmp_path, mode="unique", batch_size=2)
+    service.authorize(1, "secret")
+
+    first = service.next_pair(1)
+    assert first is not None
+
+    second = service.navigate_pair(1, first.row_index, "next")
+    assert second is not None
+    assert second.row_index == 1
+
+    service.label_row(1, first.row_index, "exact_duplicate")
+    back = service.navigate_pair(1, second.row_index, "prev")
+
+    assert back is not None
+    assert back.row_index == first.row_index
+    assert back.selected_label == "exact_duplicate"
+    assert "<b>Решение:</b> Дубль" in back.message
+
+
+def test_navigation_assigns_next_batch_after_label(tmp_path) -> None:
+    service, _ = make_service(tmp_path, mode="unique", batch_size=1)
+    service.authorize(1, "secret")
+
+    first = service.next_pair(1)
+    assert first is not None
+    service.label_row(1, first.row_index, "different_product")
+
+    next_pair = service.navigate_pair(1, first.row_index, "next")
+
+    assert next_pair is not None
+    assert next_pair.row_index == 1
+
+
 def test_release_frees_unlabeled_unique_assignments(tmp_path) -> None:
     service, _ = make_service(tmp_path, mode="unique", batch_size=2)
     service.authorize(1, "secret")

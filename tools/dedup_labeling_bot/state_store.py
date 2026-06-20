@@ -239,6 +239,48 @@ class LabelingStateStore:
             ).fetchall()
         return [int(row["row_index"]) for row in rows if int(row["row_index"]) in available_rows]
 
+    def user_navigation_rows(
+        self,
+        user_id: int,
+        *,
+        available_rows: set[int],
+        now: datetime | None = None,
+    ) -> list[int]:
+        current = now or utcnow()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT row_index, status, expires_at
+                FROM assignments
+                WHERE user_id = ? AND status IN (?, ?)
+                ORDER BY assigned_at, row_index
+                """,
+                (user_id, ASSIGNED, LABELED),
+            ).fetchall()
+
+        result: list[int] = []
+        for row in rows:
+            row_index = int(row["row_index"])
+            if row["status"] == LABELED:
+                result.append(row_index)
+            elif row_index in available_rows and _from_iso(row["expires_at"]) > current:
+                result.append(row_index)
+        return result
+
+    def user_row_label(self, user_id: int, row_index: int) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT label
+                FROM assignments
+                WHERE user_id = ? AND row_index = ? AND status = ? AND label IS NOT NULL
+                """,
+                (user_id, row_index, LABELED),
+            ).fetchone()
+        if row is None:
+            return None
+        return str(row["label"])
+
     def select_available_rows(
         self,
         *,

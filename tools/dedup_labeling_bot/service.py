@@ -15,6 +15,7 @@ class AssignedPair:
     row_index: int
     total_rows: int
     message: str
+    selected_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -74,13 +75,54 @@ class LabelingBotService:
 
         if not assigned:
             return None
-        row_index = assigned[0]
+        return self.pair_for_row(user_id, assigned[0])
+
+    def navigate_pair(self, user_id: int, current_row_index: int, direction: str) -> AssignedPair | None:
+        if direction not in {"prev", "next"}:
+            raise ValueError(f"Unsupported navigation direction: {direction!r}")
+
+        self.store.expire_stale_assignments()
+        available_rows = self.repository.available_row_indices()
+        available_set = set(available_rows)
+        navigation_rows = self.store.user_navigation_rows(user_id, available_rows=available_set)
+
+        if current_row_index in navigation_rows:
+            current_position = navigation_rows.index(current_row_index)
+            if direction == "prev":
+                if current_position == 0:
+                    return None
+                return self.pair_for_row(user_id, navigation_rows[current_position - 1])
+            if current_position + 1 < len(navigation_rows):
+                return self.pair_for_row(user_id, navigation_rows[current_position + 1])
+        elif direction == "prev" and navigation_rows:
+            previous_rows = [row_index for row_index in navigation_rows if row_index < current_row_index]
+            if previous_rows:
+                return self.pair_for_row(user_id, previous_rows[-1])
+
+        if direction == "prev":
+            return None
+
+        new_rows = self.store.select_available_rows(
+            available_rows=available_rows,
+            user_id=user_id,
+            mode=self.config.assignment_mode,
+            limit=self.config.batch_size,
+            overlap_votes=self.config.overlap_votes,
+        )
+        self.store.assign_rows(user_id, new_rows, ttl=self.config.assignment_ttl)
+        if not new_rows:
+            return None
+        return self.pair_for_row(user_id, new_rows[0])
+
+    def pair_for_row(self, user_id: int, row_index: int) -> AssignedPair:
         frame = self.repository.load()
         row = frame.iloc[row_index]
+        selected_label = self.store.user_row_label(user_id, row_index)
         return AssignedPair(
             row_index=row_index,
             total_rows=len(frame),
-            message=format_pair_message(row, row_index, len(frame)),
+            selected_label=selected_label,
+            message=format_pair_message(row, row_index, len(frame), selected_label=selected_label),
         )
 
     def label_row(self, user_id: int, row_index: int, label: str) -> LabelOutcome:

@@ -35,6 +35,16 @@ def test_format_pair_message_uses_html_and_code_for_sku() -> None:
     assert "<b>Название:</b> Мыло &lt;fresh&gt; &amp; clean" in message
     assert "<b>SKU:</b> <code>SKU&lt;1&gt;&amp;A</code>" in message
     assert "<b>Сигналы</b>" in message
+    assert message.index("<b>Сигналы</b>") < message.index("<b>SKU A</b>")
+    assert message.index("<b>SKU A</b>") < message.index("<b>SKU B</b>")
+
+
+def test_format_pair_message_shows_selected_label() -> None:
+    row = pd.Series({"title_a": "A", "title_b": "B", "sku_a": "1", "sku_b": "2"})
+
+    message = format_pair_message(row, 0, 10, selected_label="exact_duplicate")
+
+    assert "<b>Решение:</b> Дубль" in message
 
 
 def test_format_help_text_escapes_start_placeholder() -> None:

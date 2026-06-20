@@ -4,7 +4,21 @@ from html import escape
 
 import pandas as pd
 
-from research.dedup.annotation import cell, first_cell, yes_no
+from research.dedup.annotation import (
+    LABEL_DIFFERENT_PRODUCT,
+    LABEL_EXACT_DUPLICATE,
+    LABEL_UNCERTAIN,
+    cell,
+    first_cell,
+    yes_no,
+)
+
+
+LABEL_TITLES = {
+    LABEL_EXACT_DUPLICATE: "Дубль",
+    LABEL_DIFFERENT_PRODUCT: "Разные товары",
+    LABEL_UNCERTAIN: "Не уверен",
+}
 
 
 def h(value: object) -> str:
@@ -55,26 +69,42 @@ def _signal_block(row: pd.Series) -> str:
     )
 
 
-def format_pair_message(row: pd.Series, row_index: int, total_rows: int) -> str:
+def _label_title(label: str) -> str:
+    return LABEL_TITLES.get(label, label)
+
+
+def format_pair_message(
+    row: pd.Series,
+    row_index: int,
+    total_rows: int,
+    *,
+    selected_label: str | None = None,
+) -> str:
     category_parts = [
         cell(row, "category_run"),
         cell(row, "category_name"),
         cell(row, "project_name"),
     ]
     category = " / ".join(part for part in category_parts if part)
-    category_line = f"\n{_field('Категория', category)}" if category else ""
     notes = cell(row, "notes")
-    notes_line = f"\n\n{_field('Заметка', notes)}" if notes else ""
+
+    header_lines = [f"<b>Пара {row_index + 1}/{total_rows}</b>"]
+    if category:
+        header_lines.append(_field("Категория", category))
+    if selected_label:
+        header_lines.append(_field("Решение", _label_title(selected_label)))
+    if notes:
+        header_lines.append(_field("Заметка", notes))
+    header = "\n".join(header_lines)
 
     return (
-        f"<b>Пара {row_index + 1}/{total_rows}</b>{category_line}\n\n"
-        f"<b>A</b>\n"
-        f"{_item_block(row, 'a')}\n\n"
-        f"<b>B</b>\n"
-        f"{_item_block(row, 'b')}\n\n"
+        f"{header}\n\n"
         f"<b>Сигналы</b>\n"
-        f"{_signal_block(row)}"
-        f"{notes_line}"
+        f"{_signal_block(row)}\n\n"
+        f"<b>SKU A</b>\n"
+        f"{_item_block(row, 'a')}\n\n"
+        f"<b>SKU B</b>\n"
+        f"{_item_block(row, 'b')}"
     )
 
 
