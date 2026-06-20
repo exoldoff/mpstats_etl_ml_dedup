@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tools.dedup_labeling_bot.handlers import build_keyboard
+from tools.dedup_labeling_bot.handlers import build_bot_commands, build_keyboard
 
 
 def test_build_keyboard_contains_label_and_next_callbacks() -> None:
@@ -12,3 +12,11 @@ def test_build_keyboard_contains_label_and_next_callbacks() -> None:
     assert "label:7:different_product" in callback_data
     assert "label:7:uncertain" in callback_data
     assert "next" in callback_data
+
+
+def test_build_bot_commands_contains_menu_commands() -> None:
+    commands = {command.command: command.description for command in build_bot_commands()}
+
+    assert commands["next"] == "получить пару"
+    assert commands["menu"] == "показать команды"
+    assert commands["stats"] == "общий прогресс"

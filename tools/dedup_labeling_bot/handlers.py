@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from research.dedup.annotation import (
@@ -29,6 +30,23 @@ def build_keyboard(row_index: int) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def build_bot_commands() -> list[BotCommand]:
+    return [
+        BotCommand("start", "войти по паролю"),
+        BotCommand("next", "получить пару"),
+        BotCommand("me", "моя статистика"),
+        BotCommand("stats", "общий прогресс"),
+        BotCommand("release", "освободить мои пары"),
+        BotCommand("logout", "выйти"),
+        BotCommand("menu", "показать команды"),
+        BotCommand("help", "помощь"),
+    ]
+
+
+async def set_bot_commands(application: Application) -> None:
+    await application.bot.set_my_commands(build_bot_commands())
 
 
 class TelegramLabelingHandlers:
@@ -62,7 +80,7 @@ class TelegramLabelingHandlers:
             return
         message = update.effective_message
         if message is not None:
-            await message.reply_text(format_help_text())
+            await message.reply_text(format_help_text(), parse_mode=ParseMode.HTML)
 
     async def next(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
@@ -74,7 +92,7 @@ class TelegramLabelingHandlers:
         if pair is None:
             await message.reply_text("Свободных пар больше нет.")
             return
-        await message.reply_text(pair.message, reply_markup=build_keyboard(pair.row_index))
+        await message.reply_text(pair.message, reply_markup=build_keyboard(pair.row_index), parse_mode=ParseMode.HTML)
 
     async def me(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
@@ -138,7 +156,11 @@ class TelegramLabelingHandlers:
             if pair is None:
                 await query.edit_message_text("Свободных пар больше нет.")
                 return
-            await query.edit_message_text(pair.message, reply_markup=build_keyboard(pair.row_index))
+            await query.edit_message_text(
+                pair.message,
+                reply_markup=build_keyboard(pair.row_index),
+                parse_mode=ParseMode.HTML,
+            )
             return
 
         try:
@@ -161,6 +183,7 @@ class TelegramLabelingHandlers:
         await query.edit_message_text(
             f"{outcome.message}\n\n{next_pair.message}",
             reply_markup=build_keyboard(next_pair.row_index),
+            parse_mode=ParseMode.HTML,
         )
 
     async def _ensure_authorized(self, update: Update) -> bool:
@@ -182,9 +205,10 @@ class TelegramLabelingHandlers:
 
 def create_application(service: LabelingBotService) -> Application:
     handlers = TelegramLabelingHandlers(service)
-    application = Application.builder().token(service.config.token).build()
+    application = Application.builder().token(service.config.token).post_init(set_bot_commands).build()
     application.add_handler(CommandHandler("start", handlers.start))
     application.add_handler(CommandHandler("help", handlers.help))
+    application.add_handler(CommandHandler("menu", handlers.help))
     application.add_handler(CommandHandler("next", handlers.next))
     application.add_handler(CommandHandler("me", handlers.me))
     application.add_handler(CommandHandler("stats", handlers.stats))
