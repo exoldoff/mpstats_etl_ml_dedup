@@ -31,6 +31,9 @@ CANDIDATE_OUTPUT_COLUMNS = [
     "title_b",
     "brand_a",
     "brand_b",
+    "subcategory_a",
+    "subcategory_b",
+    "subcategory_relation",
     "unit_amount_a",
     "unit_amount_b",
     "total_amount_a",
@@ -49,6 +52,7 @@ class CandidateGenerationConfig:
     sku_col: str | None = None
     marketplace_col: str | None = None
     brand_col: str | None = None
+    subcategory_col: str | None = None
     unit_amount_col: str | None = None
     total_amount_col: str | None = None
     multipack_count_col: str | None = None
@@ -180,6 +184,27 @@ def _exact_title_key(value: object) -> str:
     return " ".join(str(value).casefold().replace("ё", "е").split())
 
 
+def _normalize_subcategory(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if bool(value != value):
+            return ""
+    except TypeError:
+        return ""
+    return " ".join(str(value).casefold().replace("ё", "е").split())
+
+
+def subcategory_relation(left: object, right: object) -> str:
+    left_norm = _normalize_subcategory(left)
+    right_norm = _normalize_subcategory(right)
+    if not left_norm or not right_norm:
+        return "unknown_subcategory"
+    if left_norm == right_norm:
+        return "same_subcategory"
+    return "different_subcategory"
+
+
 def _exact_title_record_id(collapse_key: object) -> str:
     digest = hashlib.sha1(str(collapse_key).encode("utf-8")).hexdigest()[:16]
     return f"exact_title::{digest}"
@@ -226,6 +251,7 @@ def _collapse_exact_title_records(records: pd.DataFrame, cfg: CandidateGeneratio
             marketplaces=("marketplaces", _unique_nested_text_values),
             title=("title", _first_present),
             brand=("brand", _first_present),
+            subcategory=("subcategory", _first_present),
             unit_amount=("unit_amount", _first_present),
             total_amount=("total_amount", _first_present),
             multipack_count=("multipack_count", _first_present),
@@ -236,6 +262,7 @@ def _collapse_exact_title_records(records: pd.DataFrame, cfg: CandidateGeneratio
         .rename(columns={"_collapse_group": "raw_record_id"})
         .reset_index(drop=True)
     )
+    collapsed["subcategory_norm"] = collapsed["subcategory"].map(_normalize_subcategory)
     return collapsed
 
 
@@ -254,6 +281,7 @@ def prepare_product_records(
         required=False,
     )
     brand_col = _resolve_column(products_df, cfg.brand_col, ["Бренд", "brand"], required=False)
+    subcategory_col = _resolve_column(products_df, cfg.subcategory_col, ["Подкатегория"], required=False)
     unit_col = _resolve_column(
         products_df,
         cfg.unit_amount_col,
@@ -289,6 +317,7 @@ def prepare_product_records(
             "marketplace": marketplace_values,
             "title": products_df[title_col],
             "brand": products_df[brand_col] if brand_col else "",
+            "subcategory": products_df[subcategory_col] if subcategory_col else "",
             "unit_amount": pd.to_numeric(products_df[unit_col], errors="coerce") if unit_col else pd.NA,
             "total_amount": pd.to_numeric(products_df[total_col], errors="coerce") if total_col else pd.NA,
         },
@@ -311,6 +340,7 @@ def prepare_product_records(
     records["marketplace_key"] = records["marketplace"].map(_marketplace_key)
     records["raw_record_id"] = records["marketplace_key"] + "::" + records["sku"]
     records["brand"] = records["brand"].fillna("").astype(str).str.strip()
+    records["subcategory"] = records["subcategory"].fillna("").astype(str).str.strip()
 
     grouped = (
         records.groupby("raw_record_id", as_index=False)
@@ -320,6 +350,7 @@ def prepare_product_records(
             marketplaces=("marketplace", _unique_text_values),
             title=("title", _first_present),
             brand=("brand", _first_present),
+            subcategory=("subcategory", _first_present),
             unit_amount=("unit_amount", _first_present),
             total_amount=("total_amount", _first_present),
             multipack_count=("multipack_count", _first_present),
@@ -327,11 +358,13 @@ def prepare_product_records(
         .reset_index(drop=True)
     )
     grouped["brand_norm"] = grouped["brand"].map(normalize_brand)
+    grouped["subcategory_norm"] = grouped["subcategory"].map(_normalize_subcategory)
     grouped["title_norm"] = grouped["title"].map(normalize_title)
     grouped["_empty_brand_title_key"] = grouped["title"].map(_exact_title_key)
     if cfg.collapse_empty_brand_exact_titles or cfg.collapse_exact_title_same_brand:
         grouped = _collapse_exact_title_records(grouped, cfg)
         grouped["brand_norm"] = grouped["brand"].map(normalize_brand)
+        grouped["subcategory_norm"] = grouped["subcategory"].map(_normalize_subcategory)
         grouped["title_norm"] = grouped["title"].map(normalize_title)
     else:
         grouped = grouped.drop(columns=["_empty_brand_title_key"], errors="ignore")
@@ -392,6 +425,12 @@ def _candidate_pair_rows(records: pd.DataFrame, cfg: CandidateGenerationConfig) 
                 "title_b": right["title"],
                 "brand_a": left["brand"],
                 "brand_b": right["brand"],
+                "subcategory_a": left.get("subcategory", ""),
+                "subcategory_b": right.get("subcategory", ""),
+                "subcategory_relation": subcategory_relation(
+                    left.get("subcategory_norm", left.get("subcategory", "")),
+                    right.get("subcategory_norm", right.get("subcategory", "")),
+                ),
                 "unit_amount_a": left["unit_amount"],
                 "unit_amount_b": right["unit_amount"],
                 "total_amount_a": left["total_amount"],

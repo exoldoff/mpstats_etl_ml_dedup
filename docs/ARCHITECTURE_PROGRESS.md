@@ -26,7 +26,10 @@
   фильтруются по продажам: общий минимум для всех категорий —
   `Продажи >= 15`.
 - Primary blocking для `01_candidate_generation.ipynb` теперь соответствует
-  целевой архитектуре: dense embeddings -> FAISS top-k.
+  целевой архитектуре: dense embeddings -> FAISS top-k. Если `Подкатегория`
+  заполнена, основной top-k считается внутри неё; пустые подкатегории и
+  маленький `global_safety` остаются full-global, а полностью пустой срез
+  автоматически откатывается в старый global FAISS.
 - Research-модели управляются через `research/dedup/model_registry.py`:
   alias -> backend/model id, общий cache dir `research/dedup/models/`,
   in-process pool и offline-режим `DEDUP_MODEL_LOCAL_ONLY=1`.
@@ -56,6 +59,43 @@
 - Для просмотра результата на реальных строках DuckDB добавлен
   `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
   `mpstats_products` и показывает склеенные SKU-группы.
+
+## 2026-06-28 — Subcategory-aware FAISS blocking
+
+### Зачем
+
+Для `Мыло` и `Соусы` хороший размер `FAISS_TOP_K` оказался разным, потому что
+общий kNN смешивал разные подкатегории внутри одной категории. Это раздувает
+число кандидатов для cross-encoder и приводит к бессмысленным соседям вроде
+разных типов продукта. При этом `Кокосовое масло` не имеет полезной
+`Подкатегория`, поэтому для него нельзя вводить жёсткий подкатегорийный гейт.
+
+### Что сделано
+
+- `prepare_product_records()` сохраняет точную колонку `Подкатегория` в
+  `subcategory` / `subcategory_norm`; если колонки нет, значения пустые и
+  pipeline не падает.
+- `generate_faiss_candidate_pairs()` теперь по умолчанию строит основной
+  FAISS top-k внутри одной заполненной подкатегории.
+- Строки с пустой `Подкатегория` ищут соседей full-global через
+  `unknown_subcategory_top_k`.
+- Для ошибок классификации добавлен маленький full-global safety-net
+  `global_safety_top_k`.
+- Если в срезе нет ни одной заполненной подкатегории, FAISS автоматически
+  работает в старом full-global режиме.
+- В candidate CSV добавлены диагностические поля: `subcategory_a`,
+  `subcategory_b`, `subcategory_relation`, `blocking_scope`.
+- Второй подуровень для соусов не добавлялся.
+- `01_candidate_generation.ipynb` получил env-настройки:
+  `DEDUP_FAISS_SUBCATEGORY_BLOCKING`,
+  `DEDUP_FAISS_GLOBAL_SAFETY_TOP_K`,
+  `DEDUP_FAISS_UNKNOWN_SUBCATEGORY_TOP_K`, а также summary по
+  `blocking_scope` / `subcategory_relation`.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests/test_candidates.py research/dedup/tests/test_embedding_candidates.py`
+- `python3 -m compileall research/dedup`
 
 ## 2026-06-27 — Pre-embedding collapse для exact-title дублей
 

@@ -46,6 +46,7 @@ def test_item_summary_includes_marketplace_and_pack_fields() -> None:
             "sku_a": "123",
             "marketplace_a": "Ozon",
             "brand_a": "Brand",
+            "subcategory_a": "Жидкое",
             "unit_amount_a": 0.5,
             "total_amount_a": 3.0,
             "multipack_count_a": 6,
@@ -54,7 +55,7 @@ def test_item_summary_includes_marketplace_and_pack_fields() -> None:
 
     summary = _item_summary(row, "a")
 
-    assert summary == "Ozon | sku 123 | brand Brand | unit 0.5 | total 3.0 | x6"
+    assert summary == "Ozon | sku 123 | brand Brand | subcat Жидкое | unit 0.5 | total 3.0 | x6"
 
 
 def test_signal_summary_uses_russian_flag_labels() -> None:
@@ -63,6 +64,8 @@ def test_signal_summary_uses_russian_flag_labels() -> None:
             "candidate_source": "faiss_embedding_topk",
             "candidate_rank": 3,
             "embedding_similarity_score": 0.98,
+            "blocking_scope": "same_subcategory",
+            "subcategory_relation": "same_subcategory",
             "labeling_stratum": "pack_variant_candidate",
             "is_cross_marketplace_pair": True,
             "is_hard_negative_candidate": False,
@@ -73,6 +76,8 @@ def test_signal_summary_uses_russian_flag_labels() -> None:
     summary = _signal_summary(row)
 
     assert "источник=faiss_embedding_topk" in summary
+    assert "scope=same_subcategory" in summary
+    assert "subcat=same_subcategory" in summary
     assert "межмаркетплейс=да" in summary
     assert "сложный негатив=нет" in summary
     assert "вариант упаковки=да" in summary

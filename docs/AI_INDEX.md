@@ -134,7 +134,10 @@ Research-код остаётся независимым: `research/dedup/` не 
   его нужно запускать отдельно с нужным `DEDUP_CATEGORY_RUN`.
 - Candidate generation по `marketplace + Артикул`, без потери
   cross-marketplace дублей: primary blocking теперь идёт через dense
-  embeddings + FAISS top-k. Default notebook alias:
+  embeddings + FAISS top-k. Если `Подкатегория` заполнена, основной FAISS
+  top-k считается внутри одной подкатегории; пустые подкатегории и маленький
+  `global_safety` ищут full-global, а полностью пустой срез автоматически
+  откатывается в старый global FAISS. Default notebook alias:
   `embedding_e5_small` (`intfloat/multilingual-e5-small`); заменить можно
   через `DEDUP_EMBEDDING_MODEL`.
 - Stratified labeling dataset с отдельной стратой

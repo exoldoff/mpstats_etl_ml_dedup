@@ -120,22 +120,26 @@ def _item_summary(row: pd.Series, side: str) -> str:
     marketplace = _first_cell(row, f"marketplace_{side}")
     sku = _first_cell(row, f"sku_{side}")
     brand = _first_cell(row, f"brand_{side}")
+    subcategory = _first_cell(row, f"subcategory_{side}")
     unit = _first_cell(row, f"unit_amount_{side}")
     total = _first_cell(row, f"total_amount_{side}")
     pack = _first_cell(row, f"multipack_count_{side}")
-    return f"{marketplace} | sku {sku} | brand {brand} | unit {unit} | total {total} | x{pack}"
+    return f"{marketplace} | sku {sku} | brand {brand} | subcat {subcategory} | unit {unit} | total {total} | x{pack}"
 
 
 def _signal_summary(row: pd.Series) -> str:
     source = _first_cell(row, "candidate_source")
     rank = _first_cell(row, "candidate_rank")
     score = _first_cell(row, "embedding_similarity_score", "baseline_similarity_score")
+    blocking_scope = _first_cell(row, "blocking_scope")
+    subcategory = _first_cell(row, "subcategory_relation")
     stratum = _first_cell(row, "labeling_stratum")
     cross = _yes_no(_cell(row, "is_cross_marketplace_pair"))
     hard_negative = _yes_no(_cell(row, "is_hard_negative_candidate"))
     pack_variant = _yes_no(_cell(row, "is_pack_variant_candidate"))
     return (
-        f"источник={source} | rank={rank} | score={score} | стратегия={stratum} | "
+        f"источник={source} | scope={blocking_scope} | subcat={subcategory} | "
+        f"rank={rank} | score={score} | стратегия={stratum} | "
         f"межмаркетплейс={cross} | сложный негатив={hard_negative} | вариант упаковки={pack_variant}"
     )
 

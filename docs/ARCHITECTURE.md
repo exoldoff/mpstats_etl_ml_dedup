@@ -63,6 +63,8 @@ deterministic pack-правилами и не является отдельны�
 - `multipack_count` — явной колонки нет, выводится как
   `round(Вес, кг / Вес, кг (ед.))`
 - `brand` → `Бренд` (после `.strip().lower()`, без дальнейшей обработки)
+- `subcategory` → `Подкатегория` (если заполнена; используется как
+  retrieval-blocking scope, не как финальный ML-класс)
 
 **EDA-подтверждение (категория «Соус», 19 473 строки)**: общий вес и вес
 единицы пропущены/некорректны в 0.0% строк; оценочный multipack > 1 у 20.6%
@@ -102,7 +104,8 @@ deterministic pack-правилами и не является отдельны�
         │
         ▼
 [3] Blocking / retrieval
-    bi-encoder kNN внутри category (FAISS/hnswlib)
+    bi-encoder kNN внутри category/subcategory (FAISS/hnswlib)
+    + маленький global safety-net; если subcategory нет, full-global внутри category
         │
         ▼
 [4] Pairwise matching / rerank — ML-ядро, технологии для сравнения:
@@ -209,8 +212,10 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
 ## 7. Деливераблы конкурса — план ноутбуков (обновлено по итогам EDA)
 - `00_eda.ipynb` — готово (раздел 1.2).
 - `01_candidate_generation.ipynb` — candidate generation внутри выбранного
-  `DEDUP_CATEGORY_RUN`: title similarity (token overlap / fuzzy) как
-  главный сигнал, brand/weight — вспомогательные признаки (не гейты).
+  `DEDUP_CATEGORY_RUN`: dense embeddings + FAISS top-k. Если `Подкатегория`
+  заполнена, основной поиск идёт внутри неё; пустая/отсутствующая
+  `Подкатегория` не блокирует строки и откатывает их в full-global fallback.
+  Brand/weight остаются вспомогательными признаками (не жёсткими гейтами).
   Явный блок hard-negative mining: пары с похожим brand+weight, но разными
   flavor-токенами (EDA уже нашла 10 таких примеров вручную — нужно находить
   их систематически, не вручную). Выход — ранжированный список пар-кандидатов

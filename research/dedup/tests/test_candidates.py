@@ -80,6 +80,48 @@ def test_product_records_use_marketplace_article_key_not_article_only() -> None:
     assert pairs.iloc[0]["sku_a"] == pairs.iloc[0]["sku_b"] == "100"
 
 
+def test_product_records_keep_exact_subcategory_column() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "Маркетплейс": "WB",
+                "Артикул": "100",
+                "SKU": "Мыло жидкое 300 мл",
+                "Бренд": "A",
+                "Подкатегория": "Жидкое",
+            },
+            {
+                "Маркетплейс": "WB",
+                "Артикул": "200",
+                "SKU": "Мыло твердое 90 г",
+                "Бренд": "A",
+                "Подкатегория": "Твердое",
+            },
+        ]
+    )
+
+    records = prepare_product_records(df)
+
+    assert records.loc[records["sku"].eq("100"), "subcategory"].iloc[0] == "Жидкое"
+    assert records.loc[records["sku"].eq("100"), "subcategory_norm"].iloc[0] == "жидкое"
+    assert set(records["subcategory_norm"]) == {"жидкое", "твердое"}
+
+
+def test_product_records_allow_missing_subcategory_column() -> None:
+    df = pd.DataFrame(
+        [
+            {"Маркетплейс": "WB", "Артикул": "100", "SKU": "Кокосовое масло 500 мл", "Бренд": "A"},
+            {"Маркетплейс": "Ozon", "Артикул": "200", "SKU": "Кокосовое масло 1 л", "Бренд": "B"},
+        ]
+    )
+
+    records = prepare_product_records(df)
+
+    assert "subcategory" in records.columns
+    assert "subcategory_norm" in records.columns
+    assert records["subcategory_norm"].eq("").all()
+
+
 def test_empty_brand_exact_title_records_collapse_before_embeddings() -> None:
     df = pd.DataFrame(
         [
