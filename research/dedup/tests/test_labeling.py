@@ -5,6 +5,7 @@ import pandas as pd
 from research.dedup.labeling import (
     LabelingSamplingConfig,
     labeling_score_strata_masks,
+    split_labeling_target_size,
     stratified_labeling_sample,
 )
 
@@ -87,3 +88,8 @@ def test_stratified_labeling_sample_keeps_medium_and_low_score_controls() -> Non
 
     assert "medium_similarity" in set(labeling["labeling_stratum"])
     assert "random_easy_negative" in set(labeling["labeling_stratum"])
+
+
+def test_split_labeling_target_size_balances_category_runs() -> None:
+    assert split_labeling_target_size(3000, 3) == [1000, 1000, 1000]
+    assert split_labeling_target_size(3002, 3) == [1001, 1001, 1000]

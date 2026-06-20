@@ -1392,12 +1392,15 @@ blocking:
 python3 -m pip install -r requirements-research.txt
 ```
 
-`notebooks/01_candidate_generation.ipynb` строит пары-кандидаты через dense
-embeddings и FAISS top-k. По умолчанию notebook берёт `FAISS_TOP_K=30`; для
-локального E5 embedding используется `query:` prefix, потому что товары
-сравниваются друг с другом как symmetric similarity, а не как поисковый запрос
-против документа. Затем `notebooks/02_labeling_dataset.ipynb` выбирает из них
-CSV для ручной разметки.
+`notebooks/01_candidate_generation.ipynb` строит большой пул пар-кандидатов
+через dense embeddings и FAISS top-k. FAISS здесь отвечает только за поиск
+похожих соседей, а не за состав финального разметочного набора. Затем
+`notebooks/02_labeling_dataset.ipynb` выбирает из этого пула CSV для ручной
+разметки: часть cross-marketplace, часть hard negatives, часть pack variants,
+часть high/medium/low similarity. По умолчанию notebook 01 берёт
+`FAISS_TOP_K=30`; для локального E5 embedding используется `query:` prefix,
+потому что товары сравниваются друг с другом как symmetric similarity, а не
+как поисковый запрос против документа.
 Score-страты в `02` по умолчанию считаются относительно текущего списка
 FAISS-кандидатов: top 25% score идут в `high_similarity`, bottom 25% — в
 `random_easy_negative`, середина — в `medium_similarity`. Это важно, потому
@@ -1406,6 +1409,18 @@ FAISS-кандидатов: top 25% score идут в `high_similarity`, bottom 
 `DEDUP_LABELING_SCORE_STRATIFICATION=absolute`; доли quantile-режима меняются
 через `DEDUP_LABELING_HIGH_TOP_SHARE` и
 `DEDUP_LABELING_EASY_BOTTOM_SHARE`.
+Для быстрого benchmark старый сценарий остаётся прежним: один
+`DEDUP_CATEGORY_RUN` и около 400 строк. Для датасета под fine-tuning reranker
+собирайте один CSV по всем трём категориям:
+
+```bash
+DEDUP_LABELING_CATEGORY_RUNS=sauces,coconut_oil,soap \
+DEDUP_LABELING_TARGET_SIZE=3000 \
+jupyter notebook notebooks/02_labeling_dataset.ipynb
+```
+
+При таком запуске notebook делит размер примерно поровну между категориями
+и добавляет в CSV колонки `category_run`, `category_name`, `project_name`.
 Если в срезе есть заполненная колонка `Подкатегория`, FAISS по умолчанию
 ищет основной top-k внутри одной подкатегории. Это сокращает пул кандидатов
 для `Мыло` и `Соусы`: `жидкое` не конкурирует с `твердое`, а `соевые` не

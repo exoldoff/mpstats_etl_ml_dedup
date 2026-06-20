@@ -54,6 +54,16 @@ def _quota_counts(target_size: int) -> dict[str, int]:
     return quotas
 
 
+def split_labeling_target_size(target_size: int, group_count: int) -> list[int]:
+    """Split a total labeling size across category-runs as evenly as possible."""
+    if target_size < 0:
+        raise ValueError("target_size must be >= 0")
+    if group_count < 1:
+        raise ValueError("group_count must be >= 1")
+    base, remainder = divmod(target_size, group_count)
+    return [base + (1 if idx < remainder else 0) for idx in range(group_count)]
+
+
 def _sample_pool(
     pool: pd.DataFrame,
     *,

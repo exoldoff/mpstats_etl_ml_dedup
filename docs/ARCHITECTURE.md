@@ -221,13 +221,16 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
   их систематически, не вручную). Выход — ранжированный список пар-кандидатов
   с baseline similarity score.
 - `02_labeling_dataset.ipynb` — стратифицированная выборка пар из 01 для
-  ручной разметки: высокое/среднее/низкое similarity + явные hard negatives
-  + явные same-pack-different-multipack кандидаты + немного случайных лёгких
-  негативов для контроля. Экспорт в CSV для ручной разметки:
+  ручной разметки: cross-marketplace пары, hard negatives, pack variants,
+  высокое/среднее/низкое similarity и немного случайных лёгких негативов для
+  контроля. Экспорт в CSV для ручной разметки:
   `exact_duplicate`, `different_product`, `uncertain`. Legacy label
   `same_product_different_pack` при чтении старых данных временно мапится в
   `same_base_product=1`, но новый gold-set должен использовать 2 модельных
-  класса. Это и есть gold-set для раздела 8.
+  класса. Для быстрого benchmark можно собирать 300-500 строк на один
+  category-run; для fine-tuning reranker целевой режим — multi-category
+  датасет около 3000 строк, примерно поровну по `sauces`, `coconut_oil`,
+  `soap`, с теми же стратами внутри каждой категории.
 - `03_matching_comparison.ipynb` — A vs B vs C vs D vs E на gold-set из 02,
   метрики — см. раздел 8.
 - `04_fusion_pack_grouping.ipynb` — выбор fusion-run по `dev`, family/pack
@@ -261,8 +264,10 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
 (детали состава — раздел 7, `02_labeling_dataset.ipynb`).
 Делим на dev (тюнинг порогов) и held-out test (финальные цифры для
 сравнения технологий) — пороги не тюнятся на том же сете, на котором потом
-репортятся итоговые метрики. Ориентир по объёму: 300-500 размеченных пар
-на старте, расширяем по мере выявления слабых мест.
+репортятся итоговые метрики. Ориентир по объёму для стартового benchmark:
+300-500 размеченных пар. Для дообучения reranker нужен отдельный более
+широкий manual dataset: около 3000 пар по всем трём category-runs, чтобы
+модель видела разные типы товаров и не переучивалась на одну категорию.
 
 ### 8.3 Метрики
 - Forced binary metrics по `same_base_product`: `precision`, `recall`, `F1`,
@@ -306,7 +311,9 @@ threshold или модели.
   пересекается с текущей задачей по словам пользователя.
 - ~~Бренд — валидация на реальных данных~~ — закрыто: EDA подтвердил
   97.1% заполненности (раздел 1.2).
-- Собрать gold-set (300-500 пар) — следующий шаг, `02_labeling_dataset.ipynb`.
+- Собрать multi-category labeling set для fine-tuning reranker:
+  `DEDUP_LABELING_CATEGORY_RUNS=sauces,coconut_oil,soap`,
+  `DEDUP_LABELING_TARGET_SIZE=3000`, `02_labeling_dataset.ipynb`.
 - Определить конкретные модели B/C для эмбеддингов (мультиязычные, RU/EN).
 - Решить, переносить ли что-то из `research/dedup/` в `pipeline/` — только
   после выбора технологии по итогам сравнения (раздел 8.4).

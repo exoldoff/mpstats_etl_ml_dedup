@@ -102,7 +102,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `research/dedup/data/` | локальные CSV-артефакты, игнорируются `.gitignore` |
 | `notebooks/00_eda.ipynb` | EDA по выбранному `DEDUP_CATEGORY_RUN` |
 | `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking, генерация `candidates_<suffix>.csv` |
-| `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_<suffix>.csv` |
+| `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_<suffix>.csv` для одного run или multi-category labeling CSV для fine-tuning reranker |
 | `notebooks/03_matching_comparison.ipynb` | сравнение baseline/reranker methods на размеченном gold-set выбранного run |
 | `notebooks/04_fusion_pack_grouping.ipynb` | выбор fusion-run, family/pack grouping и CSV `fusion_*_<suffix>.csv` |
 | `notebooks/05_evaluation_report.ipynb` | финальный research-отчёт по matching + fusion + graph quality выбранного run |
@@ -141,7 +141,9 @@ Research-код остаётся независимым: `research/dedup/` не 
   `embedding_e5_small` (`intfloat/multilingual-e5-small`); заменить можно
   через `DEDUP_EMBEDDING_MODEL`.
 - Stratified labeling dataset с отдельной стратой
-  `cross_marketplace_candidate`.
+  `cross_marketplace_candidate`; `02_labeling_dataset.ipynb` также умеет
+  собрать multi-category датасет, например 3000 строк по
+  `sauces,coconut_oil,soap` через `DEDUP_LABELING_CATEGORY_RUNS`.
 - Baseline matching scaffold:
   - A: rule-based fuzzy + structural fusion.
   - B: zero-shot bi-encoder с graceful skip без `sentence-transformers`.

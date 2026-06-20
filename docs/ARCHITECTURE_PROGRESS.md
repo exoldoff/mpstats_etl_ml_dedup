@@ -34,6 +34,11 @@
   относительно текущего распределения `baseline_similarity_score`, потому что
   после FAISS это embedding cosine, а абсолютный масштаб зависит от модели и
   категории.
+- `02_labeling_dataset.ipynb` поддерживает multi-category режим для
+  fine-tuning reranker:
+  `DEDUP_LABELING_CATEGORY_RUNS=sauces,coconut_oil,soap`,
+  `DEDUP_LABELING_TARGET_SIZE=3000`. Размер делится по category-run, а внутри
+  каждой категории сохраняются те же страты.
 - Research-модели управляются через `research/dedup/model_registry.py`:
   alias -> backend/model id, общий cache dir `research/dedup/models/`,
   in-process pool и offline-режим `DEDUP_MODEL_LOCAL_ONLY=1`.
@@ -63,6 +68,38 @@
 - Для просмотра результата на реальных строках DuckDB добавлен
   `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
   `mpstats_products` и показывает склеенные SKU-группы.
+
+## 2026-06-28 — Multi-category labeling dataset for reranker fine-tuning
+
+### Зачем
+
+Разметка нужна не только для оценки метрик, но и как обучающий датасет для
+fine-tuning reranker. Для этого 400 строк по одной категории мало: модель
+будет видеть слишком узкий тип товаров. Целевой первый датасет — около 3000
+пар по всем трём category-runs.
+
+### Что сделано
+
+- `notebooks/02_labeling_dataset.ipynb` теперь принимает
+  `DEDUP_LABELING_CATEGORY_RUNS=sauces,coconut_oil,soap`.
+- В multi-run режиме default `DEDUP_LABELING_TARGET_SIZE` стал `3000`;
+  single-run режим остаётся `400`.
+- Общий target делится между категориями через
+  `split_labeling_target_size()`: для 3000 и трёх категорий получается
+  1000/1000/1000.
+- В итоговый CSV добавлены `category_run`, `category_name`, `project_name`,
+  чтобы дальше можно было делать train/dev/test split и анализ по категориям.
+- FAISS остаётся только источником candidate pool из notebook 01; sampler по
+  прежнему выбирает cross-marketplace, hard negatives, pack variants и
+  high/medium/low score buckets внутри каждой категории.
+
+### Проверки
+
+- `nbclient` на `notebooks/02_labeling_dataset.ipynb` с
+  `DEDUP_LABELING_CATEGORY_RUNS=sauces,coconut_oil,soap` и временным
+  `DEDUP_LABELING_PATH=/tmp/mpstats_labeling_3cat_check.csv` — ok:
+  3000 строк, по 1000 на `sauces`, `coconut_oil`, `soap`, labels/notes пустые.
+- Узкие pytest/compile проверки см. в финальном ответе текущего изменения.
 
 ## 2026-06-28 — Labeling sampler score buckets for FAISS candidates
 

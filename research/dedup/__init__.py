@@ -43,6 +43,7 @@ from .embedding_candidates import (
 from .labeling import (
     LabelingSamplingConfig,
     labeling_score_strata_masks,
+    split_labeling_target_size,
     stratified_labeling_sample,
 )
 from .fusion import (
@@ -200,6 +201,7 @@ __all__ = [
     "same_base_product_from_labels",
     "same_base_product_target",
     "select_fusion_run",
+    "split_labeling_target_size",
     "stratified_labeling_sample",
     "summarize_by_volume_bucket",
     "title_similarity",
