@@ -6,7 +6,7 @@ import pandas as pd
 
 from .config import LabelingBotConfig
 from .csv_repository import CsvStats, LabelingCsvRepository
-from .formatter import format_pair_message
+from .formatter import format_discussion_message, format_pair_message
 from .state_store import LabelingStateStore
 
 
@@ -106,6 +106,52 @@ class LabelingBotService:
         return LabelOutcome(
             status=result.status,
             message="Голос сохранён. Ждём консенсус по этой строке.",
+        )
+
+    def move_row_to_discussion(self, user_id: int, row_index: int, label: str) -> LabelOutcome:
+        result = self.store.move_assigned_row_to_discussion(
+            row_index=row_index,
+            user_id=user_id,
+            label=label,
+        )
+        return LabelOutcome(
+            status=result.status,
+            message="Пара отправлена в общий чат. CSV пока не обновляю.",
+        )
+
+    def vote_discussion_row(self, user_id: int, row_index: int, label: str) -> LabelOutcome:
+        result = self.store.record_discussion_vote(
+            row_index=row_index,
+            user_id=user_id,
+            label=label,
+            overlap_votes=self.config.overlap_votes,
+        )
+        if result.finalized:
+            self.repository.set_label(row_index, result.final_label or label)
+            return LabelOutcome(
+                status=result.status,
+                final_label=result.final_label,
+                message=f"Есть консенсус. Сохранено в CSV: {result.final_label}",
+            )
+        return LabelOutcome(
+            status=result.status,
+            message="Голос в общем обсуждении сохранён. Ждём консенсус.",
+        )
+
+    def discussion_message(self, row_index: int, user_display: str) -> str:
+        frame = self.repository.load()
+        row = frame.iloc[row_index]
+        return format_discussion_message(row, row_index, len(frame), user_display)
+
+    def should_send_discussion(self, row_index: int) -> bool:
+        return self.config.discussion_chat_id is not None and not self.store.discussion_was_posted(row_index)
+
+    def record_discussion_post(self, row_index: int, user_id: int, *, chat_id: int | str, message_id: int) -> None:
+        self.store.record_discussion_post(
+            row_index=row_index,
+            user_id=user_id,
+            chat_id=str(chat_id),
+            message_id=message_id,
         )
 
     def release_user_assignments(self, user_id: int) -> int:

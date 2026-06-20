@@ -16,6 +16,7 @@ EXPIRED = "expired"
 
 ROW_FINALIZED = "finalized"
 ROW_CONFLICT = "conflict"
+ROW_DISCUSSION = "discussion"
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,13 @@ class LabelingStateStore:
                     status TEXT NOT NULL,
                     final_label TEXT,
                     updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS discussion_posts (
+                    row_index INTEGER PRIMARY KEY,
+                    requested_by_user_id INTEGER NOT NULL,
+                    requested_at TEXT NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    message_id INTEGER NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_assignments_status
                     ON assignments(status, expires_at);
@@ -256,7 +264,7 @@ class LabelingStateStore:
 
         selected: list[int] = []
         for row_index in available_rows:
-            if row_states.get(row_index) in {ROW_FINALIZED, ROW_CONFLICT}:
+            if row_states.get(row_index) in {ROW_FINALIZED, ROW_CONFLICT, ROW_DISCUSSION}:
                 continue
             assignments = by_row.get(row_index, [])
             if any(int(row["user_id"]) == user_id and row["status"] in {ASSIGNED, LABELED} for row in assignments):
@@ -381,6 +389,170 @@ class LabelingStateStore:
                 return VoteResult(status=ROW_CONFLICT)
 
         return VoteResult(status="pending")
+
+    def move_assigned_row_to_discussion(
+        self,
+        *,
+        row_index: int,
+        user_id: int,
+        label: str,
+        now: datetime | None = None,
+    ) -> VoteResult:
+        if label not in VALID_LABELS:
+            raise ValueError(f"Unsupported label: {label!r}")
+        current = now or utcnow()
+        with self._connect() as connection:
+            assignment = connection.execute(
+                """
+                SELECT *
+                FROM assignments
+                WHERE row_index = ? AND user_id = ?
+                """,
+                (row_index, user_id),
+            ).fetchone()
+            if assignment is None or assignment["status"] != ASSIGNED:
+                raise ValueError("Row is not assigned to this user")
+            if _from_iso(assignment["expires_at"]) <= current:
+                connection.execute(
+                    """
+                    UPDATE assignments
+                    SET status = ?
+                    WHERE row_index = ? AND user_id = ? AND status = ?
+                    """,
+                    (EXPIRED, row_index, user_id, ASSIGNED),
+                )
+                raise ValueError("Assignment is expired")
+            connection.execute(
+                """
+                UPDATE assignments
+                SET status = ?, label = ?, labeled_at = ?
+                WHERE row_index = ? AND user_id = ?
+                """,
+                (LABELED, label, _to_iso(current), row_index, user_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO row_states (row_index, status, final_label, updated_at)
+                VALUES (?, ?, NULL, ?)
+                ON CONFLICT(row_index) DO UPDATE SET
+                    status = excluded.status,
+                    final_label = NULL,
+                    updated_at = excluded.updated_at
+                """,
+                (row_index, ROW_DISCUSSION, _to_iso(current)),
+            )
+        return VoteResult(status=ROW_DISCUSSION)
+
+    def record_discussion_vote(
+        self,
+        *,
+        row_index: int,
+        user_id: int,
+        label: str,
+        overlap_votes: int,
+        now: datetime | None = None,
+    ) -> VoteResult:
+        if label not in VALID_LABELS:
+            raise ValueError(f"Unsupported label: {label!r}")
+        current = now or utcnow()
+        with self._connect() as connection:
+            row_state = connection.execute(
+                "SELECT * FROM row_states WHERE row_index = ?",
+                (row_index,),
+            ).fetchone()
+            if row_state is not None and row_state["status"] == ROW_FINALIZED:
+                return VoteResult(status=ROW_FINALIZED, final_label=str(row_state["final_label"]))
+            connection.execute(
+                """
+                INSERT INTO assignments (
+                    row_index,
+                    user_id,
+                    status,
+                    label,
+                    assigned_at,
+                    expires_at,
+                    labeled_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(row_index, user_id) DO UPDATE SET
+                    status = excluded.status,
+                    label = excluded.label,
+                    labeled_at = excluded.labeled_at
+                """,
+                (row_index, user_id, LABELED, label, _to_iso(current), _to_iso(current), _to_iso(current)),
+            )
+            connection.execute(
+                """
+                INSERT INTO row_states (row_index, status, final_label, updated_at)
+                VALUES (?, ?, NULL, ?)
+                ON CONFLICT(row_index) DO UPDATE SET
+                    status = CASE
+                        WHEN row_states.status = ? THEN row_states.status
+                        ELSE excluded.status
+                    END,
+                    updated_at = excluded.updated_at
+                """,
+                (row_index, ROW_DISCUSSION, _to_iso(current), ROW_FINALIZED),
+            )
+            vote_rows = connection.execute(
+                """
+                SELECT label
+                FROM assignments
+                WHERE row_index = ? AND status = ? AND label IS NOT NULL
+                """,
+                (row_index, LABELED),
+            ).fetchall()
+            labels = [str(row["label"]) for row in vote_rows]
+            counts = Counter(labels)
+            for candidate_label, count in counts.items():
+                if count >= overlap_votes:
+                    connection.execute(
+                        """
+                        INSERT INTO row_states (row_index, status, final_label, updated_at)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(row_index) DO UPDATE SET
+                            status = excluded.status,
+                            final_label = excluded.final_label,
+                            updated_at = excluded.updated_at
+                        """,
+                        (row_index, ROW_FINALIZED, candidate_label, _to_iso(current)),
+                    )
+                    return VoteResult(status=ROW_FINALIZED, final_label=candidate_label)
+        return VoteResult(status=ROW_DISCUSSION)
+
+    def discussion_was_posted(self, row_index: int) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM discussion_posts WHERE row_index = ?",
+                (row_index,),
+            ).fetchone()
+        return row is not None
+
+    def record_discussion_post(
+        self,
+        *,
+        row_index: int,
+        user_id: int,
+        chat_id: str,
+        message_id: int,
+        now: datetime | None = None,
+    ) -> None:
+        current = now or utcnow()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO discussion_posts (
+                    row_index,
+                    requested_by_user_id,
+                    requested_at,
+                    chat_id,
+                    message_id
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(row_index) DO NOTHING
+                """,
+                (row_index, user_id, _to_iso(current), chat_id, message_id),
+            )
 
     def user_stats(self, user_id: int, now: datetime | None = None) -> UserLabelStats | None:
         current = now or utcnow()

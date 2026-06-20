@@ -10,6 +10,7 @@ from typing import Mapping
 TOKEN_ENV = "DEDUP_TELEGRAM_BOT_TOKEN"
 PASSWORD_ENV = "DEDUP_TELEGRAM_ACCESS_PASSWORD"
 ADMIN_IDS_ENV = "DEDUP_TELEGRAM_ADMIN_USER_IDS"
+DISCUSSION_CHAT_ID_ENV = "DEDUP_TELEGRAM_DISCUSSION_CHAT_ID"
 BATCH_SIZE_ENV = "DEDUP_TELEGRAM_BATCH_SIZE"
 ASSIGNMENT_MODE_ENV = "DEDUP_TELEGRAM_ASSIGNMENT_MODE"
 OVERLAP_VOTES_ENV = "DEDUP_TELEGRAM_OVERLAP_VOTES"
@@ -32,6 +33,7 @@ class LabelingBotConfig:
     csv_path: Path
     state_path: Path
     admin_user_ids: frozenset[int]
+    discussion_chat_id: int | str | None = None
     batch_size: int = 10
     assignment_mode: str = UNIQUE_MODE
     overlap_votes: int = 2
@@ -51,6 +53,15 @@ def parse_user_ids(value: str | None) -> frozenset[int]:
         except ValueError as exc:
             raise ConfigError(f"Invalid Telegram user id in {ADMIN_IDS_ENV}: {part!r}") from exc
     return frozenset(user_ids)
+
+
+def parse_chat_id(value: str | None) -> int | str | None:
+    if value is None or not value.strip():
+        return None
+    normalized = value.strip()
+    if normalized.lstrip("-").isdigit():
+        return int(normalized)
+    return normalized
 
 
 def _int_env(env: Mapping[str, str], key: str, default: int, *, minimum: int) -> int:
@@ -109,6 +120,7 @@ def load_config(csv_path: Path, env: Mapping[str, str] | None = None) -> Labelin
         csv_path=resolved_csv_path,
         state_path=state_path,
         admin_user_ids=parse_user_ids(values.get(ADMIN_IDS_ENV)),
+        discussion_chat_id=parse_chat_id(values.get(DISCUSSION_CHAT_ID_ENV)),
         batch_size=batch_size,
         assignment_mode=assignment_mode,
         overlap_votes=overlap_votes,

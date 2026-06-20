@@ -12,8 +12,14 @@ from research.dedup.annotation import (
     LABEL_UNCERTAIN,
 )
 
-from .callbacks import NEXT_CALLBACK, make_label_callback, parse_label_callback
-from .formatter import format_help_text
+from .callbacks import (
+    DISCUSSION_LABEL_CALLBACK_PREFIX,
+    NEXT_CALLBACK,
+    make_discussion_label_callback,
+    make_label_callback,
+    parse_label_callback,
+)
+from .formatter import format_help_text, h
 from .service import AssignedPair, LabelingBotService
 
 
@@ -27,6 +33,29 @@ def build_keyboard(row_index: int) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("Не уверен", callback_data=make_label_callback(row_index, LABEL_UNCERTAIN)),
                 InlineKeyboardButton("Дальше", callback_data=NEXT_CALLBACK),
+            ],
+        ]
+    )
+
+
+def build_discussion_keyboard(row_index: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "Дубль",
+                    callback_data=make_discussion_label_callback(row_index, LABEL_EXACT_DUPLICATE),
+                ),
+                InlineKeyboardButton(
+                    "Разные",
+                    callback_data=make_discussion_label_callback(row_index, LABEL_DIFFERENT_PRODUCT),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "Не уверен",
+                    callback_data=make_discussion_label_callback(row_index, LABEL_UNCERTAIN),
+                ),
             ],
         ]
     )
@@ -151,6 +180,10 @@ class TelegramLabelingHandlers:
             return
 
         data = query.data or ""
+        if data.startswith(f"{DISCUSSION_LABEL_CALLBACK_PREFIX}:"):
+            await self._handle_discussion_callback(query, user, data)
+            return
+
         if data == NEXT_CALLBACK:
             pair = await self._next_pair(user.id)
             if pair is None:
@@ -169,6 +202,10 @@ class TelegramLabelingHandlers:
             await query.edit_message_text("Не понял кнопку. Нажмите /next для новой пары.")
             return
 
+        if parsed.label == LABEL_UNCERTAIN and self.service.config.discussion_chat_id is not None:
+            await self._handle_uncertain_callback(query, context, user, parsed.row_index)
+            return
+
         async with self.lock:
             try:
                 outcome = self.service.label_row(user.id, parsed.row_index, parsed.label)
@@ -177,11 +214,13 @@ class TelegramLabelingHandlers:
                 return
             next_pair = self.service.next_pair(user.id)
 
+        response_text = outcome.message
+
         if next_pair is None:
-            await query.edit_message_text(f"{outcome.message}\n\nСвободных пар больше нет.")
+            await query.edit_message_text(f"{response_text}\n\nСвободных пар больше нет.")
             return
         await query.edit_message_text(
-            f"{outcome.message}\n\n{next_pair.message}",
+            f"{response_text}\n\n{next_pair.message}",
             reply_markup=build_keyboard(next_pair.row_index),
             parse_mode=ParseMode.HTML,
         )
@@ -201,6 +240,132 @@ class TelegramLabelingHandlers:
     async def _next_pair(self, user_id: int) -> AssignedPair | None:
         async with self.lock:
             return self.service.next_pair(user_id)
+
+    async def _send_discussion_message(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        *,
+        row_index: int,
+        user_id: int,
+        chat_id: int | str | None,
+        text: str | None,
+    ) -> str | None:
+        if text is None:
+            return None
+        if chat_id is None:
+            return "Общий чат не настроен: задайте DEDUP_TELEGRAM_DISCUSSION_CHAT_ID."
+        try:
+            message = await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=build_discussion_keyboard(row_index),
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as exc:
+            return f"Не смог отправить в общий чат: {exc}"
+        return str(message.message_id)
+
+    @staticmethod
+    def _user_display(user: object) -> str:
+        user_id = getattr(user, "id", "")
+        username = getattr(user, "username", "") or ""
+        first_name = getattr(user, "first_name", "") or ""
+        if username:
+            return f"@{username} ({user_id})"
+        if first_name:
+            return f"{first_name} ({user_id})"
+        return str(user_id)
+
+    async def _handle_discussion_callback(self, query: object, user: object, data: str) -> None:
+        if not self.service.is_authorized(user.id):
+            await query.edit_message_text("Сначала войдите через /start <пароль>.")
+            return
+        try:
+            parsed = parse_label_callback(data)
+        except Exception:
+            await query.edit_message_text("Не понял кнопку обсуждения.")
+            return
+        async with self.lock:
+            outcome = self.service.vote_discussion_row(user.id, parsed.row_index, parsed.label)
+            text = self.service.discussion_message(parsed.row_index, self._user_display(user))
+        if outcome.final_label is not None:
+            text = f"{text}\n\n<b>Итог:</b> {outcome.final_label}"
+            reply_markup = None
+        else:
+            text = f"{text}\n\n<b>Статус:</b> голос сохранён, ждём консенсус."
+            reply_markup = build_discussion_keyboard(parsed.row_index)
+        await query.edit_message_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML,
+        )
+
+    async def _handle_uncertain_callback(
+        self,
+        query: object,
+        context: ContextTypes.DEFAULT_TYPE,
+        user: object,
+        row_index: int,
+    ) -> None:
+        chat_id = self.service.config.discussion_chat_id
+        async with self.lock:
+            should_send = self.service.should_send_discussion(row_index)
+            discussion_message = (
+                self.service.discussion_message(row_index, self._user_display(user))
+                if should_send
+                else None
+            )
+        discussion_note = "Отправил пару в общий чат для обсуждения."
+        message_id: int | None = None
+        if discussion_message is not None:
+            send_result = await self._send_discussion_message(
+                context,
+                row_index=row_index,
+                user_id=user.id,
+                chat_id=chat_id,
+                text=discussion_message,
+            )
+            if send_result is None or not send_result.isdigit():
+                async with self.lock:
+                    current_pair = self.service.next_pair(user.id)
+                text = send_result or "Не смог отправить в общий чат."
+                if current_pair is None:
+                    await query.edit_message_text(text)
+                    return
+                await query.edit_message_text(
+                    f"{h(text)}\n\n{current_pair.message}",
+                    reply_markup=build_keyboard(current_pair.row_index),
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            message_id = int(send_result)
+        else:
+            discussion_note = "Пара уже есть в общем чате для обсуждения."
+
+        async with self.lock:
+            try:
+                outcome = self.service.move_row_to_discussion(user.id, row_index, LABEL_UNCERTAIN)
+            except ValueError as exc:
+                await query.edit_message_text(f"{exc}. Нажмите /next, чтобы получить актуальную пару.")
+                return
+            if message_id is not None and chat_id is not None:
+                self.service.record_discussion_post(
+                    row_index,
+                    user.id,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                )
+            next_pair = self.service.next_pair(user.id)
+
+        response_text = f"{outcome.message}\n{discussion_note}"
+        if next_pair is None:
+            await query.edit_message_text(f"{response_text}\n\nСвободных пар больше нет.")
+            return
+        await query.edit_message_text(
+            f"{response_text}\n\n{next_pair.message}",
+            reply_markup=build_keyboard(next_pair.row_index),
+            parse_mode=ParseMode.HTML,
+        )
 
 
 def create_application(service: LabelingBotService) -> Application:

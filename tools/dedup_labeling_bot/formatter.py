@@ -78,6 +78,14 @@ def format_pair_message(row: pd.Series, row_index: int, total_rows: int) -> str:
     )
 
 
+def format_discussion_message(row: pd.Series, row_index: int, total_rows: int, user_display: str) -> str:
+    return (
+        "<b>Нужна общая проверка</b>\n"
+        f"<b>Инициатор:</b> {h(user_display)}\n\n"
+        f"{format_pair_message(row, row_index, total_rows)}"
+    )
+
+
 def format_help_text() -> str:
     return (
         "<b>Команды</b>\n"

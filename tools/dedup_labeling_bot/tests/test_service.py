@@ -27,7 +27,14 @@ def make_csv(tmp_path, rows: int = 4):
     return csv_path
 
 
-def make_service(tmp_path, *, mode: str = "unique", overlap_votes: int = 2, batch_size: int = 2):
+def make_service(
+    tmp_path,
+    *,
+    mode: str = "unique",
+    overlap_votes: int = 2,
+    batch_size: int = 2,
+    discussion_chat_id=None,
+):
     csv_path = make_csv(tmp_path)
     config = LabelingBotConfig(
         token="token",
@@ -35,6 +42,7 @@ def make_service(tmp_path, *, mode: str = "unique", overlap_votes: int = 2, batc
         csv_path=csv_path,
         state_path=tmp_path / "state.sqlite",
         admin_user_ids=frozenset(),
+        discussion_chat_id=discussion_chat_id,
         batch_size=batch_size,
         assignment_mode=mode,
         overlap_votes=overlap_votes,
@@ -138,3 +146,44 @@ def test_logout_releases_assignments_and_removes_authorization(tmp_path) -> None
 
     assert released == 1
     assert not service.is_authorized(1)
+
+
+def test_uncertain_with_discussion_chat_does_not_write_csv_until_consensus(tmp_path) -> None:
+    service, csv_path = make_service(tmp_path, discussion_chat_id=-100123, overlap_votes=2)
+    service.authorize(1, "secret")
+    service.authorize(2, "secret")
+
+    first = service.next_pair(1)
+    assert first is not None
+    outcome = service.move_row_to_discussion(1, first.row_index, "uncertain")
+
+    assert outcome.status == "discussion"
+    value = pd.read_csv(csv_path).at[first.row_index, "label"]
+    assert pd.isna(value) or value == ""
+    assert service.should_send_discussion(first.row_index)
+
+    vote = service.vote_discussion_row(2, first.row_index, "uncertain")
+
+    assert vote.final_label == "uncertain"
+    assert pd.read_csv(csv_path).at[first.row_index, "label"] == "uncertain"
+
+
+def test_discussion_vote_waits_for_consensus_after_disagreement(tmp_path) -> None:
+    service, csv_path = make_service(tmp_path, discussion_chat_id=-100123, overlap_votes=2)
+    service.authorize(1, "secret")
+    service.authorize(2, "secret")
+    service.authorize(3, "secret")
+
+    first = service.next_pair(1)
+    assert first is not None
+    service.move_row_to_discussion(1, first.row_index, "uncertain")
+    pending = service.vote_discussion_row(2, first.row_index, "exact_duplicate")
+
+    assert pending.status == "discussion"
+    value = pd.read_csv(csv_path).at[first.row_index, "label"]
+    assert pd.isna(value) or value == ""
+
+    finalized = service.vote_discussion_row(3, first.row_index, "exact_duplicate")
+
+    assert finalized.final_label == "exact_duplicate"
+    assert pd.read_csv(csv_path).at[first.row_index, "label"] == "exact_duplicate"
