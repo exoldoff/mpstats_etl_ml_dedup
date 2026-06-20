@@ -30,6 +30,13 @@
   заполнена, основной top-k считается внутри неё; пустые подкатегории и
   маленький `global_safety` остаются full-global, а полностью пустой срез
   автоматически откатывается в старый global FAISS.
+- Candidate CSV больше не ограничен только тем, что попало в FAISS top-k:
+  `generate_faiss_candidate_pairs()` добавляет supplemental training coverage
+  pairs (`supplemental_lexical_overlap`,
+  `supplemental_same_brand_pack`,
+  `supplemental_cross_marketplace_random`,
+  `supplemental_random_control`) и балансирует финальный cap, чтобы эти пары
+  не вылетали из-за высоких FAISS cosine scores.
 - `02_labeling_dataset.ipynb` выбирает high/medium/low score-страты
   относительно текущего распределения `baseline_similarity_score`, потому что
   после FAISS это embedding cosine, а абсолютный масштаб зависит от модели и
@@ -68,6 +75,37 @@
 - Для просмотра результата на реальных строках DuckDB добавлен
   `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
   `mpstats_products` и показывает склеенные SKU-группы.
+
+## 2026-06-28 — Supplemental training coverage for candidate pool
+
+### Зачем
+
+Для одного дорогого захода на разметку и fine-tuning reranker нельзя
+полагаться только на текущий `FAISS_TOP_K`: тогда `02_labeling_dataset.ipynb`
+репрезентативен лишь относительно узкого FAISS candidate pool. Нужны пары,
+которые дают модели более широкий обучающий сигнал: случайные контролы,
+межмаркетплейсные контролы, lexical overlap и same-brand/same-pack пары.
+
+### Что сделано
+
+- `generate_faiss_candidate_pairs()` теперь после FAISS top-k добавляет
+  supplemental пары:
+  - `supplemental_lexical_overlap`;
+  - `supplemental_same_brand_pack`;
+  - `supplemental_cross_marketplace_random`;
+  - `supplemental_random_control`.
+- Для supplemental pair score используется cosine между уже посчитанными
+  embedding vectors, поэтому downstream score-контракт не меняется.
+- Финальное ограничение `max_candidates` стало source-balanced:
+  supplemental пары сохраняют до трети итогового cap, а остальные места
+  остаются FAISS-соседям.
+- Старые FAISS-only unit-тесты явно отключают supplemental budgets, чтобы
+  проверять retrieval-логику отдельно.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests/test_embedding_candidates.py research/dedup/tests/test_labeling.py`
+- `python3 -m compileall research/dedup`
 
 ## 2026-06-28 — Multi-category labeling dataset for reranker fine-tuning
 

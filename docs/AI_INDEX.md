@@ -101,7 +101,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `research/dedup/tests/` | узкие тесты research-модулей |
 | `research/dedup/data/` | локальные CSV-артефакты, игнорируются `.gitignore` |
 | `notebooks/00_eda.ipynb` | EDA по выбранному `DEDUP_CATEGORY_RUN` |
-| `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking, генерация `candidates_<suffix>.csv` |
+| `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking + supplemental training coverage pairs, генерация `candidates_<suffix>.csv` |
 | `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_<suffix>.csv` для одного run или multi-category labeling CSV для fine-tuning reranker |
 | `notebooks/03_matching_comparison.ipynb` | сравнение baseline/reranker methods на размеченном gold-set выбранного run |
 | `notebooks/04_fusion_pack_grouping.ipynb` | выбор fusion-run, family/pack grouping и CSV `fusion_*_<suffix>.csv` |
@@ -139,7 +139,11 @@ Research-код остаётся независимым: `research/dedup/` не 
   `global_safety` ищут full-global, а полностью пустой срез автоматически
   откатывается в старый global FAISS. Default notebook alias:
   `embedding_e5_small` (`intfloat/multilingual-e5-small`); заменить можно
-  через `DEDUP_EMBEDDING_MODEL`.
+  через `DEDUP_EMBEDDING_MODEL`. Для обучающей разметки candidate CSV также
+  добавляет supplemental пары вне FAISS top-k:
+  `supplemental_lexical_overlap`, `supplemental_same_brand_pack`,
+  `supplemental_cross_marketplace_random`,
+  `supplemental_random_control`; финальный cap сохраняет часть таких строк.
 - Stratified labeling dataset с отдельной стратой
   `cross_marketplace_candidate`; `02_labeling_dataset.ipynb` также умеет
   собрать multi-category датасет, например 3000 строк по

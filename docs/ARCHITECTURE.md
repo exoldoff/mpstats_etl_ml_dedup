@@ -216,10 +216,14 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
   заполнена, основной поиск идёт внутри неё; пустая/отсутствующая
   `Подкатегория` не блокирует строки и откатывает их в full-global fallback.
   Brand/weight остаются вспомогательными признаками (не жёсткими гейтами).
-  Явный блок hard-negative mining: пары с похожим brand+weight, но разными
-  flavor-токенами (EDA уже нашла 10 таких примеров вручную — нужно находить
-  их систематически, не вручную). Выход — ранжированный список пар-кандидатов
-  с baseline similarity score.
+  Чтобы обучающий датасет не был заложником текущего `FAISS_TOP_K`, candidate
+  CSV дополнительно включает supplemental training coverage pairs вне FAISS
+  top-k: lexical overlap, same-brand/same-pack controls,
+  cross-marketplace random и random controls. Явный блок hard-negative mining:
+  пары с похожим brand+weight, но разными flavor-токенами (EDA уже нашла 10
+  таких примеров вручную — нужно находить их систематически, не вручную).
+  Выход — ранжированный список пар-кандидатов с baseline similarity score и
+  `candidate_source`.
 - `02_labeling_dataset.ipynb` — стратифицированная выборка пар из 01 для
   ручной разметки: cross-marketplace пары, hard negatives, pack variants,
   высокое/среднее/низкое similarity и немного случайных лёгких негативов для

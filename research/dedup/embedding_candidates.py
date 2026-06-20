@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations
 from typing import Any
 
 import numpy as np
@@ -13,6 +14,7 @@ from .candidates import (
     add_pack_variant_flags,
     subcategory_relation,
 )
+from .normalization import title_similarity
 
 
 FAISS_CANDIDATE_OUTPUT_COLUMNS = [
@@ -60,6 +62,11 @@ class FaissCandidateGenerationConfig:
     global_safety_top_k: int = 5
     unknown_subcategory_top_k: int = 30
     candidate_features: CandidateGenerationConfig = CandidateGenerationConfig()
+    supplemental_lexical_pairs: int = 8_000
+    supplemental_same_brand_pack_pairs: int = 6_000
+    supplemental_cross_marketplace_random_pairs: int = 3_000
+    supplemental_random_pairs: int = 3_000
+    supplemental_random_state: int = 42
 
 
 def _load_faiss(faiss_module: Any | None = None) -> Any:
@@ -100,6 +107,7 @@ def _candidate_row(
     score: float,
     rank: int,
     blocking_scope: str,
+    candidate_source: str = "faiss_embedding_topk",
 ) -> dict[str, object]:
     return {
         "raw_record_id_a": left["raw_record_id"],
@@ -128,10 +136,45 @@ def _candidate_row(
         "multipack_count_b": right["multipack_count"],
         "embedding_similarity_score": round(score, 6),
         "candidate_rank": rank,
-        "candidate_source": "faiss_embedding_topk",
+        "candidate_source": candidate_source,
         "blocking_scope": blocking_scope,
         "baseline_similarity_score": round(score, 6),
     }
+
+
+def _pair_key(left_idx: int, right_idx: int) -> tuple[int, int]:
+    return tuple(sorted((int(left_idx), int(right_idx))))
+
+
+def _cosine_pair_score(vectors: np.ndarray, left_idx: int, right_idx: int) -> float:
+    return float(np.dot(vectors[int(left_idx)], vectors[int(right_idx)]))
+
+
+def _add_pair_if_new(
+    *,
+    pair_rows: dict[tuple[int, int], dict[str, object]],
+    records: pd.DataFrame,
+    index_vectors: np.ndarray,
+    left_idx: int,
+    right_idx: int,
+    candidate_source: str,
+    blocking_scope: str,
+    rank: int,
+) -> bool:
+    pair_key = _pair_key(left_idx, right_idx)
+    if pair_key in pair_rows:
+        return False
+    left = records.iloc[pair_key[0]]
+    right = records.iloc[pair_key[1]]
+    pair_rows[pair_key] = _candidate_row(
+        left,
+        right,
+        score=_cosine_pair_score(index_vectors, pair_key[0], pair_key[1]),
+        rank=rank,
+        blocking_scope=blocking_scope,
+        candidate_source=candidate_source,
+    )
+    return True
 
 
 def _scope_priority(scope: str) -> int:
@@ -165,6 +208,310 @@ def _should_replace_pair(
     if new_priority < existing_priority:
         return False
     return rank < int(existing["candidate_rank"])
+
+
+def _numbers_close(left: object, right: object, *, abs_tol: float, rel_tol: float) -> bool:
+    left_num = pd.to_numeric(pd.Series([left]), errors="coerce").iloc[0]
+    right_num = pd.to_numeric(pd.Series([right]), errors="coerce").iloc[0]
+    if pd.isna(left_num) or pd.isna(right_num) or left_num <= 0 or right_num <= 0:
+        return False
+    return abs(float(left_num) - float(right_num)) <= max(
+        abs_tol,
+        rel_tol * max(abs(float(left_num)), abs(float(right_num))),
+    )
+
+
+def _same_weight_pack(row: pd.Series, cfg: CandidateGenerationConfig) -> bool:
+    unit_close = _numbers_close(
+        row.get("unit_amount"),
+        row.get("unit_amount_other"),
+        abs_tol=cfg.weight_abs_tolerance,
+        rel_tol=cfg.weight_rel_tolerance,
+    )
+    total_close = _numbers_close(
+        row.get("total_amount"),
+        row.get("total_amount_other"),
+        abs_tol=cfg.weight_abs_tolerance,
+        rel_tol=cfg.weight_rel_tolerance,
+    )
+    pack_close = _numbers_close(
+        row.get("multipack_count"),
+        row.get("multipack_count_other"),
+        abs_tol=0.25,
+        rel_tol=0.0,
+    )
+    return (unit_close and total_close) or (unit_close and pack_close) or (total_close and pack_close)
+
+
+def _random_distinct_pair(indices: np.ndarray, rng: np.random.Generator) -> tuple[int, int] | None:
+    if len(indices) < 2:
+        return None
+    left, right = rng.choice(indices, size=2, replace=False)
+    return int(left), int(right)
+
+
+def _sample_random_pairs(
+    *,
+    pair_rows: dict[tuple[int, int], dict[str, object]],
+    records: pd.DataFrame,
+    index_vectors: np.ndarray,
+    budget: int,
+    candidate_source: str,
+    blocking_scope: str,
+    rng: np.random.Generator,
+    left_indices: np.ndarray,
+    right_indices: np.ndarray | None = None,
+    max_attempt_multiplier: int = 20,
+) -> None:
+    if budget <= 0 or len(left_indices) == 0:
+        return
+    right_pool = left_indices if right_indices is None else right_indices
+    if len(right_pool) == 0:
+        return
+
+    added = 0
+    attempts = 0
+    max_attempts = max(budget * max_attempt_multiplier, 100)
+    while added < budget and attempts < max_attempts:
+        attempts += 1
+        if right_indices is None:
+            sampled = _random_distinct_pair(left_indices, rng)
+            if sampled is None:
+                return
+            left_idx, right_idx = sampled
+        else:
+            left_idx = int(rng.choice(left_indices))
+            right_idx = int(rng.choice(right_pool))
+            if left_idx == right_idx:
+                continue
+        if _add_pair_if_new(
+            pair_rows=pair_rows,
+            records=records,
+            index_vectors=index_vectors,
+            left_idx=left_idx,
+            right_idx=right_idx,
+            candidate_source=candidate_source,
+            blocking_scope=blocking_scope,
+            rank=added + 1,
+        ):
+            added += 1
+
+
+def _add_lexical_supplemental_pairs(
+    *,
+    pair_rows: dict[tuple[int, int], dict[str, object]],
+    records: pd.DataFrame,
+    index_vectors: np.ndarray,
+    budget: int,
+    cfg: CandidateGenerationConfig,
+) -> None:
+    if budget <= 0 or "title_tokens" not in records.columns:
+        return
+
+    candidate_keys: set[tuple[int, int]] = set()
+    token_index: dict[str, list[int]] = {}
+    for row_idx, tokens in enumerate(records["title_tokens"]):
+        for token in set(tokens):
+            token_index.setdefault(token, []).append(row_idx)
+
+    token_blocks = sorted(token_index.values(), key=lambda row_ids: (len(row_ids), row_ids[0] if row_ids else -1))
+    max_candidates_for_scoring = max(budget * 10, budget)
+    for row_ids in token_blocks:
+        if len(row_ids) < 2 or len(row_ids) > cfg.max_block_size:
+            continue
+        for left_idx, right_idx in combinations(sorted(row_ids), 2):
+            key = _pair_key(left_idx, right_idx)
+            if key in pair_rows:
+                continue
+            candidate_keys.add(key)
+            if len(candidate_keys) >= max_candidates_for_scoring:
+                break
+        if len(candidate_keys) >= max_candidates_for_scoring:
+            break
+
+    scored_rows: list[tuple[float, tuple[int, int]]] = []
+    for key in candidate_keys:
+        left = records.iloc[key[0]]
+        right = records.iloc[key[1]]
+        score = title_similarity(
+            left["title"],
+            right["title"],
+            tokens_a=left.get("title_tokens"),
+            tokens_b=right.get("title_tokens"),
+        )
+        if score >= cfg.min_similarity:
+            scored_rows.append((score, key))
+
+    scored_rows.sort(reverse=True, key=lambda item: item[0])
+    for rank, (_, key) in enumerate(scored_rows[:budget], start=1):
+        _add_pair_if_new(
+            pair_rows=pair_rows,
+            records=records,
+            index_vectors=index_vectors,
+            left_idx=key[0],
+            right_idx=key[1],
+            candidate_source="supplemental_lexical_overlap",
+            blocking_scope="supplemental_lexical",
+            rank=rank,
+        )
+
+
+def _add_same_brand_pack_supplemental_pairs(
+    *,
+    pair_rows: dict[tuple[int, int], dict[str, object]],
+    records: pd.DataFrame,
+    index_vectors: np.ndarray,
+    budget: int,
+    cfg: CandidateGenerationConfig,
+    rng: np.random.Generator,
+) -> None:
+    if budget <= 0 or "brand_norm" not in records.columns:
+        return
+
+    added = 0
+    for _, group in records[records["brand_norm"].fillna("").ne("")].groupby("brand_norm", sort=False):
+        if added >= budget:
+            break
+        group_indices = group.index.to_numpy(dtype=int)
+        if len(group_indices) < 2:
+            continue
+        attempts = 0
+        while added < budget and attempts < min(len(group_indices) * 20, 1000):
+            attempts += 1
+            sampled = _random_distinct_pair(group_indices, rng)
+            if sampled is None:
+                break
+            left_idx, right_idx = sampled
+            key = _pair_key(left_idx, right_idx)
+            if key in pair_rows:
+                continue
+            left = records.iloc[key[0]]
+            right = records.iloc[key[1]]
+            check_row = left.copy()
+            for column in ["unit_amount", "total_amount", "multipack_count"]:
+                check_row[f"{column}_other"] = right.get(column)
+            if not _same_weight_pack(check_row, cfg):
+                continue
+            if _add_pair_if_new(
+                pair_rows=pair_rows,
+                records=records,
+                index_vectors=index_vectors,
+                left_idx=key[0],
+                right_idx=key[1],
+                candidate_source="supplemental_same_brand_pack",
+                blocking_scope="supplemental_same_brand_pack",
+                rank=added + 1,
+            ):
+                added += 1
+
+
+def _add_supplemental_pairs(
+    *,
+    pair_rows: dict[tuple[int, int], dict[str, object]],
+    records: pd.DataFrame,
+    index_vectors: np.ndarray,
+    cfg: FaissCandidateGenerationConfig,
+) -> None:
+    feature_cfg = cfg.candidate_features
+    rng = np.random.default_rng(cfg.supplemental_random_state)
+    all_indices = records.index.to_numpy(dtype=int)
+
+    _add_lexical_supplemental_pairs(
+        pair_rows=pair_rows,
+        records=records,
+        index_vectors=index_vectors,
+        budget=cfg.supplemental_lexical_pairs,
+        cfg=feature_cfg,
+    )
+    _add_same_brand_pack_supplemental_pairs(
+        pair_rows=pair_rows,
+        records=records,
+        index_vectors=index_vectors,
+        budget=cfg.supplemental_same_brand_pack_pairs,
+        cfg=feature_cfg,
+        rng=rng,
+    )
+
+    if cfg.supplemental_cross_marketplace_random_pairs > 0 and "marketplace_key" in records.columns:
+        grouped = {
+            marketplace: group.index.to_numpy(dtype=int)
+            for marketplace, group in records.groupby("marketplace_key", sort=False)
+        }
+        marketplaces = list(grouped)
+        added = 0
+        attempts = 0
+        max_attempts = max(cfg.supplemental_cross_marketplace_random_pairs * 20, 100)
+        while added < cfg.supplemental_cross_marketplace_random_pairs and attempts < max_attempts:
+            attempts += 1
+            if len(marketplaces) < 2:
+                break
+            left_marketplace, right_marketplace = rng.choice(marketplaces, size=2, replace=False)
+            if _add_pair_if_new(
+                pair_rows=pair_rows,
+                records=records,
+                index_vectors=index_vectors,
+                left_idx=int(rng.choice(grouped[left_marketplace])),
+                right_idx=int(rng.choice(grouped[right_marketplace])),
+                candidate_source="supplemental_cross_marketplace_random",
+                blocking_scope="supplemental_cross_marketplace_random",
+                rank=added + 1,
+            ):
+                added += 1
+
+    _sample_random_pairs(
+        pair_rows=pair_rows,
+        records=records,
+        index_vectors=index_vectors,
+        budget=cfg.supplemental_random_pairs,
+        candidate_source="supplemental_random_control",
+        blocking_scope="supplemental_random",
+        rng=rng,
+        left_indices=all_indices,
+    )
+
+
+def _source_order(source: object) -> int:
+    return {
+        "faiss_embedding_topk": 0,
+        "supplemental_lexical_overlap": 1,
+        "supplemental_same_brand_pack": 2,
+        "supplemental_cross_marketplace_random": 3,
+        "supplemental_random_control": 4,
+    }.get(str(source), 99)
+
+
+def _sort_candidate_pairs(pairs: pd.DataFrame) -> pd.DataFrame:
+    return (
+        pairs.assign(_source_order=pairs["candidate_source"].map(_source_order))
+        .sort_values(
+            [
+                "_source_order",
+                "embedding_similarity_score",
+                "candidate_rank",
+                "marketplace_a",
+                "sku_a",
+                "marketplace_b",
+                "sku_b",
+            ],
+            ascending=[True, False, True, True, True, True, True],
+        )
+        .drop(columns=["_source_order"])
+        .reset_index(drop=True)
+    )
+
+
+def _limit_candidate_pairs(pairs: pd.DataFrame, max_candidates: int | None) -> pd.DataFrame:
+    if max_candidates is None or len(pairs) <= max_candidates:
+        return pairs
+    faiss_pairs = pairs[pairs["candidate_source"].eq("faiss_embedding_topk")]
+    supplemental_pairs = pairs[~pairs["candidate_source"].eq("faiss_embedding_topk")]
+    supplemental_cap = min(len(supplemental_pairs), max_candidates // 3)
+    faiss_cap = max_candidates - supplemental_cap
+    limited = pd.concat(
+        [faiss_pairs.head(faiss_cap), supplemental_pairs.head(supplemental_cap)],
+        ignore_index=True,
+    )
+    return _sort_candidate_pairs(limited)
 
 
 def _add_scope_pairs(
@@ -210,7 +557,7 @@ def _add_scope_pairs(
             neighbor_rank += 1
             if neighbor_rank > search_top_k:
                 break
-            pair_key = tuple(sorted((left_idx, right_idx)))
+            pair_key = _pair_key(left_idx, right_idx)
             existing = pair_rows.get(pair_key)
             if not _should_replace_pair(
                 existing,
@@ -327,6 +674,13 @@ def generate_faiss_candidate_pairs(
             faiss_module=faiss,
         )
 
+    _add_supplemental_pairs(
+        pair_rows=pair_rows,
+        records=records,
+        index_vectors=index_vectors,
+        cfg=cfg,
+    )
+
     pairs = pd.DataFrame(pair_rows.values())
     if pairs.empty:
         return pd.DataFrame(columns=FAISS_CANDIDATE_OUTPUT_COLUMNS)
@@ -334,10 +688,6 @@ def generate_faiss_candidate_pairs(
     pairs = add_cross_marketplace_flags(pairs)
     pairs = add_hard_negative_flags(pairs, cfg.candidate_features)
     pairs = add_pack_variant_flags(pairs, cfg.candidate_features)
-    pairs = pairs.sort_values(
-        ["embedding_similarity_score", "candidate_rank", "marketplace_a", "sku_a", "marketplace_b", "sku_b"],
-        ascending=[False, True, True, True, True, True],
-    ).reset_index(drop=True)
-    if cfg.max_candidates is not None:
-        pairs = pairs.head(cfg.max_candidates).copy()
+    pairs = _sort_candidate_pairs(pairs)
+    pairs = _limit_candidate_pairs(pairs, cfg.max_candidates)
     return pairs[FAISS_CANDIDATE_OUTPUT_COLUMNS]

@@ -1392,12 +1392,15 @@ blocking:
 python3 -m pip install -r requirements-research.txt
 ```
 
-`notebooks/01_candidate_generation.ipynb` строит большой пул пар-кандидатов
-через dense embeddings и FAISS top-k. FAISS здесь отвечает только за поиск
-похожих соседей, а не за состав финального разметочного набора. Затем
-`notebooks/02_labeling_dataset.ipynb` выбирает из этого пула CSV для ручной
-разметки: часть cross-marketplace, часть hard negatives, часть pack variants,
-часть high/medium/low similarity. По умолчанию notebook 01 берёт
+`notebooks/01_candidate_generation.ipynb` строит большой пул пар-кандидатов.
+Основной слой — dense embeddings и FAISS top-k: FAISS отвечает за поиск
+похожих соседей, но теперь не является единственным источником обучающих пар.
+Чтобы дорогая разметка не зависела только от текущего `FAISS_TOP_K`, candidate
+CSV дополнительно получает supplemental пары: lexical overlap,
+same-brand/same-pack controls, cross-marketplace random и random controls.
+Затем `notebooks/02_labeling_dataset.ipynb` выбирает из этого пула CSV для
+ручной разметки: часть cross-marketplace, часть hard negatives, часть pack
+variants, часть high/medium/low similarity. По умолчанию notebook 01 берёт
 `FAISS_TOP_K=30`; для локального E5 embedding используется `query:` prefix,
 потому что товары сравниваются друг с другом как symmetric similarity, а не
 как поисковый запрос против документа.
@@ -1411,6 +1414,8 @@ FAISS-кандидатов: top 25% score идут в `high_similarity`, bottom 
 `DEDUP_LABELING_EASY_BOTTOM_SHARE`.
 Для быстрого benchmark старый сценарий остаётся прежним: один
 `DEDUP_CATEGORY_RUN` и около 400 строк. Для датасета под fine-tuning reranker
+сначала перегенерируйте `01_candidate_generation.ipynb` для каждой категории,
+чтобы `candidates_<suffix>.csv` уже содержал широкий training pool. Затем
 собирайте один CSV по всем трём категориям:
 
 ```bash
@@ -1421,6 +1426,9 @@ jupyter notebook notebooks/02_labeling_dataset.ipynb
 
 При таком запуске notebook делит размер примерно поровну между категориями
 и добавляет в CSV колонки `category_run`, `category_name`, `project_name`.
+Если нужно оставить больше FAISS-соседей вместе с supplemental парами,
+перед запуском `01` можно увеличить `DEDUP_FAISS_MAX_CANDIDATES`, например до
+`120000`.
 Если в срезе есть заполненная колонка `Подкатегория`, FAISS по умолчанию
 ищет основной top-k внутри одной подкатегории. Это сокращает пул кандидатов
 для `Мыло` и `Соусы`: `жидкое` не конкурирует с `твердое`, а `соевые` не
