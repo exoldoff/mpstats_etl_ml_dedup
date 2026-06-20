@@ -1424,6 +1424,24 @@ DEDUP_LABELING_TARGET_SIZE=3000 \
 jupyter notebook notebooks/02_labeling_dataset.ipynb
 ```
 
+Рекомендуемый `.env`-пресет для первого fine-tuning labeling set:
+
+```env
+DEDUP_FAISS_TOP_K=30
+DEDUP_FAISS_SUBCATEGORY_BLOCKING=1
+DEDUP_FAISS_GLOBAL_SAFETY_TOP_K=5
+DEDUP_FAISS_UNKNOWN_SUBCATEGORY_TOP_K=30
+DEDUP_FAISS_MAX_CANDIDATES=1000000
+DEDUP_SUPPLEMENTAL_PAIRS=1
+DEDUP_SUPPLEMENTAL_LEXICAL_PAIRS=8000
+DEDUP_SUPPLEMENTAL_SAME_BRAND_PACK_PAIRS=6000
+DEDUP_SUPPLEMENTAL_CROSS_MARKETPLACE_RANDOM_PAIRS=3000
+DEDUP_SUPPLEMENTAL_RANDOM_PAIRS=3000
+DEDUP_LABELING_CATEGORY_RUNS=sauces,coconut_oil,soap
+DEDUP_LABELING_TARGET_SIZE=3000
+DEDUP_LABELING_SCORE_STRATIFICATION=quantile
+```
+
 При таком запуске notebook делит размер примерно поровну между категориями
 и добавляет в CSV колонки `category_run`, `category_name`, `project_name`.
 Если нужно оставить больше FAISS-соседей вместе с supplemental парами,
