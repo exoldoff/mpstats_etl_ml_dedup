@@ -33,22 +33,32 @@ def _field(label: str, value: object) -> str:
     return f"<b>{h(label)}:</b> {h(value) if str(value).strip() else '-'}"
 
 
-def _item_block(row: pd.Series, side: str) -> str:
-    marketplace = first_cell(row, f"marketplace_{side}", f"marketplaces_{side}")
-    sku = first_cell(row, f"sku_{side}")
-    brand = first_cell(row, f"brand_{side}")
-    subcategory = first_cell(row, f"subcategory_{side}")
+def _pack_summary(row: pd.Series, side: str) -> str:
     unit = first_cell(row, f"unit_amount_{side}")
     total = first_cell(row, f"total_amount_{side}")
     pack = first_cell(row, f"multipack_count_{side}")
+    return f"ед. {unit} / всего {total} / x{pack}"
+
+
+def _item_line(row: pd.Series, side: str) -> str:
+    marketplace = first_cell(row, f"marketplace_{side}", f"marketplaces_{side}")
+    brand = first_cell(row, f"brand_{side}")
+    title = first_cell(row, f"title_{side}")
+    pack = _pack_summary(row, side)
+    return f"<b>{side.upper()}:</b> {h(marketplace)} // {h(brand)} // {h(title)} // {h(pack)}"
+
+
+def _reference_block(row: pd.Series) -> str:
+    sku_a = first_cell(row, "sku_a")
+    sku_b = first_cell(row, "sku_b")
+    subcategory_a = first_cell(row, "subcategory_a")
+    subcategory_b = first_cell(row, "subcategory_b")
     return "\n".join(
         [
-            _field("Название", cell(row, f"title_{side}")),
-            f"<b>SKU:</b> {code(sku)}",
-            _field("Маркетплейс", marketplace),
-            _field("Бренд", brand),
-            _field("Подкатегория", subcategory),
-            f"<b>Фасовка:</b> ед. {h(unit)} / всего {h(total)} / x{h(pack)}",
+            f"<b>SKU A:</b> {code(sku_a)}",
+            f"<b>SKU B:</b> {code(sku_b)}",
+            _field("Подкатегория A", subcategory_a),
+            _field("Подкатегория B", subcategory_b),
         ]
     )
 
@@ -99,12 +109,13 @@ def format_pair_message(
 
     return (
         f"{header}\n\n"
+        f"<b>Справочно</b>\n"
+        f"{_reference_block(row)}\n\n"
         f"<b>Сигналы</b>\n"
         f"{_signal_block(row)}\n\n"
-        f"<b>SKU A</b>\n"
-        f"{_item_block(row, 'a')}\n\n"
-        f"<b>SKU B</b>\n"
-        f"{_item_block(row, 'b')}"
+        f"<b>Товары</b>\n"
+        f"{_item_line(row, 'a')}\n"
+        f"{_item_line(row, 'b')}"
     )
 
 

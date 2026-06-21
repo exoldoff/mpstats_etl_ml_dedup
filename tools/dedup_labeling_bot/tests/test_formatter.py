@@ -32,11 +32,14 @@ def test_format_pair_message_uses_html_and_code_for_sku() -> None:
     message = format_pair_message(row, 0, 10)
 
     assert "<b>Пара 1/10</b>" in message
-    assert "<b>Название:</b> Мыло &lt;fresh&gt; &amp; clean" in message
-    assert "<b>SKU:</b> <code>SKU&lt;1&gt;&amp;A</code>" in message
+    assert "<b>SKU A:</b> <code>SKU&lt;1&gt;&amp;A</code>" in message
+    assert "<b>A:</b> Ozon // Brand // Мыло &lt;fresh&gt; &amp; clean // ед. 0.5 / всего 1.0 / x2" in message
+    assert "<b>B:</b> WB // Brand // Мыло fresh // ед. 0.5 / всего 1.0 / x2" in message
+    assert "<b>Справочно</b>" in message
     assert "<b>Сигналы</b>" in message
-    assert message.index("<b>Сигналы</b>") < message.index("<b>SKU A</b>")
-    assert message.index("<b>SKU A</b>") < message.index("<b>SKU B</b>")
+    assert message.index("<b>Справочно</b>") < message.index("<b>Сигналы</b>")
+    assert message.index("<b>Сигналы</b>") < message.index("<b>Товары</b>")
+    assert message.index("<b>A:</b>") < message.index("<b>B:</b>")
 
 
 def test_format_pair_message_shows_selected_label() -> None:
