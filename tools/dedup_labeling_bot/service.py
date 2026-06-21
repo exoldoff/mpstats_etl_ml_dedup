@@ -471,7 +471,8 @@ class LabelingBotService:
                             subject_name=display_name,
                             title=achievement.title,
                             description=achievement.description,
-                        )
+                        ),
+                        group_only=True,
                     )
                 )
         return result
@@ -496,7 +497,8 @@ class LabelingBotService:
                             subject_name=team_score.team_name,
                             title=achievement.title,
                             description=achievement.description,
-                        )
+                        ),
+                        group_only=True,
                     )
                 )
         return result

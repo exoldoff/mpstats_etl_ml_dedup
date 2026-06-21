@@ -109,6 +109,11 @@ def test_solo_score_and_first_achievement_do_not_require_team(tmp_path) -> None:
     messages = "\n".join(announcement.message for announcement in outcome.game_announcements)
     assert "Первый удар" in messages
     assert "<b>@solo (1)</b>" in messages
+    achievement_announcements = [
+        announcement for announcement in outcome.game_announcements if "Первый удар" in announcement.message
+    ]
+    assert achievement_announcements
+    assert all(announcement.group_only for announcement in achievement_announcements)
     assert "<b>@solo</b> — 1 ответ" in service.player_leaderboard()
     assert "Первый удар" in service.user_achievements(1)
     assert service.store.user_game_answer_count(1) == 1
