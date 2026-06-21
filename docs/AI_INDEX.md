@@ -155,6 +155,10 @@ Research-код остаётся независимым: `research/dedup/` не 
   разными брендами через `DEDUP_LABELING_MAX_DIFFERENT_BRAND_SHARE`
   (по умолчанию 20%) и поддерживает разные random-срезы через
   `DEDUP_LABELING_BATCH_ID`.
+- Telegram-бот `tools/dedup_labeling_bot/` в unique-режиме назначает новый
+  `DEDUP_TELEGRAM_BATCH_SIZE` не последовательным блоком CSV, а spread-random
+  по разным частям ещё доступной выборки; навигация внутри уже выданного
+  батча остаётся стабильной.
 - Baseline matching scaffold:
   - A: rule-based fuzzy + structural fusion.
   - B: zero-shot bi-encoder с graceful skip без `sentence-transformers`.

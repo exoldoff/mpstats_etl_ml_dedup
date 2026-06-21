@@ -347,7 +347,8 @@ class LabelingStateStore:
             if row_index in available_set:
                 by_row.setdefault(row_index, []).append(row)
 
-        selected: list[int] = []
+        pending_overlap_rows: list[int] = []
+        fresh_rows: list[int] = []
         for row_index in available_rows:
             if row_states.get(row_index) in {ROW_FINALIZED, ROW_CONFLICT, ROW_DISCUSSION}:
                 continue
@@ -362,6 +363,7 @@ class LabelingStateStore:
                 has_vote = any(row["status"] == LABELED for row in assignments)
                 if has_active or has_vote:
                     continue
+                fresh_rows.append(row_index)
             else:
                 participants = 0
                 for row in assignments:
@@ -371,10 +373,12 @@ class LabelingStateStore:
                         participants += 1
                 if participants >= overlap_votes:
                     continue
-            selected.append(row_index)
-            if len(selected) >= limit:
-                break
-        return selected
+                if participants:
+                    pending_overlap_rows.append(row_index)
+                else:
+                    fresh_rows.append(row_index)
+        selected = pending_overlap_rows + fresh_rows
+        return selected[:limit]
 
     def record_vote(
         self,

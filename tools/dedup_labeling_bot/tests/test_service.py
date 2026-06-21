@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import random
 
 import pandas as pd
 
@@ -36,6 +37,7 @@ def make_service(
     discussion_chat_id=None,
     rows: int = 4,
     labeled_count: int = 0,
+    assignment_rng: random.Random | None = None,
 ):
     csv_path = make_csv(tmp_path, rows=rows, labeled_count=labeled_count)
     config = LabelingBotConfig(
@@ -54,6 +56,7 @@ def make_service(
         config,
         repository=LabelingCsvRepository(csv_path),
         store=LabelingStateStore(config.state_path),
+        assignment_rng=assignment_rng or random.Random(12345),
     )
     return service, csv_path
 
@@ -76,13 +79,35 @@ def test_unique_batches_do_not_overlap_and_write_csv(tmp_path) -> None:
 
     assert first is not None
     assert second is not None
-    assert first.row_index == 0
-    assert second.row_index == 2
+    first_rows = set(service.store.user_assigned_rows(1, available_rows={0, 1, 2, 3}))
+    second_rows = set(service.store.user_assigned_rows(2, available_rows={0, 1, 2, 3}))
+    assert len(first_rows) == 2
+    assert len(second_rows) == 2
+    assert first_rows.isdisjoint(second_rows)
 
     outcome = service.label_row(1, first.row_index, "exact_duplicate")
 
     assert outcome.final_label == "exact_duplicate"
     assert pd.read_csv(csv_path).at[first.row_index, "label"] == "exact_duplicate"
+
+
+def test_unique_batch_samples_from_different_csv_segments(tmp_path) -> None:
+    service, _ = make_service(
+        tmp_path,
+        mode="unique",
+        batch_size=10,
+        rows=100,
+        assignment_rng=random.Random(7),
+    )
+    service.authorize(1, "secret")
+
+    first = service.next_pair(1)
+
+    assert first is not None
+    assigned_rows = service.store.user_assigned_rows(1, available_rows=set(range(100)))
+    assert len(assigned_rows) == 10
+    assert assigned_rows != list(range(10))
+    assert {row_index // 10 for row_index in assigned_rows} == set(range(10))
 
 
 def test_milestone_announcements_are_claimed_once(tmp_path) -> None:
@@ -127,10 +152,12 @@ def test_navigation_moves_within_batch_and_back_to_labeled_pair(tmp_path) -> Non
 
     first = service.next_pair(1)
     assert first is not None
+    assigned_rows = service.store.user_assigned_rows(1, available_rows={0, 1, 2, 3})
+    assert len(assigned_rows) == 2
 
     second = service.navigate_pair(1, first.row_index, "next")
     assert second is not None
-    assert second.row_index == 1
+    assert second.row_index == assigned_rows[1]
 
     service.label_row(1, first.row_index, "exact_duplicate")
     back = service.navigate_pair(1, second.row_index, "prev")
@@ -152,21 +179,22 @@ def test_navigation_assigns_next_batch_after_label(tmp_path) -> None:
     next_pair = service.navigate_pair(1, first.row_index, "next")
 
     assert next_pair is not None
-    assert next_pair.row_index == 1
+    assert next_pair.row_index != first.row_index
 
 
 def test_release_frees_unlabeled_unique_assignments(tmp_path) -> None:
-    service, _ = make_service(tmp_path, mode="unique", batch_size=2)
+    service, _ = make_service(tmp_path, mode="unique", batch_size=2, rows=2)
     service.authorize(1, "secret")
     service.authorize(2, "secret")
 
     assert service.next_pair(1) is not None
+    first_rows = set(service.store.user_assigned_rows(1, available_rows={0, 1}))
     assert service.release_user_assignments(1) == 2
 
     second = service.next_pair(2)
 
     assert second is not None
-    assert second.row_index == 0
+    assert second.row_index in first_rows
 
 
 def test_overlap_writes_csv_only_after_consensus(tmp_path) -> None:

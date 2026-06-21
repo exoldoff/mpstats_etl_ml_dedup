@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import random
 
 import pandas as pd
 
@@ -45,10 +46,12 @@ class LabelingBotService:
         *,
         repository: LabelingCsvRepository | None = None,
         store: LabelingStateStore | None = None,
+        assignment_rng: random.Random | None = None,
     ) -> None:
         self.config = config
         self.repository = repository or LabelingCsvRepository(config.csv_path)
         self.store = store or LabelingStateStore(config.state_path)
+        self.assignment_rng = assignment_rng or random.SystemRandom()
 
     def authorize(self, user_id: int, password: str, *, username: str = "", first_name: str = "") -> bool:
         if password != self.config.access_password:
@@ -77,7 +80,7 @@ class LabelingBotService:
         assigned = self.store.user_assigned_rows(user_id, available_rows=available_set)
         if not assigned:
             new_rows = self.store.select_available_rows(
-                available_rows=available_rows,
+                available_rows=self._assignment_order(available_rows),
                 user_id=user_id,
                 mode=self.config.assignment_mode,
                 limit=self.config.batch_size,
@@ -116,7 +119,7 @@ class LabelingBotService:
             return None
 
         new_rows = self.store.select_available_rows(
-            available_rows=available_rows,
+            available_rows=self._assignment_order(available_rows),
             user_id=user_id,
             mode=self.config.assignment_mode,
             limit=self.config.batch_size,
@@ -137,6 +140,33 @@ class LabelingBotService:
             selected_label=selected_label,
             message=format_pair_message(row, row_index, len(frame), selected_label=selected_label),
         )
+
+    def _assignment_order(self, available_rows: list[int]) -> list[int]:
+        rows = list(available_rows)
+        if len(rows) <= 1:
+            return rows
+
+        batch_size = max(1, self.config.batch_size)
+        bucket_count = min(batch_size, len(rows))
+        buckets = [
+            rows[start:end]
+            for start, end in (
+                (idx * len(rows) // bucket_count, (idx + 1) * len(rows) // bucket_count)
+                for idx in range(bucket_count)
+            )
+        ]
+
+        picked: list[int] = []
+        leftovers: list[int] = []
+        for bucket in buckets:
+            shuffled_bucket = list(bucket)
+            self.assignment_rng.shuffle(shuffled_bucket)
+            picked.append(shuffled_bucket[0])
+            leftovers.extend(shuffled_bucket[1:])
+
+        self.assignment_rng.shuffle(picked)
+        self.assignment_rng.shuffle(leftovers)
+        return picked + leftovers
 
     def label_row(self, user_id: int, row_index: int, label: str) -> LabelOutcome:
         result = self.store.record_vote(
