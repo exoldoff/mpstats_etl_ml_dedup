@@ -1412,6 +1412,16 @@ FAISS-кандидатов: top 25% score идут в `high_similarity`, bottom 
 `DEDUP_LABELING_SCORE_STRATIFICATION=absolute`; доли quantile-режима меняются
 через `DEDUP_LABELING_HIGH_TOP_SHARE` и
 `DEDUP_LABELING_EASY_BOTTOM_SHARE`.
+Пары, где оба бренда заполнены и бренды разные, ограничены отдельным лимитом:
+по умолчанию `DEDUP_LABELING_MAX_DIFFERENT_BRAND_SHARE=0.20`, то есть не
+больше 20% итогового CSV. Уже размеченные строки не удаляются при
+перегенерации: `02` читает существующий `LABELING_PATH`, сохраняет заполненные
+`label`-строки, пишет рядом backup `*_preserved_labels.csv` и добирает только
+незаполненный остаток.
+Для параллельной разметки можно задавать разным людям разные random-срезы
+через `DEDUP_LABELING_BATCH_ID`, например `exoldoff` и `friend`. Это меняет
+seed выборки, но оставляет воспроизводимость: один и тот же batch id даёт тот
+же случайный срез при тех же входных candidates.
 Для быстрого benchmark старый сценарий остаётся прежним: один
 `DEDUP_CATEGORY_RUN` и около 400 строк. Для датасета под fine-tuning reranker
 сначала перегенерируйте `01_candidate_generation.ipynb` для каждой категории,
@@ -1440,6 +1450,8 @@ DEDUP_SUPPLEMENTAL_RANDOM_PAIRS=3000
 DEDUP_LABELING_CATEGORY_RUNS=sauces,coconut_oil,soap
 DEDUP_LABELING_TARGET_SIZE=3000
 DEDUP_LABELING_SCORE_STRATIFICATION=quantile
+DEDUP_LABELING_MAX_DIFFERENT_BRAND_SHARE=0.20
+DEDUP_LABELING_PRESERVE_EXISTING_LABELS=1
 ```
 
 При таком запуске notebook делит размер примерно поровну между категориями
@@ -1635,9 +1647,11 @@ git.
 строку как `conflict` в SQLite-state. Такие конфликты видны в `/stats` и
 разбираются вручную.
 
-После завершения разметки не запускайте заново
-`notebooks/02_labeling_dataset.ipynb`, иначе можно перезаписать рабочий CSV
-разметки. Для текущего threshold benchmark запускайте `03` сверху вниз:
+После частичной разметки `notebooks/02_labeling_dataset.ipynb` можно запускать
+заново, если нужно перегенерировать незаполненный остаток: заполненные
+`label`-строки будут сохранены и продублированы в backup
+`*_preserved_labels.csv`. После полной разметки для текущего threshold
+benchmark запускайте `03` сверху вниз:
 
 ```bash
 python3 - <<'PY'

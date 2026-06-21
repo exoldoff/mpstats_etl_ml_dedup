@@ -149,6 +149,12 @@ Research-код остаётся независимым: `research/dedup/` не 
   `cross_marketplace_candidate`; `02_labeling_dataset.ipynb` также умеет
   собрать multi-category датасет, например 3000 строк по
   `sauces,coconut_oil,soap` через `DEDUP_LABELING_CATEGORY_RUNS`.
+  При перегенерации `02` сохраняет уже заполненные `label`-строки из
+  существующего `LABELING_PATH`, пишет backup `*_preserved_labels.csv`,
+  добирает незаполненный остаток, ограничивает пары с двумя известными
+  разными брендами через `DEDUP_LABELING_MAX_DIFFERENT_BRAND_SHARE`
+  (по умолчанию 20%) и поддерживает разные random-срезы через
+  `DEDUP_LABELING_BATCH_ID`.
 - Baseline matching scaffold:
   - A: rule-based fuzzy + structural fusion.
   - B: zero-shot bi-encoder с graceful skip без `sentence-transformers`.

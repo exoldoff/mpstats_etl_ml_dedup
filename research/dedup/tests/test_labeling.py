@@ -5,12 +5,21 @@ import pandas as pd
 from research.dedup.labeling import (
     LabelingSamplingConfig,
     labeling_score_strata_masks,
+    merge_preserved_labeling_rows,
+    select_preserved_labeling_rows,
     split_labeling_target_size,
     stratified_labeling_sample,
 )
 
 
-def _candidate(idx: int, *, cross_marketplace: bool, score: float = 0.8) -> dict[str, object]:
+def _candidate(
+    idx: int,
+    *,
+    cross_marketplace: bool,
+    score: float = 0.8,
+    brand_a: str = "A",
+    brand_b: str = "A",
+) -> dict[str, object]:
     left_marketplace = "WB"
     right_marketplace = "Ozon" if cross_marketplace else "WB"
     return {
@@ -22,8 +31,8 @@ def _candidate(idx: int, *, cross_marketplace: bool, score: float = 0.8) -> dict
         "sku_b": str(idx),
         "title_a": f"Соус томатный острый {idx} 200 г",
         "title_b": f"Соус томатный острый {idx} 200 г",
-        "brand_a": "A",
-        "brand_b": "A",
+        "brand_a": brand_a,
+        "brand_b": brand_b,
         "unit_amount_a": 0.2,
         "unit_amount_b": 0.2,
         "total_amount_a": 0.2,
@@ -88,6 +97,58 @@ def test_stratified_labeling_sample_keeps_medium_and_low_score_controls() -> Non
 
     assert "medium_similarity" in set(labeling["labeling_stratum"])
     assert "random_easy_negative" in set(labeling["labeling_stratum"])
+
+
+def test_stratified_labeling_sample_caps_different_brand_pairs() -> None:
+    candidates = pd.DataFrame(
+        [
+            _candidate(
+                idx,
+                cross_marketplace=False,
+                score=0.90 + idx * 0.001,
+                brand_a="A",
+                brand_b="B" if idx < 60 else "A",
+            )
+            for idx in range(100)
+        ]
+    )
+
+    labeling = stratified_labeling_sample(
+        candidates,
+        LabelingSamplingConfig(target_size=50, random_state=7, max_different_brand_share=0.20),
+    )
+
+    assert len(labeling) == 50
+    assert labeling["is_different_brand_pair"].sum() <= 10
+    assert set(labeling["brand_relation"]).issubset({"same_brand", "different_brand", "unknown_brand"})
+
+
+def test_merge_preserved_labeling_rows_keeps_existing_labels_and_avoids_duplicates() -> None:
+    existing = pd.DataFrame(
+        [
+            _candidate(1, cross_marketplace=True) | {"label": "exact_duplicate", "notes": "checked"},
+            _candidate(2, cross_marketplace=True) | {"label": "", "notes": ""},
+        ]
+    )
+    fresh = pd.DataFrame(
+        [
+            _candidate(1, cross_marketplace=True) | {"label": "", "notes": ""},
+            _candidate(3, cross_marketplace=True) | {"label": "", "notes": ""},
+            _candidate(4, cross_marketplace=True) | {"label": "", "notes": ""},
+        ]
+    )
+
+    preserved = select_preserved_labeling_rows(existing)
+    merged = merge_preserved_labeling_rows(
+        preserved,
+        fresh,
+        target_size=3,
+        random_state=11,
+    )
+
+    assert "exact_duplicate" in set(merged["label"])
+    assert len(merged) == 3
+    assert merged["raw_record_id_a"].eq("wb::1").sum() == 1
 
 
 def test_split_labeling_target_size_balances_category_runs() -> None:
