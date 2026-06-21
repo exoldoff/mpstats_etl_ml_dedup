@@ -3,12 +3,14 @@ from __future__ import annotations
 import pandas as pd
 
 from tools.dedup_labeling_bot.formatter import (
+    format_achievement_message,
     format_combo_hot_message,
     format_combo_reset_message,
     format_discussion_message,
     format_help_text,
     format_milestone_message,
     format_pair_message,
+    format_player_leaderboard_message,
     format_team_lead_message,
 )
 
@@ -64,6 +66,8 @@ def test_format_help_text_escapes_start_placeholder() -> None:
 
     assert "<code>/start &lt;пароль&gt;</code>" in text
     assert "<code>/team &lt;название&gt;</code>" in text
+    assert "<code>/players</code>" in text
+    assert "<code>/achievements</code>" in text
 
 
 def test_format_milestone_message_contains_progress_and_remaining() -> None:
@@ -87,7 +91,23 @@ def test_format_game_messages_escape_team_name() -> None:
     lead = format_team_lead_message(team_name="A < B", score=12, previous_leader_score=11)
     combo = format_combo_hot_message(team_name="A < B", combo_count=5)
     reset = format_combo_reset_message(team_name="A < B", combo_count=5)
+    achievement = format_achievement_message(
+        scope="team",
+        subject_name="A < B",
+        title="Титул <x>",
+        description="Описание & детали",
+    )
 
     assert "<b>A &lt; B</b>" in lead
     assert "<b>A &lt; B</b>" in combo
     assert "<b>A &lt; B</b>" in reset
+    assert "<b>A &lt; B</b>" in achievement
+    assert "<b>Титул &lt;x&gt;</b>" in achievement
+    assert "Описание &amp; детали" in achievement
+
+
+def test_format_player_leaderboard_empty_state() -> None:
+    message = format_player_leaderboard_message([])
+
+    assert "<b>Топ игроков</b>" in message
+    assert "Пока нет игроков" in message

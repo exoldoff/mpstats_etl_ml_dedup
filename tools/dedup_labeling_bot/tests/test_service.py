@@ -4,6 +4,7 @@ from datetime import timedelta
 import random
 
 import pandas as pd
+import pytest
 
 from tools.dedup_labeling_bot.config import LabelingBotConfig
 from tools.dedup_labeling_bot.csv_repository import LabelingCsvRepository
@@ -97,6 +98,22 @@ def test_team_scores_sum_final_answers_and_show_members(tmp_path) -> None:
     assert "Игровые ответы: 1" in user_stats
 
 
+def test_solo_score_and_first_achievement_do_not_require_team(tmp_path) -> None:
+    service, _ = make_service(tmp_path, mode="unique", batch_size=1, rows=2)
+    service.authorize(1, "secret", username="solo")
+
+    first = service.next_pair(1)
+    assert first is not None
+    outcome = service.label_row(1, first.row_index, "exact_duplicate")
+
+    messages = "\n".join(announcement.message for announcement in outcome.game_announcements)
+    assert "Первый удар" in messages
+    assert "<b>@solo (1)</b>" in messages
+    assert "<b>@solo</b> — 1 ответ" in service.player_leaderboard()
+    assert "Первый удар" in service.user_achievements(1)
+    assert service.store.user_game_answer_count(1) == 1
+
+
 def test_team_overtake_creates_lead_announcement(tmp_path) -> None:
     service, _ = make_service(tmp_path, mode="unique", batch_size=1, rows=4)
     service.authorize(1, "secret")
@@ -134,6 +151,7 @@ def test_combo_threshold_and_timer_are_returned(tmp_path) -> None:
     assert outcome is not None
     messages = "\n".join(announcement.message for announcement in outcome.game_announcements)
     assert "Комбо x3" in messages
+    assert "Искра серии" in messages
     assert len(outcome.combo_timers) == 1
     assert outcome.combo_timers[0].team_id == service.store.user_team(1).team_id
 
@@ -179,6 +197,38 @@ def test_relabel_does_not_add_second_game_answer(tmp_path) -> None:
     assert len(first.combo_timers) == 1
     assert second.combo_timers == ()
     assert service.store.user_game_answer_count(1) == 1
+
+
+def test_forward_navigation_skips_already_labeled_history_rows(tmp_path) -> None:
+    service, _ = make_service(tmp_path, mode="unique", batch_size=3, rows=4)
+    service.authorize(1, "secret")
+
+    first = service.next_pair(1)
+    assert first is not None
+    assigned_rows = service.store.user_assigned_rows(1, available_rows={0, 1, 2, 3})
+    assert len(assigned_rows) == 3
+    service.label_row(1, assigned_rows[0], "exact_duplicate")
+    service.label_row(1, assigned_rows[1], "different_product")
+
+    next_pair = service.navigate_pair(1, assigned_rows[0], "next")
+
+    assert next_pair is not None
+    assert next_pair.row_index == assigned_rows[2]
+    assert next_pair.selected_label is None
+
+
+def test_stale_assigned_row_already_labeled_in_csv_is_not_overwritten(tmp_path) -> None:
+    service, csv_path = make_service(tmp_path, mode="unique", batch_size=1, rows=2)
+    service.authorize(1, "secret")
+
+    first = service.next_pair(1)
+    assert first is not None
+    service.repository.set_label(first.row_index, "different_product")
+
+    with pytest.raises(ValueError, match="уже решена"):
+        service.label_row(1, first.row_index, "exact_duplicate")
+
+    assert pd.read_csv(csv_path).at[first.row_index, "label"] == "different_product"
 
 
 def test_unique_batches_do_not_overlap_and_write_csv(tmp_path) -> None:

@@ -9,11 +9,14 @@ import pandas as pd
 from .config import LabelingBotConfig
 from .csv_repository import CsvStats, LabelingCsvRepository
 from .formatter import (
+    format_achievement_message,
+    format_achievements_list,
     format_combo_hot_message,
     format_combo_reset_message,
     format_discussion_message,
     format_milestone_message,
     format_pair_message,
+    format_player_leaderboard_message,
     format_team_joined_message,
     format_team_leaderboard_message,
     format_team_lead_message,
@@ -23,6 +26,26 @@ from .state_store import LabelingStateStore
 
 MILESTONE_THRESHOLDS = (100, 300, 500, 1000, 1500, 2000, 2500, 3000)
 COMBO_ANNOUNCEMENT_THRESHOLDS = (3, 5, 10, 20, 30, 50, 100)
+USER_SCORE_ACHIEVEMENTS = (
+    (1, "Первый удар", "Первый финальный ответ в зачёте. Лёд тронулся."),
+    (10, "Десятник", "10 финальных ответов. Уже виден рабочий темп."),
+    (25, "Снайпер разметки", "25 финальных ответов. Рука набита, глаз пристрелян."),
+    (50, "Полтинник", "50 финальных ответов. Это уже личная смена в разметке."),
+    (100, "Сотня без паники", "100 финальных ответов. Машина прогресса завелась."),
+)
+TEAM_SCORE_ACHIEVEMENTS = (
+    (10, "Командный старт", "10 финальных ответов на командном счёте."),
+    (25, "Слаженная смена", "25 финальных ответов команды."),
+    (50, "Командный разгон", "50 финальных ответов команды."),
+    (100, "Отряд зачистки", "100 финальных ответов команды."),
+    (250, "Цех разметки", "250 финальных ответов команды."),
+)
+TEAM_COMBO_ACHIEVEMENTS = (
+    (3, "Искра серии", "Команда удержала комбо x3."),
+    (5, "Горячая рука", "Команда удержала комбо x5."),
+    (10, "Без тормозов", "Команда удержала комбо x10."),
+    (20, "Комбо-машина", "Команда удержала комбо x20."),
+)
 
 
 @dataclass(frozen=True)
@@ -132,8 +155,9 @@ class LabelingBotService:
                 if current_position == 0:
                     return None
                 return self.pair_for_row(user_id, navigation_rows[current_position - 1])
-            if current_position + 1 < len(navigation_rows):
-                return self.pair_for_row(user_id, navigation_rows[current_position + 1])
+            for row_index in navigation_rows[current_position + 1 :]:
+                if row_index in available_set:
+                    return self.pair_for_row(user_id, row_index)
         elif direction == "prev" and navigation_rows:
             previous_rows = [row_index for row_index in navigation_rows if row_index < current_row_index]
             if previous_rows:
@@ -193,6 +217,9 @@ class LabelingBotService:
         return picked + leftovers
 
     def label_row(self, user_id: int, row_index: int, label: str) -> LabelOutcome:
+        is_relabel = self.store.user_row_label(user_id, row_index) is not None
+        if not is_relabel and not self.repository.is_row_available(row_index):
+            raise ValueError("Пара уже решена, беру следующую актуальную")
         result = self.store.record_vote(
             row_index=row_index,
             user_id=user_id,
@@ -229,6 +256,8 @@ class LabelingBotService:
         )
 
     def move_row_to_discussion(self, user_id: int, row_index: int, label: str) -> LabelOutcome:
+        if not self.repository.is_row_available(row_index):
+            raise ValueError("Пара уже решена, беру следующую актуальную")
         result = self.store.move_assigned_row_to_discussion(
             row_index=row_index,
             user_id=user_id,
@@ -309,6 +338,18 @@ class LabelingBotService:
     def team_leaderboard(self) -> str:
         return format_team_leaderboard_message(self.store.team_leaderboard(limit=10))
 
+    def player_leaderboard(self) -> str:
+        return format_player_leaderboard_message(self.store.player_leaderboard(limit=10))
+
+    def user_achievements(self, user_id: int) -> str:
+        team = self.store.user_team(user_id)
+        team_achievements = self.store.team_achievements(team.team_id) if team is not None else []
+        return format_achievements_list(
+            user_achievements=self.store.user_achievements(user_id),
+            team_name=team.name if team is not None else None,
+            team_achievements=team_achievements,
+        )
+
     def leaderboard_pin(self) -> tuple[str, int] | None:
         pin = self.store.leaderboard_pin()
         if pin is None:
@@ -350,6 +391,12 @@ class LabelingBotService:
         announcements: list[GameAnnouncement] = []
         timers: list[ComboTimer] = []
 
+        for user_score in updates.user_score_changes:
+            announcements.extend(self._claim_user_score_achievements(user_score))
+
+        for team_score in updates.team_score_changes:
+            announcements.extend(self._claim_team_score_achievements(team_score))
+
         for reset in updates.combo_resets:
             announcements.append(
                 GameAnnouncement(
@@ -386,9 +433,91 @@ class LabelingBotService:
                         )
                     )
                 )
+                announcements.extend(self._claim_team_combo_achievements(combo.team_id, combo.team_name, crossed_thresholds))
             timers.append(ComboTimer(team_id=combo.team_id, deadline_at=combo.deadline_at))
 
         return tuple(announcements), tuple(timers)
+
+    def _claim_user_score_achievements(self, user_score: object) -> list[GameAnnouncement]:
+        display_name = self._format_user_name(user_score.user_id, user_score.username, user_score.first_name)
+        result: list[GameAnnouncement] = []
+        for threshold, title, description in USER_SCORE_ACHIEVEMENTS:
+            if user_score.score < threshold:
+                continue
+            achievement = self.store.claim_achievement(
+                scope="user",
+                owner_id=user_score.user_id,
+                code=f"solo_{threshold}",
+                title=title,
+                description=description,
+            )
+            if achievement is not None:
+                result.append(
+                    GameAnnouncement(
+                        message=format_achievement_message(
+                            scope="user",
+                            subject_name=display_name,
+                            title=achievement.title,
+                            description=achievement.description,
+                        )
+                    )
+                )
+        return result
+
+    def _claim_team_score_achievements(self, team_score: object) -> list[GameAnnouncement]:
+        result: list[GameAnnouncement] = []
+        for threshold, title, description in TEAM_SCORE_ACHIEVEMENTS:
+            if team_score.score < threshold:
+                continue
+            achievement = self.store.claim_achievement(
+                scope="team",
+                owner_id=team_score.team_id,
+                code=f"team_score_{threshold}",
+                title=title,
+                description=description,
+            )
+            if achievement is not None:
+                result.append(
+                    GameAnnouncement(
+                        message=format_achievement_message(
+                            scope="team",
+                            subject_name=team_score.team_name,
+                            title=achievement.title,
+                            description=achievement.description,
+                        )
+                    )
+                )
+        return result
+
+    def _claim_team_combo_achievements(
+        self,
+        team_id: int,
+        team_name: str,
+        crossed_thresholds: list[int],
+    ) -> list[GameAnnouncement]:
+        result: list[GameAnnouncement] = []
+        for threshold, title, description in TEAM_COMBO_ACHIEVEMENTS:
+            if threshold not in crossed_thresholds:
+                continue
+            achievement = self.store.claim_achievement(
+                scope="team",
+                owner_id=team_id,
+                code=f"team_combo_{threshold}",
+                title=title,
+                description=description,
+            )
+            if achievement is not None:
+                result.append(
+                    GameAnnouncement(
+                        message=format_achievement_message(
+                            scope="team",
+                            subject_name=team_name,
+                            title=achievement.title,
+                            description=achievement.description,
+                        )
+                    )
+                )
+        return result
 
     def _claim_milestones(self, *, previous_labeled_rows: int) -> tuple[MilestoneAnnouncement, ...]:
         csv_stats = self.repository.stats()

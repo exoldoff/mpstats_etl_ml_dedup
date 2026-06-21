@@ -57,6 +57,16 @@ class TeamMemberStats:
 
 
 @dataclass(frozen=True)
+class PlayerStats:
+    user_id: int
+    username: str
+    first_name: str
+    score: int
+    team_name: str | None = None
+    achievement_count: int = 0
+
+
+@dataclass(frozen=True)
 class TeamStats:
     team_id: int
     name: str
@@ -97,10 +107,39 @@ class TeamComboReset:
 
 
 @dataclass(frozen=True)
+class UserScoreChange:
+    user_id: int
+    username: str
+    first_name: str
+    team_id: int | None
+    team_name: str | None
+    score: int
+
+
+@dataclass(frozen=True)
+class TeamScoreChange:
+    team_id: int
+    team_name: str
+    score: int
+
+
+@dataclass(frozen=True)
+class AchievementRecord:
+    scope: str
+    owner_id: int
+    code: str
+    title: str
+    description: str
+    unlocked_at: datetime
+
+
+@dataclass(frozen=True)
 class GameUpdateResult:
     lead_changes: tuple[TeamLeadChange, ...] = ()
     combo_updates: tuple[TeamComboUpdate, ...] = ()
     combo_resets: tuple[TeamComboReset, ...] = ()
+    user_score_changes: tuple[UserScoreChange, ...] = ()
+    team_score_changes: tuple[TeamScoreChange, ...] = ()
 
 
 def utcnow() -> datetime:
@@ -206,6 +245,12 @@ class LabelingStateStore:
                     PRIMARY KEY (row_index, user_id),
                     FOREIGN KEY (team_id) REFERENCES teams(team_id)
                 );
+                CREATE TABLE IF NOT EXISTS player_answers (
+                    row_index INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    answered_at TEXT NOT NULL,
+                    PRIMARY KEY (row_index, user_id)
+                );
                 CREATE TABLE IF NOT EXISTS team_combos (
                     team_id INTEGER PRIMARY KEY,
                     combo_count INTEGER NOT NULL,
@@ -220,14 +265,30 @@ class LabelingStateStore:
                     message_id INTEGER NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS achievements (
+                    scope TEXT NOT NULL,
+                    owner_id INTEGER NOT NULL,
+                    code TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    unlocked_at TEXT NOT NULL,
+                    PRIMARY KEY (scope, owner_id, code)
+                );
                 CREATE INDEX IF NOT EXISTS idx_assignments_status
                     ON assignments(status, expires_at);
                 CREATE INDEX IF NOT EXISTS idx_assignments_user_status
                     ON assignments(user_id, status);
+                CREATE INDEX IF NOT EXISTS idx_player_answers_user
+                    ON player_answers(user_id);
                 CREATE INDEX IF NOT EXISTS idx_game_answers_team
                     ON game_answers(team_id);
                 CREATE INDEX IF NOT EXISTS idx_game_answers_user
                     ON game_answers(user_id);
+                CREATE INDEX IF NOT EXISTS idx_achievements_owner
+                    ON achievements(scope, owner_id);
+                INSERT OR IGNORE INTO player_answers (row_index, user_id, answered_at)
+                SELECT row_index, user_id, answered_at
+                FROM game_answers;
                 """
             )
 
@@ -846,10 +907,44 @@ class LabelingStateStore:
                 )
         return result
 
+    def player_leaderboard(self, *, limit: int = 10) -> list[PlayerStats]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    u.user_id,
+                    u.username,
+                    u.first_name,
+                    t.name AS team_name,
+                    COUNT(DISTINCT pa.row_index) AS score,
+                    COUNT(DISTINCT a.code) AS achievement_count
+                FROM users u
+                LEFT JOIN player_answers pa ON pa.user_id = u.user_id
+                LEFT JOIN team_members tm ON tm.user_id = u.user_id
+                LEFT JOIN teams t ON t.team_id = tm.team_id
+                LEFT JOIN achievements a ON a.scope = 'user' AND a.owner_id = u.user_id
+                GROUP BY u.user_id, u.username, u.first_name, t.name
+                ORDER BY score DESC, achievement_count DESC, u.user_id
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            PlayerStats(
+                user_id=int(row["user_id"]),
+                username=str(row["username"] or ""),
+                first_name=str(row["first_name"] or ""),
+                score=int(row["score"]),
+                team_name=str(row["team_name"]) if row["team_name"] else None,
+                achievement_count=int(row["achievement_count"]),
+            )
+            for row in rows
+        ]
+
     def user_game_answer_count(self, user_id: int) -> int:
         with self._connect() as connection:
             count = connection.execute(
-                "SELECT COUNT(*) AS count FROM game_answers WHERE user_id = ?",
+                "SELECT COUNT(*) AS count FROM player_answers WHERE user_id = ?",
                 (user_id,),
             ).fetchone()["count"]
         return int(count)
@@ -904,10 +999,16 @@ class LabelingStateStore:
             before_scores = self._team_scores_by_id(connection)
             participants = connection.execute(
                 """
-                SELECT a.user_id, tm.team_id, t.name AS team_name
+                SELECT
+                    a.user_id,
+                    u.username,
+                    u.first_name,
+                    tm.team_id,
+                    t.name AS team_name
                 FROM assignments a
-                JOIN team_members tm ON tm.user_id = a.user_id
-                JOIN teams t ON t.team_id = tm.team_id
+                LEFT JOIN users u ON u.user_id = a.user_id
+                LEFT JOIN team_members tm ON tm.user_id = a.user_id
+                LEFT JOIN teams t ON t.team_id = tm.team_id
                 WHERE a.row_index = ? AND a.status = ? AND a.label = ?
                 ORDER BY a.labeled_at, a.user_id
                 """,
@@ -917,36 +1018,73 @@ class LabelingStateStore:
             if not participants:
                 participants = connection.execute(
                     """
-                    SELECT tm.user_id, tm.team_id, t.name AS team_name
-                    FROM team_members tm
-                    JOIN teams t ON t.team_id = tm.team_id
-                    WHERE tm.user_id = ?
+                    SELECT
+                        u.user_id,
+                        u.username,
+                        u.first_name,
+                        tm.team_id,
+                        t.name AS team_name
+                    FROM users u
+                    LEFT JOIN team_members tm ON tm.user_id = u.user_id
+                    LEFT JOIN teams t ON t.team_id = tm.team_id
+                    WHERE u.user_id = ?
                     """,
                     (finalized_by_user_id,),
                 ).fetchall()
 
             inserted_by_team: Counter[int] = Counter()
+            inserted_user_ids: set[int] = set()
             team_names: dict[int, str] = {}
+            user_rows: dict[int, sqlite3.Row] = {}
             for participant in participants:
+                user_id = int(participant["user_id"])
+                user_rows[user_id] = participant
+                player_cursor = connection.execute(
+                    """
+                    INSERT OR IGNORE INTO player_answers (row_index, user_id, answered_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (row_index, user_id, _to_iso(current)),
+                )
+                if player_cursor.rowcount:
+                    inserted_user_ids.add(user_id)
+
+                if participant["team_id"] is None:
+                    continue
                 team_id = int(participant["team_id"])
-                team_names[team_id] = str(participant["team_name"])
+                team_names[team_id] = str(participant["team_name"] or "")
                 cursor = connection.execute(
                     """
                     INSERT OR IGNORE INTO game_answers (row_index, user_id, team_id, answered_at)
                     VALUES (?, ?, ?, ?)
                     """,
-                    (row_index, int(participant["user_id"]), team_id, _to_iso(current)),
+                    (row_index, user_id, team_id, _to_iso(current)),
                 )
                 if cursor.rowcount:
                     inserted_by_team[team_id] += 1
 
-            if not inserted_by_team:
+            if not inserted_user_ids and not inserted_by_team:
                 return GameUpdateResult()
 
             after_scores = self._team_scores_by_id(connection)
             lead_changes: list[TeamLeadChange] = []
             combo_updates: list[TeamComboUpdate] = []
             combo_resets: list[TeamComboReset] = []
+            user_score_changes: list[UserScoreChange] = []
+            team_score_changes: list[TeamScoreChange] = []
+
+            for user_id in sorted(inserted_user_ids):
+                user_row = user_rows[user_id]
+                user_score_changes.append(
+                    UserScoreChange(
+                        user_id=user_id,
+                        username=str(user_row["username"] or ""),
+                        first_name=str(user_row["first_name"] or ""),
+                        team_id=int(user_row["team_id"]) if user_row["team_id"] is not None else None,
+                        team_name=str(user_row["team_name"]) if user_row["team_name"] else None,
+                        score=self._player_score(connection, user_id),
+                    )
+                )
 
             for team_id, increment in inserted_by_team.items():
                 previous_score = before_scores.get(team_id, 0)
@@ -964,6 +1102,13 @@ class LabelingStateStore:
                             previous_leader_score=previous_other_top,
                         )
                     )
+                team_score_changes.append(
+                    TeamScoreChange(
+                        team_id=team_id,
+                        team_name=team_names[team_id],
+                        score=current_score,
+                    )
+                )
 
                 combo_update, combo_reset = self._record_team_combo_answer(
                     connection,
@@ -981,6 +1126,8 @@ class LabelingStateStore:
             lead_changes=tuple(lead_changes),
             combo_updates=tuple(combo_updates),
             combo_resets=tuple(combo_resets),
+            user_score_changes=tuple(user_score_changes),
+            team_score_changes=tuple(team_score_changes),
         )
 
     def expire_team_combo(
@@ -1020,6 +1167,49 @@ class LabelingStateStore:
                 (_to_iso(current), team_id),
             )
         return TeamComboReset(team_id=team_id, team_name=str(row["name"]), combo_count=combo_count)
+
+    def claim_achievement(
+        self,
+        *,
+        scope: str,
+        owner_id: int,
+        code: str,
+        title: str,
+        description: str,
+        now: datetime | None = None,
+    ) -> AchievementRecord | None:
+        current = now or utcnow()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO achievements (
+                    scope,
+                    owner_id,
+                    code,
+                    title,
+                    description,
+                    unlocked_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (scope, owner_id, code, title, description, _to_iso(current)),
+            )
+        if not cursor.rowcount:
+            return None
+        return AchievementRecord(
+            scope=scope,
+            owner_id=owner_id,
+            code=code,
+            title=title,
+            description=description,
+            unlocked_at=current,
+        )
+
+    def user_achievements(self, user_id: int) -> list[AchievementRecord]:
+        return self._achievements(scope="user", owner_id=user_id)
+
+    def team_achievements(self, team_id: int) -> list[AchievementRecord]:
+        return self._achievements(scope="team", owner_id=team_id)
 
     def user_stats(self, user_id: int, now: datetime | None = None) -> UserLabelStats | None:
         current = now or utcnow()
@@ -1113,6 +1303,36 @@ class LabelingStateStore:
             """
         ).fetchall()
         return {int(row["team_id"]): int(row["score"]) for row in rows}
+
+    def _player_score(self, connection: sqlite3.Connection, user_id: int) -> int:
+        row = connection.execute(
+            "SELECT COUNT(*) AS count FROM player_answers WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return int(row["count"])
+
+    def _achievements(self, *, scope: str, owner_id: int) -> list[AchievementRecord]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT scope, owner_id, code, title, description, unlocked_at
+                FROM achievements
+                WHERE scope = ? AND owner_id = ?
+                ORDER BY unlocked_at, code
+                """,
+                (scope, owner_id),
+            ).fetchall()
+        return [
+            AchievementRecord(
+                scope=str(row["scope"]),
+                owner_id=int(row["owner_id"]),
+                code=str(row["code"]),
+                title=str(row["title"]),
+                description=str(row["description"]),
+                unlocked_at=_from_iso(str(row["unlocked_at"])),
+            )
+            for row in rows
+        ]
 
     def _team_member_stats(
         self,

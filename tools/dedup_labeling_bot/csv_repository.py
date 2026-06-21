@@ -36,6 +36,11 @@ class LabelingCsvRepository:
         frame = self.load()
         return [int(idx) for idx, value in frame["label"].items() if not is_labeled(value)]
 
+    def is_row_available(self, row_index: int) -> bool:
+        frame = self.load()
+        self._ensure_row_index(frame, row_index)
+        return not is_labeled(frame.at[row_index, "label"])
+
     def set_label(self, row_index: int, label: str) -> None:
         if label not in VALID_LABELS:
             raise ValueError(f"Unsupported label: {label!r}")

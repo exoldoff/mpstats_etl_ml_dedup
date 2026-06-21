@@ -24,6 +24,8 @@ def test_set_label_preserves_existing_columns(tmp_path) -> None:
     assert list(frame.columns) == ["label", "notes", "title_a", "title_b", "custom_column"]
     assert frame.at[1, "label"] == "different_product"
     assert frame.at[0, "custom_column"] == "x"
+    assert repository.is_row_available(0)
+    assert not repository.is_row_available(1)
 
 
 def test_missing_label_and_notes_columns_are_added(tmp_path) -> None:

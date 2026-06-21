@@ -84,6 +84,8 @@ def build_bot_commands() -> list[BotCommand]:
         BotCommand("me", "моя статистика"),
         BotCommand("team", "вступить в команду"),
         BotCommand("teams", "топ команд"),
+        BotCommand("players", "топ игроков"),
+        BotCommand("achievements", "мои ачивки"),
         BotCommand("stats", "общий прогресс"),
         BotCommand("release", "освободить мои пары"),
         BotCommand("logout", "выйти"),
@@ -188,6 +190,27 @@ class TelegramLabelingHandlers:
             text = self.service.team_leaderboard()
         await message.reply_text(text, parse_mode=ParseMode.HTML)
 
+    async def players(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._ensure_authorized(update):
+            return
+        message = update.effective_message
+        if message is None:
+            return
+        async with self.lock:
+            text = self.service.player_leaderboard()
+        await message.reply_text(text, parse_mode=ParseMode.HTML)
+
+    async def achievements(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._ensure_authorized(update):
+            return
+        user = update.effective_user
+        message = update.effective_message
+        if user is None or message is None:
+            return
+        async with self.lock:
+            text = self.service.user_achievements(user.id)
+        await message.reply_text(text, parse_mode=ParseMode.HTML)
+
     async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
             return
@@ -272,8 +295,17 @@ class TelegramLabelingHandlers:
             try:
                 outcome = self.service.label_row(user.id, parsed.row_index, parsed.label)
             except ValueError as exc:
+                next_pair = self.service.navigate_pair(user.id, parsed.row_index, "next")
                 await query.answer()
-                await self._safe_edit_message(query, f"{exc}. Нажмите /next, чтобы получить актуальную пару.")
+                if next_pair is None:
+                    await self._safe_edit_message(query, f"{exc}. Свободных пар больше нет.")
+                    return
+                await self._safe_edit_message(
+                    query,
+                    next_pair.message,
+                    reply_markup=build_keyboard(next_pair.row_index, next_pair.selected_label),
+                    parse_mode=ParseMode.HTML,
+                )
                 return
             next_pair = self.service.navigate_pair(user.id, parsed.row_index, "next")
             current_pair = self.service.pair_for_row(user.id, parsed.row_index)
@@ -583,7 +615,16 @@ class TelegramLabelingHandlers:
             try:
                 self.service.move_row_to_discussion(user.id, row_index, LABEL_UNCERTAIN)
             except ValueError as exc:
-                await self._safe_edit_message(query, f"{exc}. Нажмите /next, чтобы получить актуальную пару.")
+                next_pair = self.service.navigate_pair(user.id, row_index, "next")
+                if next_pair is None:
+                    await self._safe_edit_message(query, f"{exc}. Свободных пар больше нет.")
+                    return
+                await self._safe_edit_message(
+                    query,
+                    next_pair.message,
+                    reply_markup=build_keyboard(next_pair.row_index, next_pair.selected_label),
+                    parse_mode=ParseMode.HTML,
+                )
                 return
             if message_id is not None and chat_id is not None:
                 self.service.record_discussion_post(
@@ -611,6 +652,8 @@ def create_application(service: LabelingBotService) -> Application:
     application.add_handler(CommandHandler("me", handlers.me))
     application.add_handler(CommandHandler("team", handlers.team))
     application.add_handler(CommandHandler("teams", handlers.teams))
+    application.add_handler(CommandHandler("players", handlers.players))
+    application.add_handler(CommandHandler("achievements", handlers.achievements))
     application.add_handler(CommandHandler("stats", handlers.stats))
     application.add_handler(CommandHandler("release", handlers.release))
     application.add_handler(CommandHandler("logout", handlers.logout))

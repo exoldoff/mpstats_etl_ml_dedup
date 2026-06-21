@@ -210,6 +210,29 @@ def format_team_leaderboard_message(teams: Sequence[object]) -> str:
     return "\n".join(lines)
 
 
+def format_player_leaderboard_message(players: Sequence[object]) -> str:
+    lines = [
+        "🏅 <b>Топ игроков</b>",
+        "Считаются все финальные ответы, даже без команды.",
+    ]
+    if not players:
+        lines.append("")
+        lines.append("Пока нет игроков в зачёте.")
+        return "\n".join(lines)
+
+    medals = ("🥇", "🥈", "🥉")
+    for idx, player in enumerate(players, start=1):
+        medal = medals[idx - 1] if idx <= len(medals) else f"{idx}."
+        score = int(getattr(player, "score"))
+        achievements = int(getattr(player, "achievement_count"))
+        team_name = getattr(player, "team_name", None)
+        team = f" · 🏁 {h(team_name)}" if team_name else ""
+        badges = f" · 🎖️ {achievements}" if achievements else ""
+        name = _user_display(player.user_id, player.username, player.first_name)
+        lines.append(f"{medal} <b>{h(name)}</b> — {score} {_answer_word(score)}{badges}{team}")
+    return "\n".join(lines)
+
+
 def format_team_lead_message(*, team_name: str, score: int, previous_leader_score: int) -> str:
     return (
         "🚨🚨🚨 <b>Смена лидера!</b> 🚨🚨🚨\n"
@@ -218,6 +241,43 @@ def format_team_lead_message(*, team_name: str, score: int, previous_leader_scor
         f"📊 Предыдущая планка лидера: <b>{previous_leader_score}</b>.\n"
         "🔥⚡️💪 Держим темп, догоняем, обгоняем!"
     )
+
+
+def format_achievement_message(*, scope: str, subject_name: str, title: str, description: str) -> str:
+    subject = "Команда" if scope == "team" else "Игрок"
+    return (
+        "🎖️🎉 <b>Ачивка разблокирована!</b> 🎉🎖️\n"
+        f"{subject} <b>{h(subject_name)}</b>\n"
+        f"🏆 <b>{h(title)}</b>\n"
+        f"✨ {h(description)}"
+    )
+
+
+def format_achievements_list(
+    *,
+    user_achievements: Sequence[object],
+    team_name: str | None = None,
+    team_achievements: Sequence[object] = (),
+) -> str:
+    lines = ["🎖️ <b>Ачивки</b>", "", "<b>Личные</b>"]
+    if not user_achievements:
+        lines.append("Пока пусто. Первый финальный ответ откроет стартовую ачивку.")
+    else:
+        for achievement in user_achievements:
+            lines.append(f"• <b>{h(achievement.title)}</b> — {h(achievement.description)}")
+
+    lines.append("")
+    if team_name:
+        lines.append(f"<b>Команда {h(team_name)}</b>")
+        if not team_achievements:
+            lines.append("Пока нет командных ачивок.")
+        else:
+            for achievement in team_achievements:
+                lines.append(f"• <b>{h(achievement.title)}</b> — {h(achievement.description)}")
+    else:
+        lines.append("<b>Команда</b>")
+        lines.append("Вы пока без команды. Вступите через /team <название>.")
+    return "\n".join(lines)
 
 
 def format_combo_hot_message(*, team_name: str, combo_count: int) -> str:
@@ -246,6 +306,8 @@ def format_help_text() -> str:
         f"{code('/me')} — моя статистика\n"
         f"{code('/team <название>')} — вступить в команду или создать её\n"
         f"{code('/teams')} — топ команд\n"
+        f"{code('/players')} — топ игроков\n"
+        f"{code('/achievements')} — мои ачивки\n"
         f"{code('/stats')} — общий прогресс\n"
         f"{code('/release')} — освободить мои неразмеченные пары\n"
         f"{code('/logout')} — выйти\n"
