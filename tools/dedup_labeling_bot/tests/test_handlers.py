@@ -23,7 +23,8 @@ def test_build_keyboard_marks_selected_label() -> None:
 
     assert "✓ Дубль" in texts
     assert "noop:7" in callback_data
-    assert "label:7:different_product" not in callback_data
+    assert "label:7:different_product" in callback_data
+    assert "label:7:uncertain" in callback_data
     assert "nav:7:prev" in callback_data
     assert "nav:7:next" in callback_data
 

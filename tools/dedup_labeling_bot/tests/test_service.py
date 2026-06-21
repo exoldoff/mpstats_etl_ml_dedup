@@ -168,6 +168,28 @@ def test_navigation_moves_within_batch_and_back_to_labeled_pair(tmp_path) -> Non
     assert "<b>Решение:</b> Дубль" in back.message
 
 
+def test_unique_labeled_pair_can_be_changed_after_going_back(tmp_path) -> None:
+    service, csv_path = make_service(tmp_path, mode="unique", batch_size=2)
+    service.authorize(1, "secret")
+
+    first = service.next_pair(1)
+    assert first is not None
+    second = service.navigate_pair(1, first.row_index, "next")
+    assert second is not None
+    service.label_row(1, first.row_index, "exact_duplicate")
+
+    back = service.navigate_pair(1, second.row_index, "prev")
+    assert back is not None
+    assert back.row_index == first.row_index
+    changed = service.label_row(1, back.row_index, "different_product")
+    refreshed = service.pair_for_row(1, back.row_index)
+
+    assert changed.final_label == "different_product"
+    assert pd.read_csv(csv_path).at[back.row_index, "label"] == "different_product"
+    assert refreshed.selected_label == "different_product"
+    assert "<b>Решение:</b> Разные" in refreshed.message
+
+
 def test_navigation_assigns_next_batch_after_label(tmp_path) -> None:
     service, _ = make_service(tmp_path, mode="unique", batch_size=1)
     service.authorize(1, "secret")

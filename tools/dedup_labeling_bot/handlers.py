@@ -31,7 +31,7 @@ from .service import AssignedPair, LabelingBotService
 
 def _label_button(row_index: int, label: str, text: str, selected_label: str | None) -> InlineKeyboardButton:
     button_text = f"✓ {text}" if selected_label == label else text
-    callback_data = make_noop_callback(row_index) if selected_label else make_label_callback(row_index, label)
+    callback_data = make_noop_callback(row_index) if selected_label == label else make_label_callback(row_index, label)
     return InlineKeyboardButton(button_text, callback_data=callback_data)
 
 

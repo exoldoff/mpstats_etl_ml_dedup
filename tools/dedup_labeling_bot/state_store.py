@@ -402,9 +402,12 @@ class LabelingStateStore:
                 """,
                 (row_index, user_id),
             ).fetchone()
-            if assignment is None or assignment["status"] != ASSIGNED:
+            if assignment is None or assignment["status"] not in {ASSIGNED, LABELED}:
                 raise ValueError("Row is not assigned to this user")
-            if _from_iso(assignment["expires_at"]) <= current:
+            is_relabel = assignment["status"] == LABELED
+            if is_relabel and mode != "unique":
+                raise ValueError("Row is already labeled by this user")
+            if assignment["status"] == ASSIGNED and _from_iso(assignment["expires_at"]) <= current:
                 connection.execute(
                     """
                     UPDATE assignments
