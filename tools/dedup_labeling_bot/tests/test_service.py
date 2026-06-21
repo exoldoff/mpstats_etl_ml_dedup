@@ -10,11 +10,11 @@ from tools.dedup_labeling_bot.service import LabelingBotService
 from tools.dedup_labeling_bot.state_store import LabelingStateStore
 
 
-def make_csv(tmp_path, rows: int = 4):
+def make_csv(tmp_path, rows: int = 4, labeled_count: int = 0):
     csv_path = tmp_path / "labeling.csv"
     pd.DataFrame(
         {
-            "label": ["" for _ in range(rows)],
+            "label": ["exact_duplicate" if idx < labeled_count else "" for idx in range(rows)],
             "notes": ["" for _ in range(rows)],
             "title_a": [f"a{idx}" for idx in range(rows)],
             "title_b": [f"b{idx}" for idx in range(rows)],
@@ -34,8 +34,10 @@ def make_service(
     overlap_votes: int = 2,
     batch_size: int = 2,
     discussion_chat_id=None,
+    rows: int = 4,
+    labeled_count: int = 0,
 ):
-    csv_path = make_csv(tmp_path)
+    csv_path = make_csv(tmp_path, rows=rows, labeled_count=labeled_count)
     config = LabelingBotConfig(
         token="token",
         access_password="secret",
@@ -81,6 +83,42 @@ def test_unique_batches_do_not_overlap_and_write_csv(tmp_path) -> None:
 
     assert outcome.final_label == "exact_duplicate"
     assert pd.read_csv(csv_path).at[first.row_index, "label"] == "exact_duplicate"
+
+
+def test_milestone_announcements_are_claimed_once(tmp_path) -> None:
+    service, _ = make_service(tmp_path, mode="unique", batch_size=1, rows=101, labeled_count=99)
+    service.authorize(1, "secret")
+    service.authorize(2, "secret")
+
+    first = service.next_pair(1)
+    assert first is not None
+    outcome = service.label_row(1, first.row_index, "exact_duplicate")
+
+    assert len(outcome.milestones) == 1
+    milestone = outcome.milestones[0]
+    assert milestone.threshold == 100
+    assert milestone.labeled_rows == 100
+    assert milestone.total_rows == 101
+    assert milestone.remaining_rows == 1
+    assert "100 заполнено" in milestone.message
+    assert service.milestone_recipients() == [1, 2]
+
+    second = service.next_pair(2)
+    assert second is not None
+    second_outcome = service.label_row(2, second.row_index, "different_product")
+
+    assert second_outcome.milestones == ()
+
+
+def test_existing_progress_does_not_backfill_old_milestones(tmp_path) -> None:
+    service, _ = make_service(tmp_path, mode="unique", batch_size=1, rows=102, labeled_count=100)
+    service.authorize(1, "secret")
+
+    first = service.next_pair(1)
+    assert first is not None
+    outcome = service.label_row(1, first.row_index, "exact_duplicate")
+
+    assert outcome.milestones == ()
 
 
 def test_navigation_moves_within_batch_and_back_to_labeled_pair(tmp_path) -> None:

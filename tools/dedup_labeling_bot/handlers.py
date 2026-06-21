@@ -200,7 +200,7 @@ class TelegramLabelingHandlers:
 
         data = query.data or ""
         if data.startswith(f"{DISCUSSION_LABEL_CALLBACK_PREFIX}:"):
-            await self._handle_discussion_callback(query, user, data)
+            await self._handle_discussion_callback(query, context, user, data)
             return
 
         if data.startswith(f"{NAV_CALLBACK_PREFIX}:"):
@@ -244,8 +244,10 @@ class TelegramLabelingHandlers:
         await query.answer(self._toast(outcome.message))
         if next_pair is None:
             await self._edit_pair_message(query, current_pair)
+            await self._broadcast_milestones(context, outcome.milestones)
             return
         await self._edit_pair_message(query, next_pair)
+        await self._broadcast_milestones(context, outcome.milestones)
 
     async def _ensure_authorized(self, update: Update) -> bool:
         user = update.effective_user
@@ -312,6 +314,28 @@ class TelegramLabelingHandlers:
         await query.answer()
         await self._edit_pair_message(query, pair)
 
+    async def _broadcast_milestones(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        milestones: object,
+    ) -> None:
+        if not milestones:
+            return
+        recipients: list[int | str] = list(self.service.milestone_recipients())
+        discussion_chat_id = self.service.config.discussion_chat_id
+        if discussion_chat_id is not None:
+            recipients.append(discussion_chat_id)
+        targets = list(dict.fromkeys(recipients))
+
+        async def send_one(chat_id: int | str, text: str) -> None:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+            except Exception:
+                return
+
+        for milestone in milestones:
+            await asyncio.gather(*(send_one(chat_id, milestone.message) for chat_id in targets))
+
     async def _send_discussion_message(
         self,
         context: ContextTypes.DEFAULT_TYPE,
@@ -347,7 +371,13 @@ class TelegramLabelingHandlers:
             return f"{first_name} ({user_id})"
         return str(user_id)
 
-    async def _handle_discussion_callback(self, query: object, user: object, data: str) -> None:
+    async def _handle_discussion_callback(
+        self,
+        query: object,
+        context: ContextTypes.DEFAULT_TYPE,
+        user: object,
+        data: str,
+    ) -> None:
         if not self.service.is_authorized(user.id):
             await query.answer()
             await self._safe_edit_message(query, "Сначала войдите через /start <пароль>.")
@@ -374,6 +404,7 @@ class TelegramLabelingHandlers:
             reply_markup=reply_markup,
             parse_mode=ParseMode.HTML,
         )
+        await self._broadcast_milestones(context, outcome.milestones)
 
     async def _handle_uncertain_callback(
         self,

@@ -6,8 +6,11 @@ import pandas as pd
 
 from .config import LabelingBotConfig
 from .csv_repository import CsvStats, LabelingCsvRepository
-from .formatter import format_discussion_message, format_pair_message
+from .formatter import format_discussion_message, format_milestone_message, format_pair_message
 from .state_store import LabelingStateStore
+
+
+MILESTONE_THRESHOLDS = (100, 300, 500, 1000, 1500, 2000, 2500, 3000)
 
 
 @dataclass(frozen=True)
@@ -19,10 +22,20 @@ class AssignedPair:
 
 
 @dataclass(frozen=True)
+class MilestoneAnnouncement:
+    threshold: int
+    labeled_rows: int
+    total_rows: int
+    remaining_rows: int
+    message: str
+
+
+@dataclass(frozen=True)
 class LabelOutcome:
     status: str
     message: str
     final_label: str | None = None
+    milestones: tuple[MilestoneAnnouncement, ...] = ()
 
 
 class LabelingBotService:
@@ -134,11 +147,14 @@ class LabelingBotService:
             overlap_votes=self.config.overlap_votes,
         )
         if result.finalized:
+            previous_labeled_rows = self.repository.stats().labeled_rows
             self.repository.set_label(row_index, result.final_label or label)
+            milestones = self._claim_milestones(previous_labeled_rows=previous_labeled_rows)
             return LabelOutcome(
                 status=result.status,
                 final_label=result.final_label,
                 message=f"Сохранено в CSV: {result.final_label}",
+                milestones=milestones,
             )
         if result.conflict:
             return LabelOutcome(
@@ -169,11 +185,14 @@ class LabelingBotService:
             overlap_votes=self.config.overlap_votes,
         )
         if result.finalized:
+            previous_labeled_rows = self.repository.stats().labeled_rows
             self.repository.set_label(row_index, result.final_label or label)
+            milestones = self._claim_milestones(previous_labeled_rows=previous_labeled_rows)
             return LabelOutcome(
                 status=result.status,
                 final_label=result.final_label,
                 message=f"Есть консенсус. Сохранено в CSV: {result.final_label}",
+                milestones=milestones,
             )
         return LabelOutcome(
             status=result.status,
@@ -198,6 +217,39 @@ class LabelingBotService:
 
     def release_user_assignments(self, user_id: int) -> int:
         return self.store.release_user_assignments(user_id)
+
+    def milestone_recipients(self) -> list[int]:
+        return self.store.authorized_user_ids()
+
+    def _claim_milestones(self, *, previous_labeled_rows: int) -> tuple[MilestoneAnnouncement, ...]:
+        csv_stats = self.repository.stats()
+        crossed_thresholds = tuple(
+            threshold
+            for threshold in MILESTONE_THRESHOLDS
+            if previous_labeled_rows < threshold <= csv_stats.labeled_rows
+        )
+        if not crossed_thresholds:
+            return ()
+        thresholds = self.store.claim_due_milestones(
+            thresholds=crossed_thresholds,
+            labeled_rows=csv_stats.labeled_rows,
+            remaining_rows=csv_stats.unlabeled_rows,
+        )
+        return tuple(
+            MilestoneAnnouncement(
+                threshold=threshold,
+                labeled_rows=csv_stats.labeled_rows,
+                total_rows=csv_stats.total_rows,
+                remaining_rows=csv_stats.unlabeled_rows,
+                message=format_milestone_message(
+                    threshold=threshold,
+                    labeled_rows=csv_stats.labeled_rows,
+                    total_rows=csv_stats.total_rows,
+                    remaining_rows=csv_stats.unlabeled_rows,
+                ),
+            )
+            for threshold in thresholds
+        )
 
     def stats(self) -> str:
         csv_stats = self.repository.stats()

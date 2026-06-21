@@ -104,6 +104,12 @@ class LabelingStateStore:
                     chat_id TEXT NOT NULL,
                     message_id INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS milestone_notifications (
+                    threshold INTEGER PRIMARY KEY,
+                    notified_at TEXT NOT NULL,
+                    labeled_rows INTEGER NOT NULL,
+                    remaining_rows INTEGER NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_assignments_status
                     ON assignments(status, expires_at);
                 CREATE INDEX IF NOT EXISTS idx_assignments_user_status
@@ -160,6 +166,11 @@ class LabelingStateStore:
                 """,
                 (username or "", first_name or "", _to_iso(current), user_id),
             )
+
+    def authorized_user_ids(self) -> list[int]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT user_id FROM users ORDER BY user_id").fetchall()
+        return [int(row["user_id"]) for row in rows]
 
     def expire_stale_assignments(self, now: datetime | None = None) -> int:
         current = now or utcnow()
@@ -280,6 +291,38 @@ class LabelingStateStore:
         if row is None:
             return None
         return str(row["label"])
+
+    def claim_due_milestones(
+        self,
+        *,
+        thresholds: tuple[int, ...],
+        labeled_rows: int,
+        remaining_rows: int,
+        now: datetime | None = None,
+    ) -> list[int]:
+        current = now or utcnow()
+        due_thresholds = [threshold for threshold in thresholds if threshold <= labeled_rows]
+        if not due_thresholds:
+            return []
+
+        claimed: list[int] = []
+        with self._connect() as connection:
+            for threshold in due_thresholds:
+                cursor = connection.execute(
+                    """
+                    INSERT OR IGNORE INTO milestone_notifications (
+                        threshold,
+                        notified_at,
+                        labeled_rows,
+                        remaining_rows
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (threshold, _to_iso(current), labeled_rows, remaining_rows),
+                )
+                if cursor.rowcount:
+                    claimed.append(threshold)
+        return claimed
 
     def select_available_rows(
         self,

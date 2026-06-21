@@ -45,7 +45,7 @@ def _item_line(row: pd.Series, side: str) -> str:
     brand = first_cell(row, f"brand_{side}")
     title = first_cell(row, f"title_{side}")
     pack = _pack_summary(row, side)
-    return f"<b>{side.upper()}:</b> {h(marketplace)} // {h(brand)} // {h(title)} // {h(pack)}"
+    return f"<b>{side.upper()}:</b> 🛒 {h(marketplace)} // 🏷️ {h(brand)} // 🧾 {h(title)} // 📦 {h(pack)}"
 
 
 def _reference_block(row: pd.Series) -> str:
@@ -109,13 +109,34 @@ def format_pair_message(
 
     return (
         f"{header}\n\n"
-        f"<b>Справочно</b>\n"
+        f"<b>🧷 Справочно</b>\n"
         f"{_reference_block(row)}\n\n"
-        f"<b>Сигналы</b>\n"
+        f"<b>📊 Сигналы</b>\n"
         f"{_signal_block(row)}\n\n"
-        f"<b>Товары</b>\n"
+        f"<b>🛍️ Товары</b>\n"
         f"{_item_line(row, 'a')}\n"
         f"{_item_line(row, 'b')}"
+    )
+
+
+def format_milestone_message(*, threshold: int, labeled_rows: int, total_rows: int, remaining_rows: int) -> str:
+    templates = {
+        100: "Молодцы, банда, первые сто добили. Дальше уже пошла нормальная заруба.",
+        300: "Вот это темп. Таблица начала трещать, а мы только разогреваемся.",
+        500: "Пять сотен закрыто. Красавцы, ебашим как надо.",
+        1000: "Тысяча взята. Это уже не разметка, это производственный угар.",
+        1500: "Полторы тысячи в кармане. Не расслабляемся, добиваем эту махину.",
+        2000: "Две тысячи закрыто. Жёсткая работа, очень по делу.",
+        2500: "Две с половиной тысячи. Уже пахнет финишем и лёгким безумием.",
+        3000: "Три тысячи. Всё, это мощно. Команда реально вывезла.",
+    }
+    line = templates.get(threshold, "Рубеж взят. Хорошая работа, продолжаем давить.")
+    return (
+        f"🔥 <b>{threshold} заполнено!</b>\n"
+        f"{h(line)}\n"
+        f"📈 Прогресс: <b>{labeled_rows}/{total_rows}</b>\n"
+        f"⏳ Осталось: <b>{remaining_rows}</b>\n"
+        "🚀 Погнали дальше."
     )
 
 

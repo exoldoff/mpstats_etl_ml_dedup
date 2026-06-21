@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pandas as pd
 
-from tools.dedup_labeling_bot.formatter import format_discussion_message, format_help_text, format_pair_message
+from tools.dedup_labeling_bot.formatter import (
+    format_discussion_message,
+    format_help_text,
+    format_milestone_message,
+    format_pair_message,
+)
 
 
 def test_format_pair_message_uses_html_and_code_for_sku() -> None:
@@ -33,12 +38,12 @@ def test_format_pair_message_uses_html_and_code_for_sku() -> None:
 
     assert "<b>Пара 1/10</b>" in message
     assert "<b>SKU A:</b> <code>SKU&lt;1&gt;&amp;A</code>" in message
-    assert "<b>A:</b> Ozon // Brand // Мыло &lt;fresh&gt; &amp; clean // ед. 0.5 / всего 1.0 / x2" in message
-    assert "<b>B:</b> WB // Brand // Мыло fresh // ед. 0.5 / всего 1.0 / x2" in message
-    assert "<b>Справочно</b>" in message
-    assert "<b>Сигналы</b>" in message
-    assert message.index("<b>Справочно</b>") < message.index("<b>Сигналы</b>")
-    assert message.index("<b>Сигналы</b>") < message.index("<b>Товары</b>")
+    assert "<b>A:</b> 🛒 Ozon // 🏷️ Brand // 🧾 Мыло &lt;fresh&gt; &amp; clean // 📦 ед. 0.5 / всего 1.0 / x2" in message
+    assert "<b>B:</b> 🛒 WB // 🏷️ Brand // 🧾 Мыло fresh // 📦 ед. 0.5 / всего 1.0 / x2" in message
+    assert "<b>🧷 Справочно</b>" in message
+    assert "<b>📊 Сигналы</b>" in message
+    assert message.index("<b>🧷 Справочно</b>") < message.index("<b>📊 Сигналы</b>")
+    assert message.index("<b>📊 Сигналы</b>") < message.index("<b>🛍️ Товары</b>")
     assert message.index("<b>A:</b>") < message.index("<b>B:</b>")
 
 
@@ -54,6 +59,14 @@ def test_format_help_text_escapes_start_placeholder() -> None:
     text = format_help_text()
 
     assert "<code>/start &lt;пароль&gt;</code>" in text
+
+
+def test_format_milestone_message_contains_progress_and_remaining() -> None:
+    message = format_milestone_message(threshold=100, labeled_rows=101, total_rows=300, remaining_rows=199)
+
+    assert "🔥 <b>100 заполнено!</b>" in message
+    assert "📈 Прогресс: <b>101/300</b>" in message
+    assert "⏳ Осталось: <b>199</b>" in message
 
 
 def test_format_discussion_message_has_initiator() -> None:
