@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+from typing import Sequence
 
 import pandas as pd
 
@@ -89,6 +90,22 @@ def _label_title(label: str) -> str:
     return LABEL_TITLES.get(label, label)
 
 
+def _answer_word(count: int) -> str:
+    if count % 10 == 1 and count % 100 != 11:
+        return "ответ"
+    if count % 10 in {2, 3, 4} and count % 100 not in {12, 13, 14}:
+        return "ответа"
+    return "ответов"
+
+
+def _user_display(user_id: int, username: str, first_name: str) -> str:
+    if username:
+        return f"@{username}"
+    if first_name:
+        return first_name
+    return str(user_id)
+
+
 def format_pair_message(
     row: pd.Series,
     row_index: int,
@@ -154,12 +171,81 @@ def format_discussion_message(row: pd.Series, row_index: int, total_rows: int, u
     )
 
 
+def format_team_joined_message(*, team_name: str, leaderboard: str) -> str:
+    return (
+        f"🏁 Вы в команде <b>{h(team_name)}</b>.\n"
+        "Теперь ваши финальные ответы идут в командный зачёт.\n\n"
+        f"{leaderboard}"
+    )
+
+
+def format_team_leaderboard_message(teams: Sequence[object]) -> str:
+    lines = [
+        "🏆 <b>Топ команд разметки</b>",
+        "Очки начисляются за финально решённые пары.",
+    ]
+    if not teams:
+        lines.append("")
+        lines.append("Пока нет команд. Создайте команду через /team Название")
+        return "\n".join(lines)
+
+    medals = ("🥇", "🥈", "🥉")
+    for idx, team in enumerate(teams, start=1):
+        medal = medals[idx - 1] if idx <= len(medals) else f"{idx}."
+        score = int(getattr(team, "score"))
+        combo_count = int(getattr(team, "combo_count"))
+        combo = f" · ⚡ x{combo_count}" if combo_count > 0 else ""
+        lines.append("")
+        lines.append(f"{medal} <b>{h(getattr(team, 'name'))}</b> — {score} {_answer_word(score)}{combo}")
+        members = list(getattr(team, "members", ()))
+        if members:
+            member_parts = [
+                f"{h(_user_display(member.user_id, member.username, member.first_name))}: {member.score}"
+                for member in members[:4]
+            ]
+            hidden_count = len(members) - len(member_parts)
+            if hidden_count > 0:
+                member_parts.append(f"+{hidden_count}")
+            lines.append(f"   👥 {' · '.join(member_parts)}")
+    return "\n".join(lines)
+
+
+def format_team_lead_message(*, team_name: str, score: int, previous_leader_score: int) -> str:
+    return (
+        "🚨🚨🚨 <b>Смена лидера!</b> 🚨🚨🚨\n"
+        f"🏎️💨 Команда <b>{h(team_name)}</b> вырывается вперёд!\n"
+        f"🏆 Сейчас у них <b>{score}</b> {_answer_word(score)}.\n"
+        f"📊 Предыдущая планка лидера: <b>{previous_leader_score}</b>.\n"
+        "🔥⚡️💪 Держим темп, догоняем, обгоняем!"
+    )
+
+
+def format_combo_hot_message(*, team_name: str, combo_count: int) -> str:
+    return (
+        f"⚡️⚡️⚡️ <b>Комбо x{combo_count}!</b> ⚡️⚡️⚡️\n"
+        f"Команда <b>{h(team_name)}</b> закрывает ответы серией без паузы.\n"
+        "⏱️ Есть 2 минуты, чтобы продлить серию.\n"
+        "🔥🔥🔥 Вот это темп!"
+    )
+
+
+def format_combo_reset_message(*, team_name: str, combo_count: int) -> str:
+    return (
+        "💥 <b>Комбо сброшено</b>\n"
+        f"Команда <b>{h(team_name)}</b> остановилась на x{combo_count}.\n"
+        "⏱️ Две минуты прошли без нового финального ответа.\n"
+        "🔁 Собираемся и запускаем новую серию!"
+    )
+
+
 def format_help_text() -> str:
     return (
         "<b>Команды</b>\n"
         f"{code('/start <пароль>')} — войти\n"
         f"{code('/next')} — получить пару\n"
         f"{code('/me')} — моя статистика\n"
+        f"{code('/team <название>')} — вступить в команду или создать её\n"
+        f"{code('/teams')} — топ команд\n"
         f"{code('/stats')} — общий прогресс\n"
         f"{code('/release')} — освободить мои неразмеченные пары\n"
         f"{code('/logout')} — выйти\n"

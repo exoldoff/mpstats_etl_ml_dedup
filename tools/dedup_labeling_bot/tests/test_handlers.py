@@ -46,3 +46,5 @@ def test_build_bot_commands_contains_menu_commands() -> None:
     assert commands["next"] == "получить пару"
     assert commands["menu"] == "показать команды"
     assert commands["stats"] == "общий прогресс"
+    assert commands["team"] == "вступить в команду"
+    assert commands["teams"] == "топ команд"

@@ -2,16 +2,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import random
+from datetime import datetime
 
 import pandas as pd
 
 from .config import LabelingBotConfig
 from .csv_repository import CsvStats, LabelingCsvRepository
-from .formatter import format_discussion_message, format_milestone_message, format_pair_message
+from .formatter import (
+    format_combo_hot_message,
+    format_combo_reset_message,
+    format_discussion_message,
+    format_milestone_message,
+    format_pair_message,
+    format_team_joined_message,
+    format_team_leaderboard_message,
+    format_team_lead_message,
+)
 from .state_store import LabelingStateStore
 
 
 MILESTONE_THRESHOLDS = (100, 300, 500, 1000, 1500, 2000, 2500, 3000)
+COMBO_ANNOUNCEMENT_THRESHOLDS = (3, 5, 10, 20, 30, 50, 100)
 
 
 @dataclass(frozen=True)
@@ -32,11 +43,24 @@ class MilestoneAnnouncement:
 
 
 @dataclass(frozen=True)
+class ComboTimer:
+    team_id: int
+    deadline_at: datetime
+
+
+@dataclass(frozen=True)
+class GameAnnouncement:
+    message: str
+
+
+@dataclass(frozen=True)
 class LabelOutcome:
     status: str
     message: str
     final_label: str | None = None
     milestones: tuple[MilestoneAnnouncement, ...] = ()
+    game_announcements: tuple[GameAnnouncement, ...] = ()
+    combo_timers: tuple[ComboTimer, ...] = ()
 
 
 class LabelingBotService:
@@ -180,11 +204,19 @@ class LabelingBotService:
             previous_labeled_rows = self.repository.stats().labeled_rows
             self.repository.set_label(row_index, result.final_label or label)
             milestones = self._claim_milestones(previous_labeled_rows=previous_labeled_rows)
+            game_announcements, combo_timers = self._record_game_updates(
+                row_index=row_index,
+                final_label=result.final_label or label,
+                finalized_by_user_id=user_id,
+                previous_labeled_rows=previous_labeled_rows,
+            )
             return LabelOutcome(
                 status=result.status,
                 final_label=result.final_label,
                 message=f"Сохранено в CSV: {result.final_label}",
                 milestones=milestones,
+                game_announcements=game_announcements,
+                combo_timers=combo_timers,
             )
         if result.conflict:
             return LabelOutcome(
@@ -218,11 +250,19 @@ class LabelingBotService:
             previous_labeled_rows = self.repository.stats().labeled_rows
             self.repository.set_label(row_index, result.final_label or label)
             milestones = self._claim_milestones(previous_labeled_rows=previous_labeled_rows)
+            game_announcements, combo_timers = self._record_game_updates(
+                row_index=row_index,
+                final_label=result.final_label or label,
+                finalized_by_user_id=user_id,
+                previous_labeled_rows=previous_labeled_rows,
+            )
             return LabelOutcome(
                 status=result.status,
                 final_label=result.final_label,
                 message=f"Есть консенсус. Сохранено в CSV: {result.final_label}",
                 milestones=milestones,
+                game_announcements=game_announcements,
+                combo_timers=combo_timers,
             )
         return LabelOutcome(
             status=result.status,
@@ -250,6 +290,105 @@ class LabelingBotService:
 
     def milestone_recipients(self) -> list[int]:
         return self.store.authorized_user_ids()
+
+    def announcement_recipients(self) -> list[int | str]:
+        recipients: list[int | str] = list(self.store.authorized_user_ids())
+        if self.config.discussion_chat_id is not None:
+            recipients.append(self.config.discussion_chat_id)
+        if self.config.leaderboard_chat_id is not None:
+            recipients.append(self.config.leaderboard_chat_id)
+        return list(dict.fromkeys(recipients))
+
+    def join_team(self, user_id: int, team_name: str) -> str:
+        membership = self.store.set_user_team(user_id, team_name)
+        return format_team_joined_message(
+            team_name=membership.name,
+            leaderboard=self.team_leaderboard(),
+        )
+
+    def team_leaderboard(self) -> str:
+        return format_team_leaderboard_message(self.store.team_leaderboard(limit=10))
+
+    def leaderboard_pin(self) -> tuple[str, int] | None:
+        pin = self.store.leaderboard_pin()
+        if pin is None:
+            return None
+        return pin.chat_id, pin.message_id
+
+    def record_leaderboard_pin(self, *, chat_id: int | str, message_id: int) -> None:
+        self.store.record_leaderboard_pin(chat_id=chat_id, message_id=message_id)
+
+    def expire_team_combo(self, *, team_id: int, deadline_at: datetime) -> GameAnnouncement | None:
+        reset = self.store.expire_team_combo(team_id=team_id, expected_deadline_at=deadline_at)
+        if reset is None:
+            return None
+        return GameAnnouncement(
+            message=format_combo_reset_message(
+                team_name=reset.team_name,
+                combo_count=reset.combo_count,
+            )
+        )
+
+    def _record_game_updates(
+        self,
+        *,
+        row_index: int,
+        final_label: str,
+        finalized_by_user_id: int,
+        previous_labeled_rows: int,
+    ) -> tuple[tuple[GameAnnouncement, ...], tuple[ComboTimer, ...]]:
+        csv_stats = self.repository.stats()
+        if csv_stats.labeled_rows <= previous_labeled_rows:
+            return (), ()
+
+        updates = self.store.record_game_answers_for_finalized_row(
+            row_index=row_index,
+            final_label=final_label,
+            finalized_by_user_id=finalized_by_user_id,
+            combo_timeout=self.config.combo_timeout,
+        )
+        announcements: list[GameAnnouncement] = []
+        timers: list[ComboTimer] = []
+
+        for reset in updates.combo_resets:
+            announcements.append(
+                GameAnnouncement(
+                    message=format_combo_reset_message(
+                        team_name=reset.team_name,
+                        combo_count=reset.combo_count,
+                    )
+                )
+            )
+
+        for lead in updates.lead_changes:
+            announcements.append(
+                GameAnnouncement(
+                    message=format_team_lead_message(
+                        team_name=lead.team_name,
+                        score=lead.score,
+                        previous_leader_score=lead.previous_leader_score,
+                    )
+                )
+            )
+
+        for combo in updates.combo_updates:
+            crossed_thresholds = [
+                threshold
+                for threshold in COMBO_ANNOUNCEMENT_THRESHOLDS
+                if combo.previous_count < threshold <= combo.combo_count
+            ]
+            if crossed_thresholds:
+                announcements.append(
+                    GameAnnouncement(
+                        message=format_combo_hot_message(
+                            team_name=combo.team_name,
+                            combo_count=combo.combo_count,
+                        )
+                    )
+                )
+            timers.append(ComboTimer(team_id=combo.team_id, deadline_at=combo.deadline_at))
+
+        return tuple(announcements), tuple(timers)
 
     def _claim_milestones(self, *, previous_labeled_rows: int) -> tuple[MilestoneAnnouncement, ...]:
         csv_stats = self.repository.stats()
@@ -284,19 +423,37 @@ class LabelingBotService:
     def stats(self) -> str:
         csv_stats = self.repository.stats()
         users = self.store.all_user_stats()
+        teams = self.store.team_leaderboard(limit=10, include_members=False)
         lines = [
             "Общий прогресс:",
             f"CSV: {csv_stats.labeled_rows}/{csv_stats.total_rows} размечено, {csv_stats.unlabeled_rows} осталось",
             f"Голосов в боте: {self.store.vote_count()}",
             f"Конфликтов: {self.store.conflict_count()}",
             "",
-            "Пользователи:",
+            "Команды:",
         ]
+        if not teams:
+            lines.append("пока нет команд")
+        for idx, team in enumerate(teams, start=1):
+            combo = f", комбо x{team.combo_count}" if team.combo_count > 0 else ""
+            lines.append(f"{idx}. {team.name}: {team.score}{combo}")
+        lines.extend(
+            [
+                "",
+                "Пользователи:",
+            ]
+        )
         if not users:
             lines.append("пока нет авторизованных пользователей")
         for user in users:
             name = self._format_user_name(user.user_id, user.username, user.first_name)
-            lines.append(f"{name}: меток {user.labeled_count}, активных пар {user.active_count}")
+            team = self.store.user_team(user.user_id)
+            game_count = self.store.user_game_answer_count(user.user_id)
+            team_suffix = f", команда {team.name}" if team is not None else ", без команды"
+            lines.append(
+                f"{name}: игровых ответов {game_count}, меток {user.labeled_count}, "
+                f"активных пар {user.active_count}{team_suffix}"
+            )
         return "\n".join(lines)
 
     def user_stats(self, user_id: int) -> str:
@@ -305,8 +462,16 @@ class LabelingBotService:
             return "Вы ещё не авторизованы."
         csv_stats = self.repository.stats()
         name = self._format_user_name(stats.user_id, stats.username, stats.first_name)
+        team = self.store.user_team(user_id)
+        game_count = self.store.user_game_answer_count(user_id)
+        if team is None:
+            team_line = "Команда: нет, вступите через /team <название>"
+        else:
+            team_line = f"Команда: {team.name}, командный счёт: {self.store.team_score(team.team_id)}"
         return (
             f"{name}\n"
+            f"{team_line}\n"
+            f"Игровые ответы: {game_count}\n"
             f"Ваши метки: {stats.labeled_count}\n"
             f"Активные пары: {stats.active_count}\n"
             f"Общий CSV-прогресс: {csv_stats.labeled_rows}/{csv_stats.total_rows}"

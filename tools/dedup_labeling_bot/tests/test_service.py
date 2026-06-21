@@ -35,8 +35,10 @@ def make_service(
     overlap_votes: int = 2,
     batch_size: int = 2,
     discussion_chat_id=None,
+    leaderboard_chat_id=None,
     rows: int = 4,
     labeled_count: int = 0,
+    combo_timeout: timedelta = timedelta(minutes=2),
     assignment_rng: random.Random | None = None,
 ):
     csv_path = make_csv(tmp_path, rows=rows, labeled_count=labeled_count)
@@ -47,10 +49,12 @@ def make_service(
         state_path=tmp_path / "state.sqlite",
         admin_user_ids=frozenset(),
         discussion_chat_id=discussion_chat_id,
+        leaderboard_chat_id=leaderboard_chat_id,
         batch_size=batch_size,
         assignment_mode=mode,
         overlap_votes=overlap_votes,
         assignment_ttl=timedelta(hours=24),
+        combo_timeout=combo_timeout,
     )
     service = LabelingBotService(
         config,
@@ -67,6 +71,114 @@ def test_authorize_checks_password(tmp_path) -> None:
     assert not service.authorize(1, "bad")
     assert service.authorize(1, "secret", username="user")
     assert service.is_authorized(1)
+
+
+def test_team_scores_sum_final_answers_and_show_members(tmp_path) -> None:
+    service, _ = make_service(tmp_path, mode="unique", batch_size=1, rows=3)
+    service.authorize(1, "secret", username="alice")
+    service.authorize(2, "secret", username="bob")
+
+    service.join_team(1, "Шустрые")
+    service.join_team(2, "Шустрые")
+    first = service.next_pair(1)
+    assert first is not None
+    service.label_row(1, first.row_index, "exact_duplicate")
+    second = service.next_pair(2)
+    assert second is not None
+    service.label_row(2, second.row_index, "different_product")
+
+    leaderboard = service.team_leaderboard()
+    user_stats = service.user_stats(1)
+
+    assert "<b>Шустрые</b> — 2 ответа" in leaderboard
+    assert "@alice: 1" in leaderboard
+    assert "@bob: 1" in leaderboard
+    assert "Команда: Шустрые, командный счёт: 2" in user_stats
+    assert "Игровые ответы: 1" in user_stats
+
+
+def test_team_overtake_creates_lead_announcement(tmp_path) -> None:
+    service, _ = make_service(tmp_path, mode="unique", batch_size=1, rows=4)
+    service.authorize(1, "secret")
+    service.authorize(2, "secret")
+    service.join_team(1, "Красные")
+    service.join_team(2, "Синие")
+
+    red = service.next_pair(1)
+    assert red is not None
+    service.label_row(1, red.row_index, "exact_duplicate")
+    blue_first = service.next_pair(2)
+    assert blue_first is not None
+    service.label_row(2, blue_first.row_index, "different_product")
+    blue_second = service.next_pair(2)
+    assert blue_second is not None
+    outcome = service.label_row(2, blue_second.row_index, "different_product")
+
+    messages = "\n".join(announcement.message for announcement in outcome.game_announcements)
+    assert "Смена лидера" in messages
+    assert "Синие" in messages
+    assert "<b>2</b> ответа" in messages
+
+
+def test_combo_threshold_and_timer_are_returned(tmp_path) -> None:
+    service, _ = make_service(tmp_path, mode="unique", batch_size=1, rows=4)
+    service.authorize(1, "secret")
+    service.join_team(1, "Молнии")
+
+    outcome = None
+    for _ in range(3):
+        pair = service.next_pair(1)
+        assert pair is not None
+        outcome = service.label_row(1, pair.row_index, "exact_duplicate")
+
+    assert outcome is not None
+    messages = "\n".join(announcement.message for announcement in outcome.game_announcements)
+    assert "Комбо x3" in messages
+    assert len(outcome.combo_timers) == 1
+    assert outcome.combo_timers[0].team_id == service.store.user_team(1).team_id
+
+
+def test_combo_expiry_resets_team_combo(tmp_path) -> None:
+    service, _ = make_service(
+        tmp_path,
+        mode="unique",
+        batch_size=1,
+        rows=2,
+        combo_timeout=timedelta(seconds=1),
+    )
+    service.authorize(1, "secret")
+    service.join_team(1, "Таймеры")
+
+    pair = service.next_pair(1)
+    assert pair is not None
+    outcome = service.label_row(1, pair.row_index, "exact_duplicate")
+    timer = outcome.combo_timers[0]
+
+    reset = service.store.expire_team_combo(
+        team_id=timer.team_id,
+        expected_deadline_at=timer.deadline_at,
+        now=timer.deadline_at + timedelta(seconds=1),
+    )
+
+    assert reset is not None
+    assert reset.team_name == "Таймеры"
+    assert reset.combo_count == 1
+    assert "⚡ x" not in service.team_leaderboard()
+
+
+def test_relabel_does_not_add_second_game_answer(tmp_path) -> None:
+    service, _ = make_service(tmp_path, mode="unique", batch_size=1, rows=2)
+    service.authorize(1, "secret")
+    service.join_team(1, "Аккуратные")
+
+    pair = service.next_pair(1)
+    assert pair is not None
+    first = service.label_row(1, pair.row_index, "exact_duplicate")
+    second = service.label_row(1, pair.row_index, "different_product")
+
+    assert len(first.combo_timers) == 1
+    assert second.combo_timers == ()
+    assert service.store.user_game_answer_count(1) == 1
 
 
 def test_unique_batches_do_not_overlap_and_write_csv(tmp_path) -> None:

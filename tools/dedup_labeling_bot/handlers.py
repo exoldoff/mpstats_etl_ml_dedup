@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -81,6 +82,8 @@ def build_bot_commands() -> list[BotCommand]:
         BotCommand("start", "войти по паролю"),
         BotCommand("next", "получить пару"),
         BotCommand("me", "моя статистика"),
+        BotCommand("team", "вступить в команду"),
+        BotCommand("teams", "топ команд"),
         BotCommand("stats", "общий прогресс"),
         BotCommand("release", "освободить мои пары"),
         BotCommand("logout", "выйти"),
@@ -97,6 +100,7 @@ class TelegramLabelingHandlers:
     def __init__(self, service: LabelingBotService) -> None:
         self.service = service
         self.lock = asyncio.Lock()
+        self.combo_tasks: dict[int, asyncio.Task[None]] = {}
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
@@ -117,7 +121,10 @@ class TelegramLabelingHandlers:
         if not ok:
             await message.reply_text("Пароль не подошёл.")
             return
-        await message.reply_text("Готово, доступ открыт. Нажмите /next, чтобы получить пару.")
+        await message.reply_text(
+            "Готово, доступ открыт. Вступите в команду через /team <название>, "
+            "потом нажмите /next, чтобы получить пару."
+        )
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
@@ -150,6 +157,36 @@ class TelegramLabelingHandlers:
             async with self.lock:
                 text = self.service.user_stats(update.effective_user.id)
             await message.reply_text(text)
+
+    async def team(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._ensure_authorized(update):
+            return
+        user = update.effective_user
+        message = update.effective_message
+        if user is None or message is None:
+            return
+        if not context.args:
+            await message.reply_text("Напишите название команды так: /team Команда мечты")
+            return
+        team_name = " ".join(context.args)
+        async with self.lock:
+            try:
+                text = self.service.join_team(user.id, team_name)
+            except ValueError as exc:
+                await message.reply_text(f"Не получилось вступить в команду: {exc}")
+                return
+        await message.reply_text(text, parse_mode=ParseMode.HTML)
+        await self._refresh_leaderboard_pin(context)
+
+    async def teams(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._ensure_authorized(update):
+            return
+        message = update.effective_message
+        if message is None:
+            return
+        async with self.lock:
+            text = self.service.team_leaderboard()
+        await message.reply_text(text, parse_mode=ParseMode.HTML)
 
     async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
@@ -244,10 +281,10 @@ class TelegramLabelingHandlers:
         await query.answer(self._toast(outcome.message))
         if next_pair is None:
             await self._edit_pair_message(query, current_pair)
-            await self._broadcast_milestones(context, outcome.milestones)
+            await self._handle_outcome_notifications(context, outcome)
             return
         await self._edit_pair_message(query, next_pair)
-        await self._broadcast_milestones(context, outcome.milestones)
+        await self._handle_outcome_notifications(context, outcome)
 
     async def _ensure_authorized(self, update: Update) -> bool:
         user = update.effective_user
@@ -336,6 +373,101 @@ class TelegramLabelingHandlers:
         for milestone in milestones:
             await asyncio.gather(*(send_one(chat_id, milestone.message) for chat_id in targets))
 
+    async def _handle_outcome_notifications(self, context: ContextTypes.DEFAULT_TYPE, outcome: object) -> None:
+        await self._broadcast_milestones(context, getattr(outcome, "milestones", ()))
+        self._schedule_combo_timers(context, getattr(outcome, "combo_timers", ()))
+        await self._broadcast_game_announcements(context, getattr(outcome, "game_announcements", ()))
+        if getattr(outcome, "combo_timers", ()) or getattr(outcome, "game_announcements", ()):
+            await self._refresh_leaderboard_pin(context)
+
+    async def _broadcast_game_announcements(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        announcements: object,
+    ) -> None:
+        if not announcements:
+            return
+        targets = self.service.announcement_recipients()
+
+        async def send_one(chat_id: int | str, text: str) -> None:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+            except Exception:
+                return
+
+        for announcement in announcements:
+            await asyncio.gather(*(send_one(chat_id, announcement.message) for chat_id in targets))
+
+    def _schedule_combo_timers(self, context: ContextTypes.DEFAULT_TYPE, timers: object) -> None:
+        for timer in timers or ():
+            existing_task = self.combo_tasks.pop(timer.team_id, None)
+            if existing_task is not None:
+                existing_task.cancel()
+            delay = max(0.0, (timer.deadline_at - datetime.now(timezone.utc)).total_seconds())
+            task = asyncio.create_task(self._combo_timeout_task(context, timer.team_id, timer.deadline_at, delay))
+            self.combo_tasks[timer.team_id] = task
+            task.add_done_callback(lambda _task, team_id=timer.team_id: self.combo_tasks.pop(team_id, None))
+
+    async def _combo_timeout_task(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        team_id: int,
+        deadline_at: datetime,
+        delay: float,
+    ) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+
+        async with self.lock:
+            announcement = self.service.expire_team_combo(team_id=team_id, deadline_at=deadline_at)
+        if announcement is None:
+            return
+        await self._broadcast_game_announcements(context, (announcement,))
+        await self._refresh_leaderboard_pin(context)
+
+    async def _refresh_leaderboard_pin(self, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat_id = self.service.config.leaderboard_chat_id
+        if chat_id is None:
+            return
+        async with self.lock:
+            text = self.service.team_leaderboard()
+            pin = self.service.leaderboard_pin()
+
+        async def send_new_pin() -> None:
+            message = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+            try:
+                await context.bot.pin_chat_message(
+                    chat_id=chat_id,
+                    message_id=message.message_id,
+                    disable_notification=True,
+                )
+            except Exception:
+                pass
+            async with self.lock:
+                self.service.record_leaderboard_pin(chat_id=chat_id, message_id=message.message_id)
+
+        if pin is not None and str(pin[0]) == str(chat_id):
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=pin[1],
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            except BadRequest as exc:
+                if "Message is not modified" in str(exc):
+                    return
+            except Exception:
+                return
+
+        try:
+            await send_new_pin()
+        except Exception:
+            return
+
     async def _send_discussion_message(
         self,
         context: ContextTypes.DEFAULT_TYPE,
@@ -404,7 +536,7 @@ class TelegramLabelingHandlers:
             reply_markup=reply_markup,
             parse_mode=ParseMode.HTML,
         )
-        await self._broadcast_milestones(context, outcome.milestones)
+        await self._handle_outcome_notifications(context, outcome)
 
     async def _handle_uncertain_callback(
         self,
@@ -477,6 +609,8 @@ def create_application(service: LabelingBotService) -> Application:
     application.add_handler(CommandHandler("menu", handlers.help))
     application.add_handler(CommandHandler("next", handlers.next))
     application.add_handler(CommandHandler("me", handlers.me))
+    application.add_handler(CommandHandler("team", handlers.team))
+    application.add_handler(CommandHandler("teams", handlers.teams))
     application.add_handler(CommandHandler("stats", handlers.stats))
     application.add_handler(CommandHandler("release", handlers.release))
     application.add_handler(CommandHandler("logout", handlers.logout))

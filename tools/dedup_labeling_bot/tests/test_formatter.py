@@ -3,10 +3,13 @@ from __future__ import annotations
 import pandas as pd
 
 from tools.dedup_labeling_bot.formatter import (
+    format_combo_hot_message,
+    format_combo_reset_message,
     format_discussion_message,
     format_help_text,
     format_milestone_message,
     format_pair_message,
+    format_team_lead_message,
 )
 
 
@@ -60,6 +63,7 @@ def test_format_help_text_escapes_start_placeholder() -> None:
     text = format_help_text()
 
     assert "<code>/start &lt;пароль&gt;</code>" in text
+    assert "<code>/team &lt;название&gt;</code>" in text
 
 
 def test_format_milestone_message_contains_progress_and_remaining() -> None:
@@ -77,3 +81,13 @@ def test_format_discussion_message_has_initiator() -> None:
 
     assert "<b>Нужна общая проверка</b>" in message
     assert "<b>Инициатор:</b> @user &lt;id&gt;" in message
+
+
+def test_format_game_messages_escape_team_name() -> None:
+    lead = format_team_lead_message(team_name="A < B", score=12, previous_leader_score=11)
+    combo = format_combo_hot_message(team_name="A < B", combo_count=5)
+    reset = format_combo_reset_message(team_name="A < B", combo_count=5)
+
+    assert "<b>A &lt; B</b>" in lead
+    assert "<b>A &lt; B</b>" in combo
+    assert "<b>A &lt; B</b>" in reset
