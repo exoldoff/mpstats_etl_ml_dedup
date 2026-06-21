@@ -40,23 +40,29 @@ def _pack_summary(row: pd.Series, side: str) -> str:
     return f"ед. {unit} / всего {total} / x{pack}"
 
 
-def _item_line(row: pd.Series, side: str) -> str:
+def _item_block(row: pd.Series, side: str) -> str:
     marketplace = first_cell(row, f"marketplace_{side}", f"marketplaces_{side}")
+    sku = first_cell(row, f"sku_{side}")
     brand = first_cell(row, f"brand_{side}")
     title = first_cell(row, f"title_{side}")
     pack = _pack_summary(row, side)
-    return f"<b>{side.upper()}:</b> 🛒 {h(marketplace)} // 🏷️ {h(brand)} // 🧾 {h(title)} // 📦 {h(pack)}"
+    return "\n".join(
+        [
+            f"<b>SKU {side.upper()}</b>",
+            f"🔢 {code(sku)}",
+            f"🛒 {h(marketplace)}",
+            f"🏷️ {h(brand)}",
+            f"🧾 {h(title)}",
+            f"📦 {h(pack)}",
+        ]
+    )
 
 
 def _reference_block(row: pd.Series) -> str:
-    sku_a = first_cell(row, "sku_a")
-    sku_b = first_cell(row, "sku_b")
     subcategory_a = first_cell(row, "subcategory_a")
     subcategory_b = first_cell(row, "subcategory_b")
     return "\n".join(
         [
-            f"<b>SKU A:</b> {code(sku_a)}",
-            f"<b>SKU B:</b> {code(sku_b)}",
             _field("Подкатегория A", subcategory_a),
             _field("Подкатегория B", subcategory_b),
         ]
@@ -114,8 +120,8 @@ def format_pair_message(
         f"<b>📊 Сигналы</b>\n"
         f"{_signal_block(row)}\n\n"
         f"<b>🛍️ Товары</b>\n"
-        f"{_item_line(row, 'a')}\n"
-        f"{_item_line(row, 'b')}"
+        f"{_item_block(row, 'a')}\n\n"
+        f"{_item_block(row, 'b')}"
     )
 
 
