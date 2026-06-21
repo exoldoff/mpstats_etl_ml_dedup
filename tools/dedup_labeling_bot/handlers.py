@@ -419,7 +419,6 @@ class TelegramLabelingHandlers:
     ) -> None:
         if not announcements:
             return
-        targets = self.service.announcement_recipients()
 
         async def send_one(chat_id: int | str, text: str) -> None:
             try:
@@ -428,6 +427,12 @@ class TelegramLabelingHandlers:
                 return
 
         for announcement in announcements:
+            if getattr(announcement, "group_only", False):
+                targets = self.service.group_announcement_recipients()
+            else:
+                targets = self.service.announcement_recipients()
+            if not targets:
+                continue
             await asyncio.gather(*(send_one(chat_id, announcement.message) for chat_id in targets))
 
     def _schedule_combo_timers(self, context: ContextTypes.DEFAULT_TYPE, timers: object) -> None:

@@ -44,3 +44,15 @@ def test_load_config_requires_password(tmp_path) -> None:
             tmp_path / "labeling.csv",
             {"DEDUP_TELEGRAM_BOT_TOKEN": "token"},
         )
+
+
+def test_load_config_defaults_combo_timeout_to_five_minutes(tmp_path) -> None:
+    config = load_config(
+        tmp_path / "labeling.csv",
+        {
+            "DEDUP_TELEGRAM_BOT_TOKEN": "token",
+            "DEDUP_TELEGRAM_ACCESS_PASSWORD": "secret",
+        },
+    )
+
+    assert config.combo_timeout == timedelta(minutes=5)

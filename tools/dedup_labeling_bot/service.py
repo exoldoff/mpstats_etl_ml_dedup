@@ -74,6 +74,7 @@ class ComboTimer:
 @dataclass(frozen=True)
 class GameAnnouncement:
     message: str
+    group_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -328,6 +329,14 @@ class LabelingBotService:
             recipients.append(self.config.leaderboard_chat_id)
         return list(dict.fromkeys(recipients))
 
+    def group_announcement_recipients(self) -> list[int | str]:
+        recipients: list[int | str] = []
+        if self.config.discussion_chat_id is not None:
+            recipients.append(self.config.discussion_chat_id)
+        if self.config.leaderboard_chat_id is not None:
+            recipients.append(self.config.leaderboard_chat_id)
+        return list(dict.fromkeys(recipients))
+
     def join_team(self, user_id: int, team_name: str) -> str:
         membership = self.store.set_user_team(user_id, team_name)
         return format_team_joined_message(
@@ -367,7 +376,8 @@ class LabelingBotService:
             message=format_combo_reset_message(
                 team_name=reset.team_name,
                 combo_count=reset.combo_count,
-            )
+            ),
+            group_only=True,
         )
 
     def _record_game_updates(
@@ -403,7 +413,8 @@ class LabelingBotService:
                     message=format_combo_reset_message(
                         team_name=reset.team_name,
                         combo_count=reset.combo_count,
-                    )
+                    ),
+                    group_only=True,
                 )
             )
 
@@ -430,7 +441,8 @@ class LabelingBotService:
                         message=format_combo_hot_message(
                             team_name=combo.team_name,
                             combo_count=combo.combo_count,
-                        )
+                        ),
+                        group_only=True,
                     )
                 )
                 announcements.extend(self._claim_team_combo_achievements(combo.team_id, combo.team_name, crossed_thresholds))
@@ -514,7 +526,8 @@ class LabelingBotService:
                             subject_name=team_name,
                             title=achievement.title,
                             description=achievement.description,
-                        )
+                        ),
+                        group_only=True,
                     )
                 )
         return result

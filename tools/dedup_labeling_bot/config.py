@@ -41,7 +41,7 @@ class LabelingBotConfig:
     assignment_mode: str = UNIQUE_MODE
     overlap_votes: int = 2
     assignment_ttl: timedelta = timedelta(hours=24)
-    combo_timeout: timedelta = timedelta(minutes=2)
+    combo_timeout: timedelta = timedelta(minutes=5)
 
 
 def parse_user_ids(value: str | None) -> frozenset[int]:
@@ -117,7 +117,7 @@ def load_config(csv_path: Path, env: Mapping[str, str] | None = None) -> Labelin
         raise ConfigError(f"{ASSIGNMENT_MODE_ENV} must be one of: {', '.join(sorted(ASSIGNMENT_MODES))}")
     overlap_votes = _int_env(values, OVERLAP_VOTES_ENV, 2, minimum=2)
     ttl_hours = _float_env(values, ASSIGNMENT_TTL_HOURS_ENV, 24.0, minimum=0.01)
-    combo_timeout_seconds = _float_env(values, COMBO_TIMEOUT_SECONDS_ENV, 120.0, minimum=1.0)
+    combo_timeout_seconds = _float_env(values, COMBO_TIMEOUT_SECONDS_ENV, 300.0, minimum=1.0)
     discussion_chat_id = parse_chat_id(values.get(DISCUSSION_CHAT_ID_ENV))
     leaderboard_chat_id = parse_chat_id(values.get(LEADERBOARD_CHAT_ID_ENV)) or discussion_chat_id
 

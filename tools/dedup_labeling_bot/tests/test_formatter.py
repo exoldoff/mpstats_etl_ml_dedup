@@ -100,7 +100,9 @@ def test_format_game_messages_escape_team_name() -> None:
 
     assert "<b>A &lt; B</b>" in lead
     assert "<b>A &lt; B</b>" in combo
+    assert "5 минут" in combo
     assert "<b>A &lt; B</b>" in reset
+    assert "Пять минут" in reset
     assert "<b>A &lt; B</b>" in achievement
     assert "<b>Титул &lt;x&gt;</b>" in achievement
     assert "Описание &amp; детали" in achievement

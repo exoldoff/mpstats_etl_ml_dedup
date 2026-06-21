@@ -152,6 +152,14 @@ def test_combo_threshold_and_timer_are_returned(tmp_path) -> None:
     messages = "\n".join(announcement.message for announcement in outcome.game_announcements)
     assert "Комбо x3" in messages
     assert "Искра серии" in messages
+    combo_announcements = [announcement for announcement in outcome.game_announcements if "Комбо" in announcement.message]
+    assert combo_announcements
+    assert all(announcement.group_only for announcement in combo_announcements)
+    combo_achievement_announcements = [
+        announcement for announcement in outcome.game_announcements if "Искра серии" in announcement.message
+    ]
+    assert combo_achievement_announcements
+    assert all(announcement.group_only for announcement in combo_achievement_announcements)
     assert len(outcome.combo_timers) == 1
     assert outcome.combo_timers[0].team_id == service.store.user_team(1).team_id
 
@@ -162,7 +170,7 @@ def test_combo_expiry_resets_team_combo(tmp_path) -> None:
         mode="unique",
         batch_size=1,
         rows=2,
-        combo_timeout=timedelta(seconds=1),
+        combo_timeout=timedelta(seconds=-1),
     )
     service.authorize(1, "secret")
     service.join_team(1, "Таймеры")
@@ -172,15 +180,15 @@ def test_combo_expiry_resets_team_combo(tmp_path) -> None:
     outcome = service.label_row(1, pair.row_index, "exact_duplicate")
     timer = outcome.combo_timers[0]
 
-    reset = service.store.expire_team_combo(
+    reset = service.expire_team_combo(
         team_id=timer.team_id,
-        expected_deadline_at=timer.deadline_at,
-        now=timer.deadline_at + timedelta(seconds=1),
+        deadline_at=timer.deadline_at,
     )
 
     assert reset is not None
-    assert reset.team_name == "Таймеры"
-    assert reset.combo_count == 1
+    assert reset.group_only
+    assert "Таймеры" in reset.message
+    assert "x1" in reset.message
     assert "⚡ x" not in service.team_leaderboard()
 
 
