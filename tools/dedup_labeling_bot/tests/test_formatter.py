@@ -73,6 +73,7 @@ def test_format_help_text_escapes_start_placeholder() -> None:
     assert "<code>/team &lt;название&gt;</code>" in text
     assert "<code>/players</code>" in text
     assert "<code>/achievements</code>" in text
+    assert "<code>/revive</code>" in text
 
 
 def test_format_milestone_message_contains_progress_and_remaining() -> None:

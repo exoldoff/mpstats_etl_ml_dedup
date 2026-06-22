@@ -101,6 +101,7 @@ def build_bot_commands() -> list[BotCommand]:
         BotCommand("teams", "топ команд"),
         BotCommand("players", "топ игроков"),
         BotCommand("achievements", "мои ачивки"),
+        BotCommand("revive", "восстановить серию команды"),
         BotCommand("stats", "общий прогресс"),
         BotCommand("release", "освободить мои пары"),
         BotCommand("logout", "выйти"),
@@ -226,6 +227,26 @@ class TelegramLabelingHandlers:
         async with self.lock:
             text = self.service.user_achievements(user.id)
         await message.reply_text(text, parse_mode=ParseMode.HTML)
+
+    async def revive(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._ensure_authorized(update):
+            return
+        user = update.effective_user
+        message = update.effective_message
+        if user is None or message is None:
+            return
+        async with self.lock:
+            try:
+                outcome = self.service.revive_best_team_combo(user_id=user.id)
+            except ValueError as exc:
+                await message.reply_text(str(exc))
+                return
+        self._schedule_combo_timers(context, (outcome.timer,))
+        await self._broadcast_game_announcements(context, (outcome.announcement,))
+        group_targets = {str(chat_id) for chat_id in self.service.group_announcement_recipients()}
+        if str(message.chat_id) not in group_targets:
+            await message.reply_text(outcome.message, parse_mode=ParseMode.HTML)
+        await self._refresh_leaderboard_pin(context)
 
     async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
@@ -833,6 +854,7 @@ def create_application(service: LabelingBotService) -> Application:
     application.add_handler(CommandHandler("teams", handlers.teams))
     application.add_handler(CommandHandler("players", handlers.players))
     application.add_handler(CommandHandler("achievements", handlers.achievements))
+    application.add_handler(CommandHandler("revive", handlers.revive))
     application.add_handler(CommandHandler("stats", handlers.stats))
     application.add_handler(CommandHandler("release", handlers.release))
     application.add_handler(CommandHandler("logout", handlers.logout))

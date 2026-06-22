@@ -351,6 +351,7 @@ def format_help_text() -> str:
         f"{code('/teams')} — топ команд\n"
         f"{code('/players')} — топ игроков\n"
         f"{code('/achievements')} — мои ачивки\n"
+        f"{code('/revive')} — восстановить лучшую потерянную серию своей команды\n"
         f"{code('/stats')} — общий прогресс\n"
         f"{code('/release')} — освободить мои неразмеченные пары\n"
         f"{code('/logout')} — выйти\n"

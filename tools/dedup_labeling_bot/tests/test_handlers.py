@@ -73,6 +73,7 @@ def test_build_bot_commands_contains_menu_commands() -> None:
     assert commands["teams"] == "топ команд"
     assert commands["players"] == "топ игроков"
     assert commands["achievements"] == "мои ачивки"
+    assert commands["revive"] == "восстановить серию команды"
 
 
 def test_safe_answer_ignores_telegram_timeout() -> None:

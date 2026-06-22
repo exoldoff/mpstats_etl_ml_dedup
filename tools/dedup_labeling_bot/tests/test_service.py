@@ -256,6 +256,71 @@ def test_combo_revive_limit_is_five_per_team(tmp_path) -> None:
         service.revive_team_combo(user_id=1, reset_event_id=reset.combo_reset_event_id)
 
 
+def test_revive_best_team_combo_restores_max_unrevived_reset(tmp_path) -> None:
+    service, _ = make_service(
+        tmp_path,
+        mode="unique",
+        batch_size=1,
+        rows=5,
+        combo_timeout=timedelta(minutes=5),
+    )
+    service.authorize(1, "secret")
+    service.join_team(1, "Максимум")
+
+    outcome = None
+    for _ in range(3):
+        pair = service.next_pair(1)
+        assert pair is not None
+        outcome = service.label_row(1, pair.row_index, "exact_duplicate")
+    assert outcome is not None
+    team_id = outcome.combo_timers[0].team_id
+    service.store.expire_team_combo(
+        team_id=team_id,
+        expected_deadline_at=outcome.combo_timers[0].deadline_at,
+        now=outcome.combo_timers[0].deadline_at + timedelta(seconds=1),
+    )
+
+    pair = service.next_pair(1)
+    assert pair is not None
+    small = service.label_row(1, pair.row_index, "different_product")
+    service.store.expire_team_combo(
+        team_id=team_id,
+        expected_deadline_at=small.combo_timers[0].deadline_at,
+        now=small.combo_timers[0].deadline_at + timedelta(seconds=1),
+    )
+
+    revive = service.revive_best_team_combo(user_id=1)
+
+    assert "комбо x3" in revive.message
+    assert "⚡ x3" in service.team_leaderboard()
+
+
+def test_answer_after_expired_combo_creates_revivable_reset_announcement(tmp_path) -> None:
+    service, _ = make_service(
+        tmp_path,
+        mode="unique",
+        batch_size=1,
+        rows=3,
+        combo_timeout=timedelta(seconds=-1),
+    )
+    service.authorize(1, "secret")
+    service.join_team(1, "Просрочили")
+
+    first = service.next_pair(1)
+    assert first is not None
+    service.label_row(1, first.row_index, "exact_duplicate")
+    second = service.next_pair(1)
+    assert second is not None
+    outcome = service.label_row(1, second.row_index, "different_product")
+
+    reset_announcements = [
+        announcement for announcement in outcome.game_announcements if "Комбо сброшено" in announcement.message
+    ]
+    assert reset_announcements
+    assert reset_announcements[0].combo_reset_event_id is not None
+    assert reset_announcements[0].combo_revives_remaining == 5
+
+
 def test_relabel_does_not_add_second_game_answer(tmp_path) -> None:
     service, _ = make_service(tmp_path, mode="unique", batch_size=1, rows=2)
     service.authorize(1, "secret")

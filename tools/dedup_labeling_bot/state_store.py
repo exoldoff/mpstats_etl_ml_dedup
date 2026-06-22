@@ -1350,59 +1350,56 @@ class LabelingStateStore:
             ).fetchone()
             if row is None:
                 raise ValueError("Сброс серии уже не найден.")
-            team_id = int(row["team_id"])
-            membership = connection.execute(
-                "SELECT 1 FROM team_members WHERE user_id = ? AND team_id = ?",
-                (user_id, team_id),
-            ).fetchone()
-            if membership is None:
-                raise ValueError("Восстановить серию может только участник этой команды.")
-            if row["revived_at"]:
-                raise ValueError("Эту серию уже восстановили.")
-
-            combo = connection.execute(
-                "SELECT combo_count, deadline_at FROM team_combos WHERE team_id = ?",
-                (team_id,),
-            ).fetchone()
-            if combo is not None:
-                deadline = _optional_from_iso(combo["deadline_at"])
-                if int(combo["combo_count"]) > 0 and deadline is not None and deadline > current:
-                    raise ValueError("У команды уже есть живая серия.")
-
-            used_count = self._team_combo_revives_used(connection, team_id)
-            if used_count >= COMBO_REVIVE_LIMIT:
-                raise ValueError("Лимит возрождений команды уже потрачен.")
-
-            combo_count = int(row["combo_count"])
-            deadline_at = current + combo_timeout
-            connection.execute(
-                """
-                UPDATE team_combo_reset_events
-                SET revived_at = ?, revived_by_user_id = ?
-                WHERE reset_event_id = ? AND revived_at IS NULL
-                """,
-                (_to_iso(current), user_id, reset_event_id),
+            return self._revive_team_combo_reset(
+                connection,
+                row=row,
+                user_id=user_id,
+                combo_timeout=combo_timeout,
+                now=current,
             )
-            connection.execute(
+
+    def revive_best_team_combo(
+        self,
+        *,
+        user_id: int,
+        combo_timeout: timedelta,
+        now: datetime | None = None,
+    ) -> TeamComboRevive:
+        current = now or utcnow()
+        with self._connect() as connection:
+            team = connection.execute(
                 """
-                INSERT INTO team_combos (team_id, combo_count, last_answer_at, deadline_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(team_id) DO UPDATE SET
-                    combo_count = excluded.combo_count,
-                    last_answer_at = excluded.last_answer_at,
-                    deadline_at = excluded.deadline_at,
-                    updated_at = excluded.updated_at
+                SELECT t.team_id, t.name
+                FROM team_members tm
+                JOIN teams t ON t.team_id = tm.team_id
+                WHERE tm.user_id = ?
                 """,
-                (team_id, combo_count, _to_iso(current), _to_iso(deadline_at), _to_iso(current)),
+                (user_id,),
+            ).fetchone()
+            if team is None:
+                raise ValueError("Сначала вступите в команду через /team <название>.")
+
+            row = connection.execute(
+                """
+                SELECT e.reset_event_id, e.team_id, e.combo_count, e.revived_at, t.name
+                FROM team_combo_reset_events e
+                JOIN teams t ON t.team_id = e.team_id
+                WHERE e.team_id = ? AND e.revived_at IS NULL
+                ORDER BY e.combo_count DESC, e.reset_at DESC, e.reset_event_id DESC
+                LIMIT 1
+                """,
+                (int(team["team_id"]),),
+            ).fetchone()
+            if row is None:
+                raise ValueError("У команды нет потерянной серии для восстановления.")
+
+            return self._revive_team_combo_reset(
+                connection,
+                row=row,
+                user_id=user_id,
+                combo_timeout=combo_timeout,
+                now=current,
             )
-            remaining = max(0, COMBO_REVIVE_LIMIT - used_count - 1)
-        return TeamComboRevive(
-            team_id=team_id,
-            team_name=str(row["name"]),
-            combo_count=combo_count,
-            deadline_at=deadline_at,
-            revives_remaining=remaining,
-        )
 
     def claim_achievement(
         self,
@@ -1627,7 +1624,19 @@ class LabelingStateStore:
             stored_count = int(row["combo_count"])
             deadline = _optional_from_iso(row["deadline_at"])
             if deadline is not None and deadline <= now and stored_count > 0:
-                reset = TeamComboReset(team_id=team_id, team_name=team_name, combo_count=stored_count)
+                reset_event_id, revives_remaining = self._record_team_combo_reset_event(
+                    connection,
+                    team_id=team_id,
+                    combo_count=stored_count,
+                    now=now,
+                )
+                reset = TeamComboReset(
+                    team_id=team_id,
+                    team_name=team_name,
+                    combo_count=stored_count,
+                    reset_event_id=reset_event_id,
+                    revives_remaining=revives_remaining,
+                )
             else:
                 previous_count = stored_count
 
@@ -1684,3 +1693,68 @@ class LabelingStateStore:
             (team_id,),
         ).fetchone()
         return int(row["count"])
+
+    def _revive_team_combo_reset(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        row: sqlite3.Row,
+        user_id: int,
+        combo_timeout: timedelta,
+        now: datetime,
+    ) -> TeamComboRevive:
+        team_id = int(row["team_id"])
+        membership = connection.execute(
+            "SELECT 1 FROM team_members WHERE user_id = ? AND team_id = ?",
+            (user_id, team_id),
+        ).fetchone()
+        if membership is None:
+            raise ValueError("Восстановить серию может только участник этой команды.")
+        if row["revived_at"]:
+            raise ValueError("Эту серию уже восстановили.")
+
+        combo = connection.execute(
+            "SELECT combo_count, deadline_at FROM team_combos WHERE team_id = ?",
+            (team_id,),
+        ).fetchone()
+        if combo is not None:
+            deadline = _optional_from_iso(combo["deadline_at"])
+            if int(combo["combo_count"]) > 0 and deadline is not None and deadline > now:
+                raise ValueError("У команды уже есть живая серия.")
+
+        used_count = self._team_combo_revives_used(connection, team_id)
+        if used_count >= COMBO_REVIVE_LIMIT:
+            raise ValueError("Лимит возрождений команды уже потрачен.")
+
+        combo_count = int(row["combo_count"])
+        deadline_at = now + combo_timeout
+        cursor = connection.execute(
+            """
+            UPDATE team_combo_reset_events
+            SET revived_at = ?, revived_by_user_id = ?
+            WHERE reset_event_id = ? AND revived_at IS NULL
+            """,
+            (_to_iso(now), user_id, int(row["reset_event_id"])),
+        )
+        if not cursor.rowcount:
+            raise ValueError("Эту серию уже восстановили.")
+        connection.execute(
+            """
+            INSERT INTO team_combos (team_id, combo_count, last_answer_at, deadline_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(team_id) DO UPDATE SET
+                combo_count = excluded.combo_count,
+                last_answer_at = excluded.last_answer_at,
+                deadline_at = excluded.deadline_at,
+                updated_at = excluded.updated_at
+            """,
+            (team_id, combo_count, _to_iso(now), _to_iso(deadline_at), _to_iso(now)),
+        )
+        remaining = max(0, COMBO_REVIVE_LIMIT - used_count - 1)
+        return TeamComboRevive(
+            team_id=team_id,
+            team_name=str(row["name"]),
+            combo_count=combo_count,
+            deadline_at=deadline_at,
+            revives_remaining=remaining,
+        )

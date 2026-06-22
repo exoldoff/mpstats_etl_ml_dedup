@@ -455,6 +455,16 @@ class LabelingBotService:
             user_id=user_id,
             combo_timeout=self.config.combo_timeout,
         )
+        return self._combo_revive_outcome(revived)
+
+    def revive_best_team_combo(self, *, user_id: int) -> ComboReviveOutcome:
+        revived = self.store.revive_best_team_combo(
+            user_id=user_id,
+            combo_timeout=self.config.combo_timeout,
+        )
+        return self._combo_revive_outcome(revived)
+
+    def _combo_revive_outcome(self, revived: object) -> ComboReviveOutcome:
         message = format_combo_revive_message(
             team_name=revived.team_name,
             combo_count=revived.combo_count,
@@ -501,6 +511,8 @@ class LabelingBotService:
                         combo_count=reset.combo_count,
                     ),
                     group_only=True,
+                    combo_reset_event_id=reset.reset_event_id,
+                    combo_revives_remaining=reset.revives_remaining,
                 )
             )
 
