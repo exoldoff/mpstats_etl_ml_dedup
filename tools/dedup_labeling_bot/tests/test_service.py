@@ -295,6 +295,72 @@ def test_revive_best_team_combo_restores_max_unrevived_reset(tmp_path) -> None:
     assert "⚡ x3" in service.team_leaderboard()
 
 
+def test_revive_best_team_combo_replaces_active_series_with_max(tmp_path) -> None:
+    service, _ = make_service(
+        tmp_path,
+        mode="unique",
+        batch_size=1,
+        rows=5,
+        combo_timeout=timedelta(minutes=5),
+    )
+    service.authorize(1, "secret")
+    service.join_team(1, "Максимум живой")
+
+    outcome = None
+    for _ in range(3):
+        pair = service.next_pair(1)
+        assert pair is not None
+        outcome = service.label_row(1, pair.row_index, "exact_duplicate")
+    assert outcome is not None
+    team_id = outcome.combo_timers[0].team_id
+    service.store.expire_team_combo(
+        team_id=team_id,
+        expected_deadline_at=outcome.combo_timers[0].deadline_at,
+        now=outcome.combo_timers[0].deadline_at + timedelta(seconds=1),
+    )
+
+    pair = service.next_pair(1)
+    assert pair is not None
+    service.label_row(1, pair.row_index, "different_product")
+
+    revive = service.revive_best_team_combo(user_id=1)
+
+    assert "комбо x3" in revive.message
+    assert "⚡ x3" in service.team_leaderboard()
+
+
+def test_combo_revive_does_not_downgrade_larger_active_series(tmp_path) -> None:
+    service, _ = make_service(
+        tmp_path,
+        mode="unique",
+        batch_size=1,
+        rows=4,
+        combo_timeout=timedelta(minutes=5),
+    )
+    service.authorize(1, "secret")
+    service.join_team(1, "Не меньше")
+
+    pair = service.next_pair(1)
+    assert pair is not None
+    first = service.label_row(1, pair.row_index, "exact_duplicate")
+    reset = service.store.expire_team_combo(
+        team_id=first.combo_timers[0].team_id,
+        expected_deadline_at=first.combo_timers[0].deadline_at,
+        now=first.combo_timers[0].deadline_at + timedelta(seconds=1),
+    )
+    assert reset is not None
+
+    for _ in range(2):
+        pair = service.next_pair(1)
+        assert pair is not None
+        service.label_row(1, pair.row_index, "different_product")
+
+    revive = service.revive_team_combo(user_id=1, reset_event_id=reset.reset_event_id)
+
+    assert "комбо x2" in revive.message
+    assert "⚡ x2" in service.team_leaderboard()
+
+
 def test_answer_after_expired_combo_creates_revivable_reset_announcement(tmp_path) -> None:
     service, _ = make_service(
         tmp_path,

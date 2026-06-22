@@ -1713,6 +1713,7 @@ class LabelingStateStore:
         if row["revived_at"]:
             raise ValueError("Эту серию уже восстановили.")
 
+        active_combo_count = 0
         combo = connection.execute(
             "SELECT combo_count, deadline_at FROM team_combos WHERE team_id = ?",
             (team_id,),
@@ -1720,13 +1721,13 @@ class LabelingStateStore:
         if combo is not None:
             deadline = _optional_from_iso(combo["deadline_at"])
             if int(combo["combo_count"]) > 0 and deadline is not None and deadline > now:
-                raise ValueError("У команды уже есть живая серия.")
+                active_combo_count = int(combo["combo_count"])
 
         used_count = self._team_combo_revives_used(connection, team_id)
         if used_count >= COMBO_REVIVE_LIMIT:
             raise ValueError("Лимит возрождений команды уже потрачен.")
 
-        combo_count = int(row["combo_count"])
+        combo_count = max(int(row["combo_count"]), active_combo_count)
         deadline_at = now + combo_timeout
         cursor = connection.execute(
             """
