@@ -295,6 +295,27 @@ def test_revive_best_team_combo_restores_max_unrevived_reset(tmp_path) -> None:
     assert "⚡ x3" in service.team_leaderboard()
 
 
+def test_revive_best_team_combo_recovers_expired_series_without_reset_event(tmp_path) -> None:
+    service, _ = make_service(
+        tmp_path,
+        mode="unique",
+        batch_size=1,
+        rows=2,
+        combo_timeout=timedelta(seconds=-1),
+    )
+    service.authorize(1, "secret")
+    service.join_team(1, "Зависший таймер")
+
+    pair = service.next_pair(1)
+    assert pair is not None
+    service.label_row(1, pair.row_index, "exact_duplicate")
+
+    revive = service.revive_best_team_combo(user_id=1)
+
+    assert "комбо x1" in revive.message
+    assert "⚡ x1" in service.team_leaderboard()
+
+
 def test_revive_best_team_combo_replaces_active_series_with_max(tmp_path) -> None:
     service, _ = make_service(
         tmp_path,

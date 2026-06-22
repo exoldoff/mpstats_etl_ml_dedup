@@ -1379,6 +1379,12 @@ class LabelingStateStore:
             if team is None:
                 raise ValueError("Сначала вступите в команду через /team <название>.")
 
+            team_id = int(team["team_id"])
+            self._record_expired_team_combo_reset_if_needed(
+                connection,
+                team_id=team_id,
+                now=current,
+            )
             row = connection.execute(
                 """
                 SELECT e.reset_event_id, e.team_id, e.combo_count, e.revived_at, t.name
@@ -1388,7 +1394,7 @@ class LabelingStateStore:
                 ORDER BY e.combo_count DESC, e.reset_at DESC, e.reset_event_id DESC
                 LIMIT 1
                 """,
-                (int(team["team_id"]),),
+                (team_id,),
             ).fetchone()
             if row is None:
                 raise ValueError("У команды нет потерянной серии для восстановления.")
@@ -1682,6 +1688,47 @@ class LabelingStateStore:
         )
         used_count = self._team_combo_revives_used(connection, team_id)
         return int(cursor.lastrowid), max(0, COMBO_REVIVE_LIMIT - used_count)
+
+    def _record_expired_team_combo_reset_if_needed(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        team_id: int,
+        now: datetime,
+    ) -> None:
+        row = connection.execute(
+            """
+            SELECT combo_count, deadline_at
+            FROM team_combos
+            WHERE team_id = ?
+            """,
+            (team_id,),
+        ).fetchone()
+        if row is None or not row["deadline_at"]:
+            return
+
+        combo_count = int(row["combo_count"])
+        deadline = _from_iso(str(row["deadline_at"]))
+        if combo_count <= 0 or deadline > now:
+            return
+
+        connection.execute(
+            """
+            UPDATE team_combos
+            SET combo_count = 0,
+                last_answer_at = NULL,
+                deadline_at = NULL,
+                updated_at = ?
+            WHERE team_id = ?
+            """,
+            (_to_iso(now), team_id),
+        )
+        self._record_team_combo_reset_event(
+            connection,
+            team_id=team_id,
+            combo_count=combo_count,
+            now=now,
+        )
 
     def _team_combo_revives_used(self, connection: sqlite3.Connection, team_id: int) -> int:
         row = connection.execute(
