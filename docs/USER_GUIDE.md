@@ -1584,7 +1584,7 @@ DEDUP_TELEGRAM_DISCUSSION_CHAT_ID="-1001234567890"
   активному пользователю и сразу после ответа пишется в CSV;
 - `DEDUP_TELEGRAM_ASSIGNMENT_MODE=overlap` — строку могут разметить несколько
   человек, итог пишется в CSV только после консенсуса;
-- `DEDUP_TELEGRAM_OVERLAP_VOTES=2` — сколько одинаковых голосов нужно для
+- `DEDUP_TELEGRAM_OVERLAP_VOTES=4` — сколько одинаковых голосов нужно для
   консенсуса в overlap-режиме;
 - `DEDUP_TELEGRAM_ASSIGNMENT_TTL_HOURS=24` — через сколько часов неразмеченные
   назначения считаются протухшими и могут быть выданы заново;
