@@ -112,6 +112,24 @@ def _format_unlocked_at(value: datetime) -> str:
     return value.astimezone(MOSCOW_TZ).strftime("%d.%m.%Y %H:%M МСК")
 
 
+def _format_vote_time(value: datetime) -> str:
+    return value.astimezone(MOSCOW_TZ).strftime("%H:%M")
+
+
+def _vote_status_block(votes: Sequence[object]) -> str:
+    lines = ["<b>🗳️ Голоса сейчас</b>"]
+    if not votes:
+        lines.append("Пока никто не проголосовал.")
+        return "\n".join(lines)
+    for vote in votes:
+        name = _user_display(vote.user_id, vote.username, vote.first_name)
+        lines.append(
+            f"• {h(name)} — <b>{h(_label_title(vote.label))}</b> "
+            f"({h(_format_vote_time(vote.voted_at))})"
+        )
+    return "\n".join(lines)
+
+
 def format_pair_message(
     row: pd.Series,
     row_index: int,
@@ -169,11 +187,19 @@ def format_milestone_message(*, threshold: int, labeled_rows: int, total_rows: i
     )
 
 
-def format_discussion_message(row: pd.Series, row_index: int, total_rows: int, user_display: str) -> str:
+def format_discussion_message(
+    row: pd.Series,
+    row_index: int,
+    total_rows: int,
+    user_display: str,
+    *,
+    votes: Sequence[object] = (),
+) -> str:
     return (
         "<b>Нужна общая проверка</b>\n"
         f"<b>Инициатор:</b> {h(user_display)}\n\n"
-        f"{format_pair_message(row, row_index, total_rows)}"
+        f"{format_pair_message(row, row_index, total_rows)}\n\n"
+        f"{_vote_status_block(votes)}"
     )
 
 
@@ -303,6 +329,15 @@ def format_combo_reset_message(*, team_name: str, combo_count: int) -> str:
         f"Команда <b>{h(team_name)}</b> остановилась на x{combo_count}.\n"
         "⏱️ Пять минут прошли без нового финального ответа.\n"
         "🔁 Собираемся и запускаем новую серию!"
+    )
+
+
+def format_combo_revive_message(*, team_name: str, combo_count: int, revives_remaining: int) -> str:
+    return (
+        "♻️⚡️ <b>Серия восстановлена!</b>\n"
+        f"Команда <b>{h(team_name)}</b> вернула комбо x{combo_count}.\n"
+        "⏱️ Снова есть 5 минут, чтобы продлить серию.\n"
+        f"🧯 Возрождений осталось: <b>{revives_remaining}</b>."
     )
 
 

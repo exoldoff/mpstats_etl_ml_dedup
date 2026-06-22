@@ -6,6 +6,7 @@ from dataclasses import dataclass
 NEXT_CALLBACK = "next"
 LABEL_CALLBACK_PREFIX = "label"
 DISCUSSION_LABEL_CALLBACK_PREFIX = "discussion_label"
+COMBO_REVIVE_CALLBACK_PREFIX = "combo_revive"
 NAV_CALLBACK_PREFIX = "nav"
 NOOP_CALLBACK_PREFIX = "noop"
 
@@ -22,12 +23,21 @@ class NavCallback:
     direction: str
 
 
+@dataclass(frozen=True)
+class ComboReviveCallback:
+    reset_event_id: int
+
+
 def make_label_callback(row_index: int, label: str) -> str:
     return f"{LABEL_CALLBACK_PREFIX}:{row_index}:{label}"
 
 
 def make_discussion_label_callback(row_index: int, label: str) -> str:
     return f"{DISCUSSION_LABEL_CALLBACK_PREFIX}:{row_index}:{label}"
+
+
+def make_combo_revive_callback(reset_event_id: int) -> str:
+    return f"{COMBO_REVIVE_CALLBACK_PREFIX}:{reset_event_id}"
 
 
 def make_nav_callback(row_index: int, direction: str) -> str:
@@ -54,3 +64,10 @@ def parse_nav_callback(value: str) -> NavCallback:
     if direction not in {"prev", "next"}:
         raise ValueError(f"Unsupported navigation direction: {direction!r}")
     return NavCallback(row_index=int(raw_row_index), direction=direction)
+
+
+def parse_combo_revive_callback(value: str) -> ComboReviveCallback:
+    prefix, raw_reset_event_id = value.split(":", 1)
+    if prefix != COMBO_REVIVE_CALLBACK_PREFIX:
+        raise ValueError(f"Unsupported combo revive callback: {value!r}")
+    return ComboReviveCallback(reset_event_id=int(raw_reset_event_id))

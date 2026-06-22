@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import random
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
+
+from research.dedup.annotation import LABEL_UNCERTAIN
 
 from .config import LabelingBotConfig
 from .csv_repository import CsvStats, LabelingCsvRepository
@@ -12,6 +14,7 @@ from .formatter import (
     format_achievement_message,
     format_achievements_list,
     format_combo_hot_message,
+    format_combo_revive_message,
     format_combo_reset_message,
     format_discussion_message,
     format_milestone_message,
@@ -26,6 +29,7 @@ from .state_store import LabelingStateStore
 
 MILESTONE_THRESHOLDS = (100, 300, 500, 1000, 1500, 2000, 2500, 3000)
 COMBO_ANNOUNCEMENT_THRESHOLDS = (3, 5, 10, 20, 30, 50, 100)
+DISCUSSION_TIMEOUT = timedelta(minutes=30)
 USER_SCORE_ACHIEVEMENTS = (
     (1, "Первый удар", "Первый финальный ответ в зачёте. Лёд тронулся."),
     (10, "Десятник", "10 финальных ответов. Уже виден рабочий темп."),
@@ -75,6 +79,8 @@ class ComboTimer:
 class GameAnnouncement:
     message: str
     group_only: bool = False
+    combo_reset_event_id: int | None = None
+    combo_revives_remaining: int = 0
 
 
 @dataclass(frozen=True)
@@ -85,6 +91,13 @@ class LabelOutcome:
     milestones: tuple[MilestoneAnnouncement, ...] = ()
     game_announcements: tuple[GameAnnouncement, ...] = ()
     combo_timers: tuple[ComboTimer, ...] = ()
+
+
+@dataclass(frozen=True)
+class ComboReviveOutcome:
+    message: str
+    timer: ComboTimer
+    announcement: GameAnnouncement
 
 
 class LabelingBotService:
@@ -299,20 +312,74 @@ class LabelingBotService:
             message="Голос в общем обсуждении сохранён. Ждём консенсус.",
         )
 
-    def discussion_message(self, row_index: int, user_display: str) -> str:
+    def expire_discussion_row(
+        self,
+        *,
+        row_index: int,
+        expected_requested_at: datetime,
+        now: datetime | None = None,
+    ) -> LabelOutcome | None:
+        current = now or datetime.now(timezone.utc)
+        if expected_requested_at + DISCUSSION_TIMEOUT > current:
+            return None
+        if not self.repository.is_row_available(row_index):
+            return None
+        expired = self.store.expire_discussion_row(
+            row_index=row_index,
+            expected_requested_at=expected_requested_at,
+            final_label=LABEL_UNCERTAIN,
+            now=current,
+        )
+        if not expired:
+            return None
+        self.repository.set_label(row_index, LABEL_UNCERTAIN)
+        return LabelOutcome(
+            status="finalized",
+            final_label=LABEL_UNCERTAIN,
+            message="30 минут без консенсуса. Пара ушла в скип: uncertain.",
+        )
+
+    def pending_discussion_posts(self) -> list[object]:
+        return self.store.pending_discussion_posts()
+
+    def discussion_message(self, row_index: int, user_display: str | None = None) -> str:
         frame = self.repository.load()
         row = frame.iloc[row_index]
-        return format_discussion_message(row, row_index, len(frame), user_display)
+        initiator = user_display
+        if initiator is None:
+            post = self.store.discussion_post(row_index)
+            if post is not None:
+                stats = self.store.user_stats(post.requested_by_user_id)
+                if stats is not None:
+                    initiator = self._format_user_name(stats.user_id, stats.username, stats.first_name)
+                else:
+                    initiator = str(post.requested_by_user_id)
+        return format_discussion_message(
+            row,
+            row_index,
+            len(frame),
+            initiator or "-",
+            votes=self.store.discussion_votes(row_index),
+        )
 
     def should_send_discussion(self, row_index: int) -> bool:
         return self.config.discussion_chat_id is not None and not self.store.discussion_was_posted(row_index)
 
-    def record_discussion_post(self, row_index: int, user_id: int, *, chat_id: int | str, message_id: int) -> None:
+    def record_discussion_post(
+        self,
+        row_index: int,
+        user_id: int,
+        *,
+        chat_id: int | str,
+        message_id: int,
+        now: datetime | None = None,
+    ) -> None:
         self.store.record_discussion_post(
             row_index=row_index,
             user_id=user_id,
             chat_id=str(chat_id),
             message_id=message_id,
+            now=now,
         )
 
     def release_user_assignments(self, user_id: int) -> int:
@@ -378,6 +445,25 @@ class LabelingBotService:
                 combo_count=reset.combo_count,
             ),
             group_only=True,
+            combo_reset_event_id=reset.reset_event_id,
+            combo_revives_remaining=reset.revives_remaining,
+        )
+
+    def revive_team_combo(self, *, user_id: int, reset_event_id: int) -> ComboReviveOutcome:
+        revived = self.store.revive_team_combo(
+            reset_event_id=reset_event_id,
+            user_id=user_id,
+            combo_timeout=self.config.combo_timeout,
+        )
+        message = format_combo_revive_message(
+            team_name=revived.team_name,
+            combo_count=revived.combo_count,
+            revives_remaining=revived.revives_remaining,
+        )
+        return ComboReviveOutcome(
+            message=message,
+            timer=ComboTimer(team_id=revived.team_id, deadline_at=revived.deadline_at),
+            announcement=GameAnnouncement(message=message, group_only=True),
         )
 
     def _record_game_updates(

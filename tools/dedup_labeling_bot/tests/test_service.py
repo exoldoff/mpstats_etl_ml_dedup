@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import random
 
 import pandas as pd
@@ -192,9 +192,68 @@ def test_combo_expiry_resets_team_combo(tmp_path) -> None:
 
     assert reset is not None
     assert reset.group_only
+    assert reset.combo_reset_event_id is not None
+    assert reset.combo_revives_remaining == 5
     assert "Таймеры" in reset.message
     assert "x1" in reset.message
     assert "⚡ x" not in service.team_leaderboard()
+
+
+def test_combo_revive_restores_reset_series_and_spends_team_limit(tmp_path) -> None:
+    service, _ = make_service(
+        tmp_path,
+        mode="unique",
+        batch_size=1,
+        rows=2,
+        combo_timeout=timedelta(seconds=-1),
+    )
+    service.authorize(1, "secret")
+    service.join_team(1, "Фениксы")
+
+    pair = service.next_pair(1)
+    assert pair is not None
+    outcome = service.label_row(1, pair.row_index, "exact_duplicate")
+    timer = outcome.combo_timers[0]
+
+    reset = service.expire_team_combo(team_id=timer.team_id, deadline_at=timer.deadline_at)
+    assert reset is not None
+    revive = service.revive_team_combo(user_id=1, reset_event_id=reset.combo_reset_event_id)
+
+    assert revive.timer.team_id == timer.team_id
+    assert "Серия восстановлена" in revive.message
+    assert "комбо x1" in revive.message
+    assert "осталось: <b>4</b>" in revive.message
+    assert "⚡ x1" in service.team_leaderboard()
+
+
+def test_combo_revive_limit_is_five_per_team(tmp_path) -> None:
+    service, _ = make_service(
+        tmp_path,
+        mode="unique",
+        batch_size=1,
+        rows=2,
+        combo_timeout=timedelta(seconds=-1),
+    )
+    service.authorize(1, "secret")
+    service.join_team(1, "Пять жизней")
+
+    pair = service.next_pair(1)
+    assert pair is not None
+    outcome = service.label_row(1, pair.row_index, "exact_duplicate")
+    timer = outcome.combo_timers[0]
+
+    for expected_remaining in [4, 3, 2, 1, 0]:
+        reset = service.expire_team_combo(team_id=timer.team_id, deadline_at=timer.deadline_at)
+        assert reset is not None
+        revived = service.revive_team_combo(user_id=1, reset_event_id=reset.combo_reset_event_id)
+        assert f"осталось: <b>{expected_remaining}</b>" in revived.message
+        timer = revived.timer
+
+    reset = service.expire_team_combo(team_id=timer.team_id, deadline_at=timer.deadline_at)
+    assert reset is not None
+    assert reset.combo_revives_remaining == 0
+    with pytest.raises(ValueError, match="Лимит возрождений"):
+        service.revive_team_combo(user_id=1, reset_event_id=reset.combo_reset_event_id)
 
 
 def test_relabel_does_not_add_second_game_answer(tmp_path) -> None:
@@ -462,6 +521,51 @@ def test_uncertain_with_discussion_chat_does_not_write_csv_until_consensus(tmp_p
     vote = service.vote_discussion_row(2, first.row_index, "uncertain")
 
     assert vote.final_label == "uncertain"
+    assert pd.read_csv(csv_path).at[first.row_index, "label"] == "uncertain"
+
+
+def test_discussion_message_shows_current_group_votes(tmp_path) -> None:
+    service, _ = make_service(tmp_path, discussion_chat_id=-100123, overlap_votes=3)
+    service.authorize(1, "secret", username="alice")
+    service.authorize(2, "secret", username="bob")
+
+    first = service.next_pair(1)
+    assert first is not None
+    service.move_row_to_discussion(1, first.row_index, "uncertain")
+    service.record_discussion_post(first.row_index, 1, chat_id=-100123, message_id=10)
+    service.vote_discussion_row(2, first.row_index, "exact_duplicate")
+
+    message = service.discussion_message(first.row_index)
+
+    assert "<b>Инициатор:</b> @alice (1)" in message
+    assert "• @alice — <b>Не уверен</b>" in message
+    assert "• @bob — <b>Дубль</b>" in message
+
+
+def test_discussion_timeout_marks_row_as_uncertain_skip(tmp_path) -> None:
+    service, csv_path = make_service(tmp_path, discussion_chat_id=-100123, overlap_votes=3)
+    service.authorize(1, "secret", username="alice")
+    requested_at = datetime(2026, 6, 29, 10, 0, tzinfo=timezone.utc)
+
+    first = service.next_pair(1)
+    assert first is not None
+    service.move_row_to_discussion(1, first.row_index, "uncertain")
+    service.record_discussion_post(first.row_index, 1, chat_id=-100123, message_id=10, now=requested_at)
+
+    too_early = service.expire_discussion_row(
+        row_index=first.row_index,
+        expected_requested_at=requested_at,
+        now=requested_at + timedelta(minutes=29),
+    )
+    expired = service.expire_discussion_row(
+        row_index=first.row_index,
+        expected_requested_at=requested_at,
+        now=requested_at + timedelta(minutes=31),
+    )
+
+    assert too_early is None
+    assert expired is not None
+    assert expired.final_label == "uncertain"
     assert pd.read_csv(csv_path).at[first.row_index, "label"] == "uncertain"
 
 

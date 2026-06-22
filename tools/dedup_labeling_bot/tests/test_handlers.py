@@ -7,6 +7,7 @@ from telegram.error import TimedOut
 from tools.dedup_labeling_bot.handlers import (
     TelegramLabelingHandlers,
     build_bot_commands,
+    build_combo_revive_keyboard,
     build_discussion_keyboard,
     build_keyboard,
 )
@@ -47,6 +48,19 @@ def test_build_discussion_keyboard_has_vote_buttons_without_next() -> None:
     assert "discussion_label:7:different_product" in callback_data
     assert "discussion_label:7:uncertain" in callback_data
     assert "next" not in callback_data
+
+
+def test_build_combo_revive_keyboard_shows_remaining_count() -> None:
+    markup = build_combo_revive_keyboard(reset_event_id=7, revives_remaining=5)
+
+    assert markup is not None
+    button = markup.inline_keyboard[0][0]
+    assert button.text == "Восстановить (5)"
+    assert button.callback_data == "combo_revive:7"
+
+
+def test_build_combo_revive_keyboard_returns_none_without_remaining_revives() -> None:
+    assert build_combo_revive_keyboard(reset_event_id=7, revives_remaining=0) is None
 
 
 def test_build_bot_commands_contains_menu_commands() -> None:

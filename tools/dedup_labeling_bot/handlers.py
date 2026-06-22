@@ -16,19 +16,22 @@ from research.dedup.annotation import (
 )
 
 from .callbacks import (
+    COMBO_REVIVE_CALLBACK_PREFIX,
     DISCUSSION_LABEL_CALLBACK_PREFIX,
     NAV_CALLBACK_PREFIX,
     NEXT_CALLBACK,
     NOOP_CALLBACK_PREFIX,
+    make_combo_revive_callback,
     make_discussion_label_callback,
     make_label_callback,
     make_nav_callback,
     make_noop_callback,
+    parse_combo_revive_callback,
     parse_label_callback,
     parse_nav_callback,
 )
 from .formatter import format_help_text, h
-from .service import AssignedPair, LabelingBotService
+from .service import DISCUSSION_TIMEOUT, AssignedPair, LabelingBotService
 
 
 logger = logging.getLogger(__name__)
@@ -81,6 +84,14 @@ def build_discussion_keyboard(row_index: int) -> InlineKeyboardMarkup:
     )
 
 
+def build_combo_revive_keyboard(reset_event_id: int, revives_remaining: int) -> InlineKeyboardMarkup | None:
+    if revives_remaining <= 0:
+        return None
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(f"Восстановить ({revives_remaining})", callback_data=make_combo_revive_callback(reset_event_id))]]
+    )
+
+
 def build_bot_commands() -> list[BotCommand]:
     return [
         BotCommand("start", "войти по паролю"),
@@ -107,6 +118,7 @@ class TelegramLabelingHandlers:
         self.service = service
         self.lock = asyncio.Lock()
         self.combo_tasks: dict[int, asyncio.Task[None]] = {}
+        self.discussion_tasks: dict[int, asyncio.Task[None]] = {}
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
@@ -263,6 +275,10 @@ class TelegramLabelingHandlers:
             return
 
         data = query.data or ""
+        if data.startswith(f"{COMBO_REVIVE_CALLBACK_PREFIX}:"):
+            await self._handle_combo_revive_callback(query, context, user, data)
+            return
+
         if data.startswith(f"{DISCUSSION_LABEL_CALLBACK_PREFIX}:"):
             await self._handle_discussion_callback(query, context, user, data)
             return
@@ -433,9 +449,14 @@ class TelegramLabelingHandlers:
         if not announcements:
             return
 
-        async def send_one(chat_id: int | str, text: str) -> None:
+        async def send_one(chat_id: int | str, text: str, reply_markup: InlineKeyboardMarkup | None = None) -> None:
             try:
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.HTML,
+                )
             except Exception:
                 return
 
@@ -446,7 +467,14 @@ class TelegramLabelingHandlers:
                 targets = self.service.announcement_recipients()
             if not targets:
                 continue
-            await asyncio.gather(*(send_one(chat_id, announcement.message) for chat_id in targets))
+            reply_markup = None
+            reset_event_id = getattr(announcement, "combo_reset_event_id", None)
+            if reset_event_id is not None:
+                reply_markup = build_combo_revive_keyboard(
+                    reset_event_id,
+                    int(getattr(announcement, "combo_revives_remaining", 0)),
+                )
+            await asyncio.gather(*(send_one(chat_id, announcement.message, reply_markup) for chat_id in targets))
 
     def _schedule_combo_timers(self, context: ContextTypes.DEFAULT_TYPE, timers: object) -> None:
         for timer in timers or ():
@@ -459,8 +487,9 @@ class TelegramLabelingHandlers:
             task.add_done_callback(lambda _task, team_id=timer.team_id: self.combo_tasks.pop(team_id, None))
 
     async def shutdown(self, application: Application) -> None:
-        tasks = list(self.combo_tasks.values())
+        tasks = list(self.combo_tasks.values()) + list(self.discussion_tasks.values())
         self.combo_tasks.clear()
+        self.discussion_tasks.clear()
         for task in tasks:
             task.cancel()
         if tasks:
@@ -484,6 +513,54 @@ class TelegramLabelingHandlers:
             return
         await self._broadcast_game_announcements(context, (announcement,))
         await self._refresh_leaderboard_pin(context)
+
+    def _schedule_discussion_timeout(
+        self,
+        context: ContextTypes.DEFAULT_TYPE | Application,
+        *,
+        row_index: int,
+        requested_at: datetime,
+    ) -> None:
+        existing_task = self.discussion_tasks.pop(row_index, None)
+        if existing_task is not None:
+            existing_task.cancel()
+        deadline_at = requested_at + DISCUSSION_TIMEOUT
+        delay = max(0.0, (deadline_at - datetime.now(timezone.utc)).total_seconds())
+        task = asyncio.create_task(self._discussion_timeout_task(context, row_index, requested_at, delay))
+        self.discussion_tasks[row_index] = task
+        task.add_done_callback(lambda _task, idx=row_index: self.discussion_tasks.pop(idx, None))
+
+    async def _discussion_timeout_task(
+        self,
+        context: ContextTypes.DEFAULT_TYPE | Application,
+        row_index: int,
+        requested_at: datetime,
+        delay: float,
+    ) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+
+        async with self.lock:
+            outcome = self.service.expire_discussion_row(
+                row_index=row_index,
+                expected_requested_at=requested_at,
+            )
+            post = self.service.store.discussion_post(row_index)
+            text = self.service.discussion_message(row_index) if outcome is not None else None
+        if outcome is None or post is None or text is None:
+            return
+        text = f"{text}\n\n<b>Итог:</b> скип после 30 минут без решения (<code>uncertain</code>)."
+        try:
+            await context.bot.edit_message_text(
+                chat_id=post.chat_id,
+                message_id=post.message_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
 
     async def _refresh_leaderboard_pin(self, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat_id = self.service.config.leaderboard_chat_id
@@ -580,9 +657,10 @@ class TelegramLabelingHandlers:
             return
         async with self.lock:
             outcome = self.service.vote_discussion_row(user.id, parsed.row_index, parsed.label)
-            text = self.service.discussion_message(parsed.row_index, self._user_display(user))
+            text = self.service.discussion_message(parsed.row_index)
         await self._safe_answer(query, self._toast(outcome.message))
         if outcome.final_label is not None:
+            self._cancel_discussion_timeout(parsed.row_index)
             text = f"{text}\n\n<b>Итог:</b> {outcome.final_label}"
             reply_markup = None
         else:
@@ -659,13 +737,63 @@ class TelegramLabelingHandlers:
                     chat_id=chat_id,
                     message_id=message_id,
                 )
+                post = self.service.store.discussion_post(row_index)
+                if post is not None:
+                    self._schedule_discussion_timeout(context, row_index=row_index, requested_at=post.requested_at)
+                    discussion_message = self.service.discussion_message(row_index)
             next_pair = self.service.navigate_pair(user.id, row_index, "next")
             current_pair = self.service.pair_for_row(user.id, row_index)
+
+        if message_id is not None and chat_id is not None and discussion_message is not None:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=discussion_message,
+                    reply_markup=build_discussion_keyboard(row_index),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
 
         if next_pair is None:
             await self._edit_pair_message(query, current_pair)
             return
         await self._edit_pair_message(query, next_pair)
+
+    async def _handle_combo_revive_callback(
+        self,
+        query: object,
+        context: ContextTypes.DEFAULT_TYPE,
+        user: object,
+        data: str,
+    ) -> None:
+        try:
+            parsed = parse_combo_revive_callback(data)
+        except Exception:
+            await self._safe_answer(query)
+            await self._safe_edit_message(query, "Не понял кнопку восстановления серии.")
+            return
+        async with self.lock:
+            try:
+                outcome = self.service.revive_team_combo(user_id=user.id, reset_event_id=parsed.reset_event_id)
+            except ValueError as exc:
+                await self._safe_answer(query, str(exc))
+                return
+        await self._safe_answer(query, "Серия восстановлена.")
+        self._schedule_combo_timers(context, (outcome.timer,))
+        await self._safe_edit_message(query, outcome.message, parse_mode=ParseMode.HTML)
+        await self._broadcast_game_announcements(context, (outcome.announcement,))
+        await self._refresh_leaderboard_pin(context)
+
+    def _cancel_discussion_timeout(self, row_index: int) -> None:
+        task = self.discussion_tasks.pop(row_index, None)
+        if task is not None:
+            task.cancel()
+
+    def schedule_pending_discussions(self, application: Application) -> None:
+        for post in self.service.pending_discussion_posts():
+            self._schedule_discussion_timeout(application, row_index=post.row_index, requested_at=post.requested_at)
 
 
 async def log_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -684,10 +812,15 @@ async def log_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def create_application(service: LabelingBotService) -> Application:
     handlers = TelegramLabelingHandlers(service)
+
+    async def post_init(application: Application) -> None:
+        await set_bot_commands(application)
+        handlers.schedule_pending_discussions(application)
+
     application = (
         Application.builder()
         .token(service.config.token)
-        .post_init(set_bot_commands)
+        .post_init(post_init)
         .post_shutdown(handlers.shutdown)
         .build()
     )

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from tools.dedup_labeling_bot.callbacks import (
+    make_combo_revive_callback,
     make_label_callback,
     make_nav_callback,
     make_noop_callback,
+    parse_combo_revive_callback,
     parse_label_callback,
     parse_nav_callback,
 )
@@ -29,3 +31,11 @@ def test_nav_callback_roundtrip() -> None:
 
 def test_noop_callback_has_row_index() -> None:
     assert make_noop_callback(42) == "noop:42"
+
+
+def test_combo_revive_callback_roundtrip() -> None:
+    value = make_combo_revive_callback(17)
+
+    parsed = parse_combo_revive_callback(value)
+
+    assert parsed.reset_event_id == 17

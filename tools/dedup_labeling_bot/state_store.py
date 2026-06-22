@@ -17,6 +17,7 @@ EXPIRED = "expired"
 ROW_FINALIZED = "finalized"
 ROW_CONFLICT = "conflict"
 ROW_DISCUSSION = "discussion"
+COMBO_REVIVE_LIMIT = 5
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,35 @@ class TeamComboReset:
     team_id: int
     team_name: str
     combo_count: int
+    reset_event_id: int | None = None
+    revives_remaining: int = 0
+
+
+@dataclass(frozen=True)
+class TeamComboRevive:
+    team_id: int
+    team_name: str
+    combo_count: int
+    deadline_at: datetime
+    revives_remaining: int
+
+
+@dataclass(frozen=True)
+class DiscussionPost:
+    row_index: int
+    requested_by_user_id: int
+    requested_at: datetime
+    chat_id: str
+    message_id: int
+
+
+@dataclass(frozen=True)
+class DiscussionVote:
+    user_id: int
+    username: str
+    first_name: str
+    label: str
+    voted_at: datetime
 
 
 @dataclass(frozen=True)
@@ -259,6 +289,15 @@ class LabelingStateStore:
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY (team_id) REFERENCES teams(team_id)
                 );
+                CREATE TABLE IF NOT EXISTS team_combo_reset_events (
+                    reset_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    team_id INTEGER NOT NULL,
+                    combo_count INTEGER NOT NULL,
+                    reset_at TEXT NOT NULL,
+                    revived_at TEXT,
+                    revived_by_user_id INTEGER,
+                    FOREIGN KEY (team_id) REFERENCES teams(team_id)
+                );
                 CREATE TABLE IF NOT EXISTS leaderboard_pin (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     chat_id TEXT NOT NULL,
@@ -286,6 +325,8 @@ class LabelingStateStore:
                     ON game_answers(user_id);
                 CREATE INDEX IF NOT EXISTS idx_achievements_owner
                     ON achievements(scope, owner_id);
+                CREATE INDEX IF NOT EXISTS idx_team_combo_reset_events_team
+                    ON team_combo_reset_events(team_id, reset_at);
                 INSERT OR IGNORE INTO player_answers (row_index, user_id, answered_at)
                 SELECT row_index, user_id, answered_at
                 FROM game_answers;
@@ -787,6 +828,43 @@ class LabelingStateStore:
                     return VoteResult(status=ROW_FINALIZED, final_label=candidate_label)
         return VoteResult(status=ROW_DISCUSSION)
 
+    def expire_discussion_row(
+        self,
+        *,
+        row_index: int,
+        expected_requested_at: datetime,
+        final_label: str,
+        now: datetime | None = None,
+    ) -> bool:
+        if final_label not in VALID_LABELS:
+            raise ValueError(f"Unsupported label: {final_label!r}")
+        current = now or utcnow()
+        expected_requested = _to_iso(expected_requested_at)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT rs.status, dp.requested_at
+                FROM row_states rs
+                JOIN discussion_posts dp ON dp.row_index = rs.row_index
+                WHERE rs.row_index = ?
+                """,
+                (row_index,),
+            ).fetchone()
+            if row is None or row["status"] != ROW_DISCUSSION or str(row["requested_at"]) != expected_requested:
+                return False
+            connection.execute(
+                """
+                INSERT INTO row_states (row_index, status, final_label, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(row_index) DO UPDATE SET
+                    status = excluded.status,
+                    final_label = excluded.final_label,
+                    updated_at = excluded.updated_at
+                """,
+                (row_index, ROW_FINALIZED, final_label, _to_iso(current)),
+            )
+        return True
+
     def discussion_was_posted(self, row_index: int) -> bool:
         with self._connect() as connection:
             row = connection.execute(
@@ -820,6 +898,77 @@ class LabelingStateStore:
                 """,
                 (row_index, user_id, _to_iso(current), chat_id, message_id),
             )
+
+    def discussion_post(self, row_index: int) -> DiscussionPost | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT row_index, requested_by_user_id, requested_at, chat_id, message_id
+                FROM discussion_posts
+                WHERE row_index = ?
+                """,
+                (row_index,),
+            ).fetchone()
+        if row is None:
+            return None
+        return DiscussionPost(
+            row_index=int(row["row_index"]),
+            requested_by_user_id=int(row["requested_by_user_id"]),
+            requested_at=_from_iso(str(row["requested_at"])),
+            chat_id=str(row["chat_id"]),
+            message_id=int(row["message_id"]),
+        )
+
+    def pending_discussion_posts(self) -> list[DiscussionPost]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT dp.row_index, dp.requested_by_user_id, dp.requested_at, dp.chat_id, dp.message_id
+                FROM discussion_posts dp
+                JOIN row_states rs ON rs.row_index = dp.row_index
+                WHERE rs.status = ?
+                ORDER BY dp.requested_at, dp.row_index
+                """,
+                (ROW_DISCUSSION,),
+            ).fetchall()
+        return [
+            DiscussionPost(
+                row_index=int(row["row_index"]),
+                requested_by_user_id=int(row["requested_by_user_id"]),
+                requested_at=_from_iso(str(row["requested_at"])),
+                chat_id=str(row["chat_id"]),
+                message_id=int(row["message_id"]),
+            )
+            for row in rows
+        ]
+
+    def discussion_votes(self, row_index: int) -> list[DiscussionVote]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    a.user_id,
+                    u.username,
+                    u.first_name,
+                    a.label,
+                    a.labeled_at
+                FROM assignments a
+                LEFT JOIN users u ON u.user_id = a.user_id
+                WHERE a.row_index = ? AND a.status = ? AND a.label IS NOT NULL
+                ORDER BY a.labeled_at, a.user_id
+                """,
+                (row_index, LABELED),
+            ).fetchall()
+        return [
+            DiscussionVote(
+                user_id=int(row["user_id"]),
+                username=str(row["username"] or ""),
+                first_name=str(row["first_name"] or ""),
+                label=str(row["label"]),
+                voted_at=_from_iso(str(row["labeled_at"])),
+            )
+            for row in rows
+        ]
 
     def set_user_team(
         self,
@@ -1166,7 +1315,94 @@ class LabelingStateStore:
                 """,
                 (_to_iso(current), team_id),
             )
-        return TeamComboReset(team_id=team_id, team_name=str(row["name"]), combo_count=combo_count)
+            reset_event_id, revives_remaining = self._record_team_combo_reset_event(
+                connection,
+                team_id=team_id,
+                combo_count=combo_count,
+                now=current,
+            )
+        return TeamComboReset(
+            team_id=team_id,
+            team_name=str(row["name"]),
+            combo_count=combo_count,
+            reset_event_id=reset_event_id,
+            revives_remaining=revives_remaining,
+        )
+
+    def revive_team_combo(
+        self,
+        *,
+        reset_event_id: int,
+        user_id: int,
+        combo_timeout: timedelta,
+        now: datetime | None = None,
+    ) -> TeamComboRevive:
+        current = now or utcnow()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT e.reset_event_id, e.team_id, e.combo_count, e.revived_at, t.name
+                FROM team_combo_reset_events e
+                JOIN teams t ON t.team_id = e.team_id
+                WHERE e.reset_event_id = ?
+                """,
+                (reset_event_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Сброс серии уже не найден.")
+            team_id = int(row["team_id"])
+            membership = connection.execute(
+                "SELECT 1 FROM team_members WHERE user_id = ? AND team_id = ?",
+                (user_id, team_id),
+            ).fetchone()
+            if membership is None:
+                raise ValueError("Восстановить серию может только участник этой команды.")
+            if row["revived_at"]:
+                raise ValueError("Эту серию уже восстановили.")
+
+            combo = connection.execute(
+                "SELECT combo_count, deadline_at FROM team_combos WHERE team_id = ?",
+                (team_id,),
+            ).fetchone()
+            if combo is not None:
+                deadline = _optional_from_iso(combo["deadline_at"])
+                if int(combo["combo_count"]) > 0 and deadline is not None and deadline > current:
+                    raise ValueError("У команды уже есть живая серия.")
+
+            used_count = self._team_combo_revives_used(connection, team_id)
+            if used_count >= COMBO_REVIVE_LIMIT:
+                raise ValueError("Лимит возрождений команды уже потрачен.")
+
+            combo_count = int(row["combo_count"])
+            deadline_at = current + combo_timeout
+            connection.execute(
+                """
+                UPDATE team_combo_reset_events
+                SET revived_at = ?, revived_by_user_id = ?
+                WHERE reset_event_id = ? AND revived_at IS NULL
+                """,
+                (_to_iso(current), user_id, reset_event_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO team_combos (team_id, combo_count, last_answer_at, deadline_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(team_id) DO UPDATE SET
+                    combo_count = excluded.combo_count,
+                    last_answer_at = excluded.last_answer_at,
+                    deadline_at = excluded.deadline_at,
+                    updated_at = excluded.updated_at
+                """,
+                (team_id, combo_count, _to_iso(current), _to_iso(deadline_at), _to_iso(current)),
+            )
+            remaining = max(0, COMBO_REVIVE_LIMIT - used_count - 1)
+        return TeamComboRevive(
+            team_id=team_id,
+            team_name=str(row["name"]),
+            combo_count=combo_count,
+            deadline_at=deadline_at,
+            revives_remaining=remaining,
+        )
 
     def claim_achievement(
         self,
@@ -1419,3 +1655,32 @@ class LabelingStateStore:
             ),
             reset,
         )
+
+    def _record_team_combo_reset_event(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        team_id: int,
+        combo_count: int,
+        now: datetime,
+    ) -> tuple[int, int]:
+        cursor = connection.execute(
+            """
+            INSERT INTO team_combo_reset_events (team_id, combo_count, reset_at)
+            VALUES (?, ?, ?)
+            """,
+            (team_id, combo_count, _to_iso(now)),
+        )
+        used_count = self._team_combo_revives_used(connection, team_id)
+        return int(cursor.lastrowid), max(0, COMBO_REVIVE_LIMIT - used_count)
+
+    def _team_combo_revives_used(self, connection: sqlite3.Connection, team_id: int) -> int:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM team_combo_reset_events
+            WHERE team_id = ? AND revived_at IS NOT NULL
+            """,
+            (team_id,),
+        ).fetchone()
+        return int(row["count"])

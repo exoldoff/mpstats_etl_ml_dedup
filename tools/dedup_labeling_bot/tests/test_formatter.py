@@ -8,6 +8,7 @@ import pandas as pd
 from tools.dedup_labeling_bot.formatter import (
     format_achievement_message,
     format_achievements_list,
+    format_combo_revive_message,
     format_combo_hot_message,
     format_combo_reset_message,
     format_discussion_message,
@@ -89,12 +90,30 @@ def test_format_discussion_message_has_initiator() -> None:
 
     assert "<b>Нужна общая проверка</b>" in message
     assert "<b>Инициатор:</b> @user &lt;id&gt;" in message
+    assert "Пока никто не проголосовал." in message
+
+
+def test_format_discussion_message_lists_current_votes() -> None:
+    row = pd.Series({"title_a": "A", "title_b": "B", "sku_a": "1", "sku_b": "2"})
+    vote = SimpleNamespace(
+        user_id=1,
+        username="alice",
+        first_name="",
+        label="exact_duplicate",
+        voted_at=datetime(2026, 6, 29, 10, 15, tzinfo=timezone.utc),
+    )
+
+    message = format_discussion_message(row, 2, 5, "@user", votes=[vote])
+
+    assert "<b>🗳️ Голоса сейчас</b>" in message
+    assert "• @alice — <b>Дубль</b> (13:15)" in message
 
 
 def test_format_game_messages_escape_team_name() -> None:
     lead = format_team_lead_message(team_name="A < B", score=12, previous_leader_score=11)
     combo = format_combo_hot_message(team_name="A < B", combo_count=5)
     reset = format_combo_reset_message(team_name="A < B", combo_count=5)
+    revive = format_combo_revive_message(team_name="A < B", combo_count=5, revives_remaining=4)
     achievement = format_achievement_message(
         scope="team",
         subject_name="A < B",
@@ -107,6 +126,9 @@ def test_format_game_messages_escape_team_name() -> None:
     assert "5 минут" in combo
     assert "<b>A &lt; B</b>" in reset
     assert "Пять минут" in reset
+    assert "<b>A &lt; B</b>" in revive
+    assert "комбо x5" in revive
+    assert "<b>4</b>" in revive
     assert "<b>A &lt; B</b>" in achievement
     assert "<b>Титул &lt;x&gt;</b>" in achievement
     assert "Описание &amp; детали" in achievement
