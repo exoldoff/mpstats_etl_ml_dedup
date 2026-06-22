@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import Sequence
 
@@ -20,6 +21,7 @@ LABEL_TITLES = {
     LABEL_DIFFERENT_PRODUCT: "Разные товары",
     LABEL_UNCERTAIN: "Не уверен",
 }
+MOSCOW_TZ = timezone(timedelta(hours=3), "MSK")
 
 
 def h(value: object) -> str:
@@ -104,6 +106,10 @@ def _user_display(user_id: int, username: str, first_name: str) -> str:
     if first_name:
         return first_name
     return str(user_id)
+
+
+def _format_unlocked_at(value: datetime) -> str:
+    return value.astimezone(MOSCOW_TZ).strftime("%d.%m.%Y %H:%M МСК")
 
 
 def format_pair_message(
@@ -265,6 +271,7 @@ def format_achievements_list(
     else:
         for achievement in user_achievements:
             lines.append(f"• <b>{h(achievement.title)}</b> — {h(achievement.description)}")
+            lines.append(f"  получено: {h(_format_unlocked_at(achievement.unlocked_at))}")
 
     lines.append("")
     if team_name:
@@ -274,6 +281,7 @@ def format_achievements_list(
         else:
             for achievement in team_achievements:
                 lines.append(f"• <b>{h(achievement.title)}</b> — {h(achievement.description)}")
+                lines.append(f"  получено: {h(_format_unlocked_at(achievement.unlocked_at))}")
     else:
         lines.append("<b>Команда</b>")
         lines.append("Вы пока без команды. Вступите через /team <название>.")

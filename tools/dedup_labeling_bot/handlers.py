@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from research.dedup.annotation import (
@@ -28,6 +29,9 @@ from .callbacks import (
 )
 from .formatter import format_help_text, h
 from .service import AssignedPair, LabelingBotService
+
+
+logger = logging.getLogger(__name__)
 
 
 def _label_button(row_index: int, label: str, text: str, selected_label: str | None) -> InlineKeyboardButton:
@@ -254,7 +258,7 @@ class TelegramLabelingHandlers:
         if query is None or user is None:
             return
         if not self.service.is_authorized(user.id):
-            await query.answer()
+            await self._safe_answer(query)
             await self._safe_edit_message(query, "Сначала войдите через /start <пароль>.")
             return
 
@@ -268,11 +272,11 @@ class TelegramLabelingHandlers:
             return
 
         if data.startswith(f"{NOOP_CALLBACK_PREFIX}:"):
-            await query.answer("Уже сохранено.")
+            await self._safe_answer(query, "Уже сохранено.")
             return
 
         if data == NEXT_CALLBACK:
-            await query.answer()
+            await self._safe_answer(query)
             pair = await self._next_pair(user.id)
             if pair is None:
                 await self._safe_edit_message(query, "Свободных пар больше нет.")
@@ -283,7 +287,7 @@ class TelegramLabelingHandlers:
         try:
             parsed = parse_label_callback(data)
         except Exception:
-            await query.answer()
+            await self._safe_answer(query)
             await self._safe_edit_message(query, "Не понял кнопку. Нажмите /next для новой пары.")
             return
 
@@ -296,7 +300,7 @@ class TelegramLabelingHandlers:
                 outcome = self.service.label_row(user.id, parsed.row_index, parsed.label)
             except ValueError as exc:
                 next_pair = self.service.navigate_pair(user.id, parsed.row_index, "next")
-                await query.answer()
+                await self._safe_answer(query)
                 if next_pair is None:
                     await self._safe_edit_message(query, f"{exc}. Свободных пар больше нет.")
                     return
@@ -310,7 +314,7 @@ class TelegramLabelingHandlers:
             next_pair = self.service.navigate_pair(user.id, parsed.row_index, "next")
             current_pair = self.service.pair_for_row(user.id, parsed.row_index)
 
-        await query.answer(self._toast(outcome.message))
+        await self._safe_answer(query, self._toast(outcome.message))
         if next_pair is None:
             await self._edit_pair_message(query, current_pair)
             await self._handle_outcome_notifications(context, outcome)
@@ -357,6 +361,15 @@ class TelegramLabelingHandlers:
                 return
             raise
 
+    async def _safe_answer(self, query: object, text: str | None = None) -> None:
+        try:
+            if text is None:
+                await query.answer()
+            else:
+                await query.answer(text)
+        except NetworkError as exc:
+            logger.warning("Telegram callback answer timed out or failed; continuing: %s", exc)
+
     async def _edit_pair_message(self, query: object, pair: AssignedPair) -> None:
         await self._safe_edit_message(
             query,
@@ -369,7 +382,7 @@ class TelegramLabelingHandlers:
         try:
             parsed = parse_nav_callback(data)
         except Exception:
-            await query.answer()
+            await self._safe_answer(query)
             await self._safe_edit_message(query, "Не понял навигацию. Нажмите /next для новой пары.")
             return
 
@@ -378,9 +391,9 @@ class TelegramLabelingHandlers:
 
         if pair is None:
             text = "Это первая пара." if parsed.direction == "prev" else "Дальше пока нет."
-            await query.answer(text)
+            await self._safe_answer(query, text)
             return
-        await query.answer()
+        await self._safe_answer(query)
         await self._edit_pair_message(query, pair)
 
     async def _broadcast_milestones(
@@ -444,6 +457,14 @@ class TelegramLabelingHandlers:
             task = asyncio.create_task(self._combo_timeout_task(context, timer.team_id, timer.deadline_at, delay))
             self.combo_tasks[timer.team_id] = task
             task.add_done_callback(lambda _task, team_id=timer.team_id: self.combo_tasks.pop(team_id, None))
+
+    async def shutdown(self, application: Application) -> None:
+        tasks = list(self.combo_tasks.values())
+        self.combo_tasks.clear()
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _combo_timeout_task(
         self,
@@ -548,19 +569,19 @@ class TelegramLabelingHandlers:
         data: str,
     ) -> None:
         if not self.service.is_authorized(user.id):
-            await query.answer()
+            await self._safe_answer(query)
             await self._safe_edit_message(query, "Сначала войдите через /start <пароль>.")
             return
         try:
             parsed = parse_label_callback(data)
         except Exception:
-            await query.answer()
+            await self._safe_answer(query)
             await self._safe_edit_message(query, "Не понял кнопку обсуждения.")
             return
         async with self.lock:
             outcome = self.service.vote_discussion_row(user.id, parsed.row_index, parsed.label)
             text = self.service.discussion_message(parsed.row_index, self._user_display(user))
-        await query.answer(self._toast(outcome.message))
+        await self._safe_answer(query, self._toast(outcome.message))
         if outcome.final_label is not None:
             text = f"{text}\n\n<b>Итог:</b> {outcome.final_label}"
             reply_markup = None
@@ -582,7 +603,7 @@ class TelegramLabelingHandlers:
         user: object,
         row_index: int,
     ) -> None:
-        await query.answer("Отправляю в обсуждение.")
+        await self._safe_answer(query, "Отправляю в обсуждение.")
         chat_id = self.service.config.discussion_chat_id
         async with self.lock:
             should_send = self.service.should_send_discussion(row_index)
@@ -647,9 +668,29 @@ class TelegramLabelingHandlers:
         await self._edit_pair_message(query, next_pair)
 
 
+async def log_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    error = context.error
+    if isinstance(error, NetworkError):
+        logger.warning("Telegram network error while handling update: %s", error)
+        return
+    if error is None:
+        logger.error("Unknown Telegram error while handling update")
+        return
+    logger.error(
+        "Unhandled Telegram error while handling update",
+        exc_info=(type(error), error, error.__traceback__),
+    )
+
+
 def create_application(service: LabelingBotService) -> Application:
     handlers = TelegramLabelingHandlers(service)
-    application = Application.builder().token(service.config.token).post_init(set_bot_commands).build()
+    application = (
+        Application.builder()
+        .token(service.config.token)
+        .post_init(set_bot_commands)
+        .post_shutdown(handlers.shutdown)
+        .build()
+    )
     application.add_handler(CommandHandler("start", handlers.start))
     application.add_handler(CommandHandler("help", handlers.help))
     application.add_handler(CommandHandler("menu", handlers.help))
@@ -663,4 +704,5 @@ def create_application(service: LabelingBotService) -> Application:
     application.add_handler(CommandHandler("release", handlers.release))
     application.add_handler(CommandHandler("logout", handlers.logout))
     application.add_handler(CallbackQueryHandler(handlers.callback))
+    application.add_error_handler(log_error)
     return application

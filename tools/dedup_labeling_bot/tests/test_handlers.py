@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from tools.dedup_labeling_bot.handlers import build_bot_commands, build_discussion_keyboard, build_keyboard
+import asyncio
+
+from telegram.error import TimedOut
+
+from tools.dedup_labeling_bot.handlers import (
+    TelegramLabelingHandlers,
+    build_bot_commands,
+    build_discussion_keyboard,
+    build_keyboard,
+)
 
 
 def test_build_keyboard_contains_label_and_next_callbacks() -> None:
@@ -50,3 +59,29 @@ def test_build_bot_commands_contains_menu_commands() -> None:
     assert commands["teams"] == "топ команд"
     assert commands["players"] == "топ игроков"
     assert commands["achievements"] == "мои ачивки"
+
+
+def test_safe_answer_ignores_telegram_timeout() -> None:
+    class TimeoutQuery:
+        async def answer(self, text=None):
+            raise TimedOut("boom")
+
+    async def run() -> None:
+        handlers = TelegramLabelingHandlers(service=None)
+        await handlers._safe_answer(TimeoutQuery(), "ok")
+
+    asyncio.run(run())
+
+
+def test_shutdown_cancels_combo_tasks() -> None:
+    async def run() -> None:
+        handlers = TelegramLabelingHandlers(service=None)
+        task = asyncio.create_task(asyncio.sleep(60))
+        handlers.combo_tasks[1] = task
+
+        await handlers.shutdown(application=None)
+
+        assert task.cancelled()
+        assert handlers.combo_tasks == {}
+
+    asyncio.run(run())

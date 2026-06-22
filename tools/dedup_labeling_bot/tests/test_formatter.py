@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
 import pandas as pd
 
 from tools.dedup_labeling_bot.formatter import (
     format_achievement_message,
+    format_achievements_list,
     format_combo_hot_message,
     format_combo_reset_message,
     format_discussion_message,
@@ -113,3 +117,16 @@ def test_format_player_leaderboard_empty_state() -> None:
 
     assert "<b>Топ игроков</b>" in message
     assert "Пока нет игроков" in message
+
+
+def test_format_achievements_list_shows_unlock_time() -> None:
+    achievement = SimpleNamespace(
+        title="Первый удар",
+        description="Первый финальный ответ",
+        unlocked_at=datetime(2026, 6, 29, 10, 15, tzinfo=timezone.utc),
+    )
+
+    message = format_achievements_list(user_achievements=[achievement])
+
+    assert "<b>Первый удар</b> — Первый финальный ответ" in message
+    assert "получено: 29.06.2026 13:15 МСК" in message
