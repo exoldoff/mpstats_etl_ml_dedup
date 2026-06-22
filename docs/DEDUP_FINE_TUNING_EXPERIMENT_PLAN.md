@@ -1,0 +1,329 @@
+# Dedup Fine-Tuning Experiment Plan
+
+Дата: 2026-06-29.
+
+Документ фиксирует первый план обучения моделей для research-only SKU dedup.
+Production `pipeline/` и web-app не меняются: здесь только подготовка
+эксперимента, обучение scorer/reranker и честное сравнение с текущими
+zero-shot / threshold benchmark результатами.
+
+## 1. Что уже собрано
+
+### Новый multi-category set
+
+Файл:
+`research/dedup/data/labeling_sauces_coconut_oil_soap.csv`
+
+Размер:
+
+- 3000 строк всего;
+- 2000 строк с метками прямо в CSV;
+- 2000 финализированных строк в Telegram sidecar
+  `labeling_sauces_coconut_oil_soap.csv.telegram_state.sqlite`;
+- CSV и SQLite совпадают не идеально: 1898 строк размечены в обоих источниках,
+  102 строки есть только в CSV, 102 строки есть только в SQLite, 3 строки имеют
+  конфликт метки между CSV и SQLite;
+- если брать union CSV+SQLite с приоритетом SQLite, получается 2102 строки с
+  какой-либо меткой, из них 2090 бинарно пригодны для обучения.
+
+Распределение union с приоритетом SQLite:
+
+| category_run | different_product | exact_duplicate | uncertain |
+| --- | ---: | ---: | ---: |
+| coconut_oil | 371 | 357 | 4 |
+| sauces | 554 | 114 | 4 |
+| soap | 531 | 163 | 4 |
+| **Итого** | **1456** | **634** | **12** |
+
+Важно: перед обучением нужно создать один подготовленный training artifact,
+который явно мержит CSV + SQLite sidecar и выносит 3 конфликтные строки в
+отдельный ручной review. Не тренироваться напрямую на текущем CSV, иначе часть
+ответов из Telegram потеряется.
+
+### Старый sauce set
+
+Файл:
+`research/dedup/data/labeling_sauces.csv`
+
+Размер:
+
+- 400 строк;
+- 400 строк с метками;
+- 400 уникальных пар;
+- пересечение с новым set: 1 пара, метка совпадает.
+
+Распределение:
+
+| category_run | different_product | exact_duplicate | uncertain |
+| --- | ---: | ---: | ---: |
+| old_sauces / unknown | 231 | 148 | 21 |
+
+### Общий объем для первого обучения
+
+После дедупликации пар и приоритета нового multi-category set:
+
+- 2399 уникальных пар всего;
+- 2366 бинарно пригодных пар;
+- 750 positive (`exact_duplicate`, включая legacy positive-логику);
+- 1616 negative (`different_product`);
+- 33 `uncertain` не идут в train loss, но остаются для ручного анализа.
+
+Это уже достаточно для первого supervised fine-tune reranker. Для большой 4B
+модели это все еще маленький датасет, поэтому первый прогон должен быть
+осторожным: короткие эпохи, dev-only early stopping, отдельный untouched test.
+
+## 2. Что уже есть по benchmark
+
+Главный актуальный отчет:
+`artifacts/reports/binary_threshold_summary.csv`
+
+Он сравнивает методы в forced-binary режиме:
+
+- threshold выбирается только на `dev`;
+- `test` используется только для финальной проверки;
+- false merge дороже false split;
+- weighted-стратегии используют `log1p(max(sales_volume_a, sales_volume_b))`.
+
+Лучшие test-ориентиры из текущего отчета:
+
+| Режим сравнения | Лучший метод | Test-результат |
+| --- | --- | --- |
+| Минимальная weighted cost | `reranker_qwen3_0_6b + threshold_weighted_cost` | precision 1.000, recall 0.254, F1 0.405, false_merge 0, false_split 44, weighted_total_cost 172.9 |
+| Баланс F1 | `reranker_qwen3_4b + threshold_max_f1` | precision 0.705, recall 0.932, F1 0.803, false_merge 23, false_split 4 |
+| Практичный компромисс для fusion | `reranker_qwen3_4b + threshold_weighted_cost` | precision 0.879, recall 0.492, F1 0.630, false_merge 4, false_split 30, weighted_total_cost 188.4 |
+
+Вывод: zero-shot rerankers уже дают сильный сигнал, но trade-off тяжелый:
+строгий Qwen 0.6B почти не склеивает лишнего, но теряет много дублей; Qwen 4B
+лучше ловит positive, но при F1-пороге дает слишком много false merge. Цель
+fine-tune: поднять recall при сохранении низкого false merge, особенно на
+hard negatives и cross-marketplace парах.
+
+Старые recall@20 embedding mini-tests по sauces:
+
+| embedding | recall@20 | cross_recall@20 | Комментарий |
+| --- | ---: | ---: | --- |
+| `intfloat/multilingual-e5-small` | 100.0% | 100.0% | biased baseline, потому что gold-set был собран вокруг E5-кандидатов |
+| `ai-forever/FRIDA` | 87.2% | 84.1% | сильный альтернативный retrieval-кандидат |
+| `cointegrated/rubert-tiny2` | 76.4% | 68.3% | легкий baseline, слабее |
+| `deepvk/RuModernBERT-small` | 66.2% | 57.3% | raw encoder, не dedicated sentence embedder |
+
+Embedding retriever пока не главный bottleneck для fine-tune: первый фокус -
+pairwise scorer/reranker.
+
+## 3. Какие модели тюнить
+
+### Первый эшелон
+
+1. `Qwen/Qwen3-Reranker-0.6B`
+   - Почему: лучший текущий weighted-cost baseline, 0 false merge на test в
+     строгом режиме, доступный размер.
+   - Как тюнить: supervised reranker на бинарных парах, с category-neutral
+     instruction.
+   - Роль: основной practical-кандидат.
+
+2. `BAAI/bge-reranker-v2-m3`
+   - Почему: легкий multilingual reranker, fast inference, нормальный
+     CrossEncoder/FlagEmbedding path.
+   - Как тюнить: тем же CSV и тем же split, чтобы понять, дает ли более простая
+     архитектура лучший прирост от наших hard negatives.
+   - Роль: стабильный open baseline, проще Qwen.
+
+3. `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`
+   - Почему: уже есть как `cross_encoder_zero_shot`, маленький и быстрый.
+   - Как тюнить: binary CrossEncoder baseline.
+   - Роль: cheap sanity baseline. Если даже он сильно прибавит, значит датасет
+     действительно учит SKU-специфичные признаки.
+
+### Второй эшелон
+
+4. `Qwen/Qwen3-Reranker-4B`
+   - Почему: лучший F1 zero-shot, сильный текущий scorer.
+   - Ограничение: локально тяжелый; полноценный fine-tune лучше делать как
+     cloud/LoRA job, не на Mac CPU.
+   - Роль: quality ceiling после того, как pipeline обучения уже отлажен на
+     0.6B/малых моделях.
+
+5. `jinaai/jina-reranker-v3`
+   - Почему: сильный 0.6B multilingual/listwise reranker; в публичной карточке
+     сравнивается конкурентно с Qwen/BGE.
+   - Ограничение: `trust_remote_code=True`, listwise API, лицензия
+     `cc-by-nc-4.0`; fine-tune path менее прямой, чем CrossEncoderTrainer.
+   - Роль: оставить для evaluation/fusion и, возможно, adapter tuning позже,
+     но не начинать с него первый supervised fine-tune.
+
+### Отдельно: bi-encoder
+
+`intfloat/multilingual-e5-small` fine-tune имеет смысл как второй этап, когда
+reranker уже улучшен:
+
+- цель bi-encoder fine-tune - улучшить candidate retrieval, а не финальный
+  scorer;
+- нужен другой loss: contrastive / multiple negatives, а не binary
+  CrossEncoder loss;
+- на текущем E5-biased gold-set нельзя честно объявлять победу retriever, надо
+  оценивать на multi-category positives и на hard missed pairs.
+
+## 4. Как делаем эксперимент
+
+### Шаг 0. Freeze исходных данных
+
+Собрать один immutable artifact:
+
+- вход: новый CSV + Telegram SQLite + старый sauce CSV;
+- выход:
+  `research/dedup/data/training/dedup_pairs_v1.csv`;
+- отдельный файл конфликтов:
+  `research/dedup/data/training/dedup_pairs_v1_conflicts.csv`;
+- отдельный manifest:
+  `research/dedup/data/training/dedup_pairs_v1_manifest.json`.
+
+Правила:
+
+- `uncertain` не идет в train loss;
+- legacy `same_product_different_pack`, если встретится, мапится в positive;
+- дубли пар схлопываются по unordered pair key;
+- при конфликте меток пара исключается до ручного решения;
+- в artifact сохраняются `category_run`, `candidate_source`,
+  `labeling_stratum`, `brand_relation`, marketplace/pack/weight fields.
+
+### Шаг 1. Split без leakage
+
+Нельзя просто random split по строкам: один и тот же товар может попасть в
+train и test через разные пары.
+
+План split:
+
+1. Построить граф по `raw_record_id_a/raw_record_id_b`.
+2. Разбить connected components на `train/dev/test`, чтобы связанные товары не
+   протекали между split.
+3. Сохранить стратификацию по:
+   - `category_run`;
+   - `same_base_product`;
+   - `candidate_source`;
+   - `is_cross_marketplace_pair`;
+   - `is_hard_negative_candidate`;
+   - `is_pack_variant_candidate`.
+
+Первый размер:
+
+- train: 70%;
+- dev: 15%;
+- test: 15%;
+- test не трогать до финального сравнения.
+
+### Шаг 2. Zero-shot baseline на том же frozen split
+
+Перед обучением нужно пересчитать текущие модели на новом frozen split:
+
+- `rule_based_fuzzy`;
+- `bi_encoder_zero_shot`;
+- `cross_encoder_zero_shot`;
+- `reranker_qwen3_0_6b`;
+- `reranker_qwen3_4b`, если доступен runtime;
+- `reranker_bge_v2_m3`;
+- `reranker_jina_v3`.
+
+Это станет честной точкой "до fine-tune", потому что старый benchmark был
+только на sauces.
+
+### Шаг 3. Fine-tune scorer/reranker
+
+Основной training API: `sentence-transformers` v4-style
+`CrossEncoderTrainer` + `BinaryCrossEntropyLoss`.
+
+Dataset columns:
+
+- `sentence_A`: нормализованный текст SKU A;
+- `sentence_B`: нормализованный текст SKU B;
+- `labels`: `1.0` для `same_base_product`, `0.0` для `different_product`;
+- metadata columns сохраняются рядом, но не подаются в модель напрямую.
+
+Training details:
+
+- loss: `BinaryCrossEntropyLoss`;
+- `pos_weight`: ratio negatives/positives на train, потому что negative больше;
+- 2-4 эпохи максимум для первого прогона;
+- learning rate: стартовать с `2e-5` для малых CrossEncoder/BGE; для Qwen 0.6B
+  использовать более осторожный LR/LoRA, если full fine-tune нестабилен;
+- early stopping по dev weighted cost или dev false-merge-constrained F1;
+- сохранять model artifact и score cache с manifest.
+
+Для Qwen instruction:
+
+```text
+Decide whether two ecommerce products are the same base SKU. Pay attention to
+brand, product line, flavor or scent or purpose, unit size, total size, and pack
+count. Treat different pack counts as the same base product when the underlying
+product is the same.
+```
+
+### Шаг 4. Threshold calibration после обучения
+
+После каждой обученной модели не сравниваем raw logits напрямую.
+Повторяем тот же binary threshold protocol:
+
+- dev выбирает `threshold_same`;
+- test только проверяет;
+- считать все стратегии:
+  `threshold_max_f1`, `threshold_cost_sensitive`,
+  `threshold_max_weighted_f1`, `threshold_weighted_cost`;
+- главный продуктовый критерий: `threshold_weighted_cost`;
+- вторичный критерий: F1 при controlled false merge.
+
+### Шаг 5. Error analysis
+
+Для каждой модели сохранить:
+
+- false merges на test;
+- false splits на test;
+- breakdown по category;
+- breakdown по `candidate_source`;
+- breakdown по hard-negative / pack-variant / cross-marketplace;
+- score distributions до/после fine-tune.
+
+Отдельно проверить 3 текущих conflict rows из CSV/SQLite merge: они не должны
+попасть в train/test без ручного решения.
+
+### Шаг 6. Downstream graph check
+
+Лучшие 1-2 модели прогнать через текущий `04_fusion_pack_grouping.ipynb`:
+
+- family false links;
+- family size distribution;
+- pack-level correctness;
+- ручная витрина через `06_grouped_sku_demo.ipynb`.
+
+Выбирать модель только по pairwise F1 нельзя: нам важнее отсутствие опасных
+false merge в итоговых компонентах.
+
+## 5. Что считать успехом
+
+Минимальный success criterion для первого fine-tune:
+
+- test weighted_total_cost ниже текущего zero-shot baseline на том же frozen
+  split;
+- false_merge_count не растет относительно выбранного product-safe baseline;
+- recall по positive растет хотя бы на hard-negative/pack/cross-marketplace
+  сегментах;
+- model artifact воспроизводим: есть training data manifest, split manifest,
+  model manifest и score cache.
+
+Желаемый success criterion:
+
+- `Qwen 0.6B fine-tuned` сохраняет 0-2 false merge на test, но заметно
+  увеличивает recall относительно текущего строгого режима;
+- `BGE v2-m3 fine-tuned` становится близким к Qwen 0.6B по weighted cost и
+  быстрее/дешевле на inference;
+- `Qwen 4B` остается quality ceiling, но не блокирует локальный research loop.
+
+## 6. Короткий порядок запуска
+
+1. Export/merge labels: CSV + Telegram SQLite + old sauces.
+2. Resolve 3 conflicts вручную.
+3. Create frozen component-aware split.
+4. Re-run zero-shot benchmark на frozen split.
+5. Fine-tune `cross_encoder_mmarco` и `bge_v2_m3` как быстрый smoke.
+6. Fine-tune `qwen3_0_6b`.
+7. Если прирост есть, запускать `qwen3_4b` в cloud/LoRA как quality ceiling.
+8. Re-run threshold calibration and fusion/grouping.
+9. Обновить итоговый report/visuals.

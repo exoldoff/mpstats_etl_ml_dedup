@@ -36,6 +36,7 @@
 | `docs/ARCHITECTURE_PROGRESS.md` | журнал research-этапов | понять, что уже сделано, какие CSV/ноутбуки/проверки актуальны |
 | `docs/THRESHOLD_CALIBRATION_REPORT.md` | критерии SKU matching benchmark | cost-sensitive пороги, manual review, почему macro-F1 не главный критерий |
 | `docs/DEDUP_MODEL_HF_AUDIT.md` | HF-аудит моделей dedup research | prefixes, pooling, prompts, reranker settings, known mismatches |
+| `docs/DEDUP_FINE_TUNING_EXPERIMENT_PLAN.md` | план первого supervised fine-tuning эксперимента SKU dedup | после завершения ручной разметки: состав gold/training set, выбор reranker-моделей, split без leakage, метрики и порядок обучения |
 | `docs/DEDUP_PRODUCTION_OPTIMIZATION_AUDIT.md` | аудит прод-готовности dedup flow | что оптимизировать перед переносом из notebooks/research в production: FAISS/mmap, artifacts, manifests, safety gates |
 | `README.md` | краткий обзор | запуск, структура, состояние проекта |
 | `docs/USER_GUIDE.md` | пользовательская инструкция web-app | изменения UI, workflow, расчётов, статусов, справочника, классификатора |
