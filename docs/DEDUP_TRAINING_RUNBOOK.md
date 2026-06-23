@@ -128,6 +128,20 @@ Splitter по умолчанию сначала пробует strict all-edge c
 python3 -m research.dedup.training.prepare_dataset --large-component-strategy strict
 ```
 
+Для отдельной benchmark/evaluation проверки false merge можно создать
+pair-stratified split без выкидывания negative:
+
+```bash
+python3 -m research.dedup.training.prepare_dataset \
+  --large-component-strategy pair_stratified \
+  --prefix dedup_pairs_final_pair_stratified
+```
+
+Он сохраняет все `2465` binary pairs и даёт примерно `253` negative / `117`
+positive в test при split `70/15/15`. Это лучше для стабильной оценки false
+merge, но такой split может иметь raw-id leakage между train/dev/test; поэтому
+он benchmark/stress split, а не строгий no-leak split.
+
 ## Что копировать на GPU-сервер
 
 ### Вариант A: Docker, предпочтительно
@@ -155,8 +169,8 @@ docker run --rm --gpus all \
   mpstats-dedup-training:cu128 doctor
 ```
 
-Precision по умолчанию — `fp16`, это профиль под A5000 24GB. Для H200 можно
-включить `bf16`:
+Precision по умолчанию — `fp16`, это профиль под маленькие encoder-модели на
+A5000 24GB. Для H200 можно включить `bf16`:
 
 ```bash
 docker run --rm --gpus all \
@@ -229,6 +243,19 @@ docker run --rm --gpus all \
   mpstats-dedup-training:cu128 train-bge
 
 docker run --rm --gpus all \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/.hf_cache:/workspace/.hf_cache" \
+  mpstats-dedup-training:cu128 train-qwen
+```
+
+`train-qwen` использует `bf16` по умолчанию, даже если общий default контейнера
+`fp16`: Qwen reranker поднимает BF16 weights, а fp16 GradScaler падает на
+BF16 gradients. Если precision задаётся явно, использовать:
+
+```bash
+docker run --rm --gpus all \
+  -e DEDUP_TRAINING_PRECISION=bf16 \
   -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
   -v "$PWD/artifacts:/workspace/artifacts" \
   -v "$PWD/.hf_cache:/workspace/.hf_cache" \
@@ -363,7 +390,7 @@ python3 -m research.dedup.training.train_cross_encoder \
   --gradient-accumulation-steps 16 \
   --default-prompt-name sku_match \
   --trust-remote-code \
-  --fp16
+  --bf16
 ```
 
 ### Jina reranker v3

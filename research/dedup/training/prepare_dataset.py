@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-strict-component-share", type=float, default=0.25)
     parser.add_argument(
         "--large-component-strategy",
-        choices=["positive_record_holdout", "strict"],
+        choices=["positive_record_holdout", "strict", "pair_stratified"],
         default="positive_record_holdout",
     )
     parser.add_argument(

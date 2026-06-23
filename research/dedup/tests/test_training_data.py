@@ -113,6 +113,36 @@ def test_component_aware_split_has_no_raw_id_leakage(tmp_path):
     assert all(len(splits) == 1 for splits in raw_id_to_splits.values())
 
 
+def test_pair_stratified_split_keeps_all_pairs_for_benchmark() -> None:
+    rows = []
+    for idx in range(30):
+        rows.append(
+            {
+                **_pair_row(f"N{idx}A", f"N{idx}B", "different_product", category_run="soap"),
+                "same_base_product": 0,
+                "pair_key": pair_key(f"N{idx}A", f"N{idx}B"),
+            }
+        )
+    for idx in range(12):
+        rows.append(
+            {
+                **_pair_row(f"P{idx}A", f"P{idx}B", "exact_duplicate", category_run="soap"),
+                "same_base_product": 1,
+                "pair_key": pair_key(f"P{idx}A", f"P{idx}B"),
+            }
+        )
+    frame = pd.DataFrame(rows)
+
+    split = component_aware_split(frame, seed=7, large_component_strategy="pair_stratified")
+
+    assert split.manifest["splitter"] == "pair_stratified"
+    assert split.manifest["rows"] == len(frame)
+    assert split.manifest["dropped_rows"] == 0
+    assert split.dropped_pairs is not None and split.dropped_pairs.empty
+    assert set(split.pairs["split"]) == {"train", "dev", "test"}
+    assert split.pairs.groupby(["split", "same_base_product"]).size().unstack(fill_value=0).loc["test", 0] > 1
+
+
 def test_write_outputs_create_csv_and_manifest(tmp_path):
     labeling_path = tmp_path / "labeling.csv"
     telegram_path = tmp_path / "labeling.csv.telegram_state.sqlite"

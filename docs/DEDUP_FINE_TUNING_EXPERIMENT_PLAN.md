@@ -408,6 +408,11 @@ Calibration после fine-tune запускается с `--require-weighted`:
 `threshold_cost_sensitive` считается диагностической, но не финальным
 продуктовым сравнением.
 
+Для строгого train/dev/test используется no-leak split по raw records. Если
+нужна более устойчивая оценка false merge, дополнительно считать
+pair-stratified benchmark split: он сохраняет все размеченные negative, но
+может иметь raw-id leakage, поэтому не заменяет строгую проверку.
+
 ### Шаг 5. Error analysis
 
 Для каждой модели сохранить:

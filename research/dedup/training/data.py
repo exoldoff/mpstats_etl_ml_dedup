@@ -477,6 +477,15 @@ def component_aware_split(
     max_strict_component_share: float = 0.25,
     large_component_strategy: str = "positive_record_holdout",
 ) -> SplitResult:
+    if large_component_strategy == "pair_stratified":
+        return _pair_stratified_split(
+            frame,
+            train_ratio=train_ratio,
+            dev_ratio=dev_ratio,
+            test_ratio=test_ratio,
+            seed=seed,
+        )
+
     strict = _strict_component_aware_split(
         frame,
         train_ratio=train_ratio,
@@ -505,6 +514,77 @@ def component_aware_split(
         max_strict_component_share=max_strict_component_share,
     )
     return fallback
+
+
+def _stable_pair_key_for_split(row: pd.Series) -> str:
+    value = _clean_text(row.get("pair_key"))
+    if value:
+        return value
+    return pair_key(row.get("raw_record_id_a"), row.get("raw_record_id_b"))
+
+
+def _pair_stratified_split(
+    frame: pd.DataFrame,
+    *,
+    train_ratio: float,
+    dev_ratio: float,
+    test_ratio: float,
+    seed: int,
+) -> SplitResult:
+    ratio_sum = train_ratio + dev_ratio + test_ratio
+    if abs(ratio_sum - 1.0) > 1e-6:
+        raise ValueError("train/dev/test ratios must sum to 1.0")
+    if frame.empty:
+        raise ValueError("cannot split empty frame")
+
+    output = frame.copy()
+    if "same_base_product" not in output.columns:
+        raise ValueError("pair-stratified split requires same_base_product column")
+    if "category_run" in output.columns:
+        category = output["category_run"].fillna("unknown").astype(str)
+    else:
+        category = pd.Series(["unknown" for _ in range(len(output))], index=output.index, dtype=object)
+    output["_split_stratum"] = category.astype(str) + "::" + output["same_base_product"].astype(str)
+    output["_split_hash"] = [
+        _hash_fraction(_stable_pair_key_for_split(row), seed)
+        for _, row in output.iterrows()
+    ]
+
+    parts: list[pd.DataFrame] = []
+    for _, group in output.sort_values(["_split_stratum", "_split_hash"]).groupby("_split_stratum", sort=False):
+        n_rows = len(group)
+        n_train = int(round(n_rows * train_ratio))
+        n_dev = int(round(n_rows * dev_ratio))
+        if n_train + n_dev > n_rows:
+            n_dev = max(0, n_rows - n_train)
+        split_names = ["train"] * n_train + ["dev"] * n_dev + ["test"] * (n_rows - n_train - n_dev)
+        assigned = group.copy()
+        assigned["split"] = split_names
+        parts.append(assigned)
+
+    split = pd.concat(parts, ignore_index=True, sort=False)
+    split = split.drop(columns=["_split_stratum", "_split_hash"])
+    split["component_id"] = split["pair_key"].map(pair_id_from_key) if "pair_key" in split.columns else [
+        pair_id_from_key(pair_key(left, right))
+        for left, right in zip(split["raw_record_id_a"], split["raw_record_id_b"], strict=False)
+    ]
+    leak_rows = _split_leakage_rows(split)
+    split_ratios = {"train": train_ratio, "dev": dev_ratio, "test": test_ratio}
+    manifest = {
+        "created_at": _now_utc(),
+        "splitter": "pair_stratified",
+        "warning": "pair-stratified benchmark split keeps all labeled pairs but can leak raw_record_id across splits",
+        "seed": seed,
+        "ratios": split_ratios,
+        "input_rows": int(len(output)),
+        "rows": int(len(split)),
+        "dropped_rows": 0,
+        "raw_id_leakage_count": int(len(leak_rows)),
+        "split_counts": split["split"].value_counts().to_dict(),
+        "split_target_counts": _split_nested_counts(split, "same_base_product"),
+        "category_split_counts": _split_nested_counts(split, "category_run"),
+    }
+    return SplitResult(pairs=split.reset_index(drop=True), manifest=manifest, dropped_pairs=pd.DataFrame())
 
 
 def _strict_component_aware_split(

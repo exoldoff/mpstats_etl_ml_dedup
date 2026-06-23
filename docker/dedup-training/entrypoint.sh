@@ -8,8 +8,17 @@ if [[ $# -gt 0 ]]; then
   shift
 fi
 
+requested_precision="${DEDUP_TRAINING_PRECISION:-fp16}"
+if [[ "${command_name}" == "train-qwen" && -z "${DEDUP_TRAINING_PRECISION+x}" ]]; then
+  requested_precision="bf16"
+fi
+if [[ "${command_name}" == "train-qwen" && "${requested_precision}" == "fp16" ]]; then
+  echo "train-qwen uses Qwen BF16 weights; set DEDUP_TRAINING_PRECISION=bf16 or fp32/none, not fp16." >&2
+  exit 2
+fi
+
 precision_args=()
-case "${DEDUP_TRAINING_PRECISION:-fp16}" in
+case "${requested_precision}" in
   bf16)
     precision_args=(--bf16)
     ;;
