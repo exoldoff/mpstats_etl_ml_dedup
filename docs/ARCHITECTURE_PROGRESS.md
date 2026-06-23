@@ -76,6 +76,41 @@
   `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
   `mpstats_products` и показывает склеенные SKU-группы.
 
+## 2026-06-30 — Frozen reranker benchmark and fine-tuned BGE comparison
+
+### Зачем
+
+После обучения первой fine-tuned BGE нужно сравнивать её не с устаревшим
+`labeling_sauces.csv`, а с новым frozen multi-category датасетом и теми же
+dev/test threshold-правилами, что использовались раньше для zero-shot
+rerankers.
+
+### Что сделано
+
+- `notebooks/03_matching_comparison.ipynb` теперь по умолчанию читает
+  `research/dedup/data/training/dedup_pairs_final_pair_stratified_split.csv`
+  — all-pairs frozen split на `2465` размеченных пар.
+- Готовая колонка `split` сохраняется; fallback random dev/test split остаётся
+  только для старых labeling CSV без split.
+- Zero-shot reranker benchmark по умолчанию идёт full-run
+  (`MY_RERANKER_MAX_PAIRS = 0`) по выбранному frozen score scope.
+- Добавлен отдельный notebook-блок fine-tuned моделей. Первый default —
+  локальная BGE из server backup:
+  `/Users/exoldoff/Desktop/mpstats_server_backup_20260630_041745/artifacts/models/dedup/bge_reranker_v2_m3_v1/final`.
+- Для fine-tuned моделей notebook умеет либо прогнать `model_path`, либо
+  подхватить готовый `score_path` CSV, чтобы новые модели можно было добавлять
+  без переписывания ячеек.
+- CrossEncoder/Jina matchers теперь предпочитают `sentence_A` / `sentence_B`,
+  если эти structured frozen columns есть в паре; для fine-tuned CrossEncoder
+  добавлена опциональная `activation="sigmoid"`.
+- Итоговые compact reports для frozen/fine-tuning comparison по умолчанию
+  пишутся в `artifacts/reports/fine_tuning/`, чтобы не перетирать старые
+  sauce reports.
+
+### Проверки
+
+См. финальный ответ текущего изменения.
+
 ## 2026-06-29 — Fine-tuning experiment implementation
 
 ### Зачем

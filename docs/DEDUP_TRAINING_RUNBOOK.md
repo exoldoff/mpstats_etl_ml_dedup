@@ -15,8 +15,9 @@
    легко выполнить ячейки не в том порядке.
 2. Training script даёт воспроизводимую команду, manifest, commit hash,
    версии библиотек и один формат артефактов.
-3. Notebook остаётся на следующем шаге: прочитать готовые score CSV и показать
-   сравнение fine-tuned vs old zero-shot benchmark.
+3. Notebook остаётся витриной сравнения: `notebooks/03_matching_comparison.ipynb`
+   читает frozen split, прогоняет zero-shot rerankers, добавляет fine-tuned
+   model paths или готовые score CSV и показывает единый comparison.
 
 ## Бэкап старого benchmark
 
@@ -521,7 +522,11 @@ artifacts/reports/fine_tuning/<method>_binary_threshold_summary.csv
 artifacts/reports/fine_tuning/<method>_binary_threshold_predictions.csv
 ```
 
-Сравнивать прирост надо с сохранённым старым benchmark:
+Сравнивать прирост можно прямо в `notebooks/03_matching_comparison.ipynb`.
+По умолчанию там уже настроен fine-tuned BGE path из server backup; для новых
+моделей добавьте dict в `MY_FINE_TUNED_MODELS` с `model_path` или `score_path`.
+
+Сохранённый старый benchmark остаётся для исторической проверки:
 
 ```text
 artifacts/reports/binary_threshold_summary.csv

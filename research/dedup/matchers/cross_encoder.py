@@ -26,6 +26,7 @@ class CrossEncoderConfig:
     trust_remote_code: bool = False
     prompts: dict[str, str] | None = None
     default_prompt_name: str | None = None
+    activation: str | None = None
     cache_dir: str | Path | None = None
     local_files_only: bool | None = None
     fusion: FusionConfig = FusionConfig(threshold_high=8.0, threshold_low=4.0)
@@ -92,6 +93,9 @@ class CrossEncoderMatcher(PairMatcher):
         return self._model
 
     def _format_text(self, pair: Any, side: str) -> str:
+        sentence = get_pair_value(pair, f"sentence_{side.upper()}", f"sentence_{side}", default="")
+        if str(sentence).strip():
+            return str(sentence)
         title = get_pair_value(pair, f"title_{side}", f"name_{side}", f"sku_name_{side}", default="")
         brand = get_pair_value(pair, f"brand_{side}", f"canonical_brand_{side}", default="")
         parts = [
@@ -111,10 +115,35 @@ class CrossEncoderMatcher(PairMatcher):
         if model is None:
             return [math.nan for _ in pairs]
         text_pairs = [(self._format_text(pair, "a"), self._format_text(pair, "b")) for pair in pairs]
+        predict_kwargs: dict[str, Any] = {"batch_size": self.config.batch_size}
+        legacy_activation_fct: Any | None = None
+        if self.config.activation is not None:
+            activation = self.config.activation.strip().lower()
+            if activation == "sigmoid":
+                import torch
+
+                legacy_activation_fct = torch.nn.Sigmoid()
+                predict_kwargs["activation_fn"] = legacy_activation_fct
+            elif activation == "identity":
+                import torch
+
+                legacy_activation_fct = torch.nn.Identity()
+                predict_kwargs["activation_fn"] = legacy_activation_fct
+            else:
+                self._load_error = f"unsupported cross-encoder activation: {self.config.activation}"
+                return [math.nan for _ in pairs]
         try:
-            raw_scores = model.predict(text_pairs, batch_size=self.config.batch_size)
+            raw_scores = model.predict(text_pairs, **predict_kwargs)
         except TypeError:
-            raw_scores = model.predict(text_pairs)
+            if legacy_activation_fct is not None:
+                legacy_kwargs = {**predict_kwargs, "activation_fct": legacy_activation_fct}
+                legacy_kwargs.pop("activation_fn", None)
+                try:
+                    raw_scores = model.predict(text_pairs, **legacy_kwargs)
+                except TypeError:
+                    raw_scores = model.predict(text_pairs)
+            else:
+                raw_scores = model.predict(text_pairs)
         scores = np.asarray(raw_scores, dtype=float).reshape(-1)
         if len(scores) != len(pairs):
             self._load_error = "model returned scores with unexpected shape"

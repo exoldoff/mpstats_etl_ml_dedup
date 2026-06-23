@@ -86,6 +86,9 @@ class JinaRerankerMatcher(PairMatcher):
         return self._model
 
     def _format_text(self, pair: Any, side: str) -> str:
+        sentence = get_pair_value(pair, f"sentence_{side.upper()}", f"sentence_{side}", default="")
+        if str(sentence).strip():
+            return str(sentence)
         title = get_pair_value(pair, f"title_{side}", f"name_{side}", f"sku_name_{side}", default="")
         brand = get_pair_value(pair, f"brand_{side}", f"canonical_brand_{side}", default="")
         parts = [

@@ -143,6 +143,41 @@ def test_cross_encoder_scores_with_injected_model() -> None:
     assert matcher.score(_pair(title_b="Соус сливочный 200 г")) == 0.1
 
 
+def test_cross_encoder_prefers_frozen_sentence_columns() -> None:
+    captured_pairs: list[tuple[str, str]] = []
+
+    class FakeModel:
+        def predict(self, pairs: list[tuple[str, str]], **_: object) -> np.ndarray:
+            captured_pairs.extend(pairs)
+            return np.asarray([0.75])
+
+    matcher = CrossEncoderMatcher(
+        CrossEncoderConfig(model_name="fake-cross-encoder"),
+        model_factory=lambda _: FakeModel(),
+    )
+
+    assert matcher.score(_pair(sentence_A="structured left", sentence_B="structured right")) == 0.75
+    assert captured_pairs == [("structured left", "structured right")]
+
+
+def test_cross_encoder_can_request_sigmoid_activation() -> None:
+    captured_activation = None
+
+    class FakeModel:
+        def predict(self, pairs: list[tuple[str, str]], **kwargs: object) -> np.ndarray:
+            nonlocal captured_activation
+            captured_activation = kwargs.get("activation_fn")
+            return np.asarray([0.8 for _ in pairs])
+
+    matcher = CrossEncoderMatcher(
+        CrossEncoderConfig(model_name="fake-cross-encoder", activation="sigmoid"),
+        model_factory=lambda _: FakeModel(),
+    )
+
+    assert matcher.score(_pair()) == 0.8
+    assert captured_activation is not None
+
+
 def test_cross_encoder_uses_configured_method_name() -> None:
     matcher = CrossEncoderMatcher(CrossEncoderConfig(model_name="fake-cross-encoder", method_name="reranker_qwen3_4b"))
 
@@ -177,3 +212,23 @@ def test_jina_reranker_scores_with_injected_model() -> None:
 
     assert matcher.score(_pair()) == 0.9
     assert matcher.score(_pair(title_b="Соус сливочный 200 г")) == 0.05
+
+
+def test_jina_reranker_prefers_frozen_sentence_columns() -> None:
+    captured_queries: list[str] = []
+    captured_documents: list[list[str]] = []
+
+    class FakeModel:
+        def rerank(self, query: str, documents: list[str], **_: object) -> list[dict[str, object]]:
+            captured_queries.append(query)
+            captured_documents.append(documents)
+            return [{"index": 0, "relevance_score": 0.88}]
+
+    matcher = JinaRerankerMatcher(
+        JinaRerankerConfig(model_name="fake-jina-reranker", documents_per_query=1),
+        model_factory=lambda _: FakeModel(),
+    )
+
+    assert matcher.score(_pair(sentence_A="structured left", sentence_B="structured right")) == 0.88
+    assert captured_queries == ["structured left"]
+    assert captured_documents == [["structured right"]]

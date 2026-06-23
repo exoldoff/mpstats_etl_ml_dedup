@@ -58,17 +58,25 @@ def _score(model: Any, frame: Any, *, batch_size: int, activation: str) -> list[
     import numpy as np
     import torch
 
-    activation_fct = torch.nn.Sigmoid() if activation == "sigmoid" else torch.nn.Identity()
+    activation_fn = torch.nn.Sigmoid() if activation == "sigmoid" else torch.nn.Identity()
     pairs = list(zip(frame["sentence_A"].tolist(), frame["sentence_B"].tolist(), strict=False))
     try:
         raw_scores = model.predict(
             pairs,
             batch_size=batch_size,
-            activation_fct=activation_fct,
+            activation_fn=activation_fn,
             convert_to_numpy=True,
         )
     except TypeError:
-        raw_scores = model.predict(pairs, batch_size=batch_size)
+        try:
+            raw_scores = model.predict(
+                pairs,
+                batch_size=batch_size,
+                activation_fct=activation_fn,
+                convert_to_numpy=True,
+            )
+        except TypeError:
+            raw_scores = model.predict(pairs, batch_size=batch_size)
     return [float(value) for value in np.asarray(raw_scores, dtype=float).reshape(-1)]
 
 

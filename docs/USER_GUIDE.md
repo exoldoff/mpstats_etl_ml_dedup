@@ -1730,8 +1730,8 @@ combo-счёт возвращается, снова запускается 5-м�
 После частичной разметки `notebooks/02_labeling_dataset.ipynb` можно запускать
 заново, если нужно перегенерировать незаполненный остаток: заполненные
 `label`-строки будут сохранены и продублированы в backup
-`*_preserved_labels.csv`. После полной разметки для текущего threshold
-benchmark запускайте `03` сверху вниз:
+`*_preserved_labels.csv`. После freeze разметки для reranker benchmark
+запускайте `03` сверху вниз:
 
 ```bash
 python3 - <<'PY'
@@ -1752,8 +1752,22 @@ print("ok", path)
 PY
 ```
 
-`03_matching_comparison.ipynb` делает dev/test split и подбирает один
-`threshold_same` на dev. Правило простое:
+По умолчанию `03_matching_comparison.ipynb` читает frozen split:
+
+```text
+research/dedup/data/training/dedup_pairs_final_pair_stratified_split.csv
+```
+
+Это all-pairs benchmark на 2465 размеченных пар. Если нужен strict no-leak
+split, который использовался для обучения текущей BGE, переопределите путь:
+
+```bash
+DEDUP_EVAL_DATA_PATH=research/dedup/data/training/dedup_pairs_final_split.csv
+```
+
+Notebook сохраняет готовую колонку `split`: `train` можно скорить для
+диагностики, но threshold выбирается только на `dev`, а финальные метрики
+смотрятся на `test`. Правило простое:
 
 ```python
 predicted_binary = 1 if score >= threshold_same else 0
@@ -1779,9 +1793,8 @@ Cross-encoder — более внимательная проверка пары,
 скачивать модель из Hugging Face. Если нужно временно пропустить этот блок,
 запустите notebook с `DEDUP_RUN_CROSS_ENCODER=0`.
 
-После прогона `03` сохраняет только compact-отчёты в reports-папку текущего
-run: для `sauces` это `artifacts/reports/`, для новых категорий —
-`artifacts/reports/<slug>/`.
+После прогона `03` сохраняет compact-отчёты в `artifacts/reports/fine_tuning/`,
+если `DEDUP_REPORTS_DIR` не переопределён.
 
 - `binary_threshold_summary.csv` — одна строка на
   `method + split + threshold_strategy`;
@@ -1793,7 +1806,7 @@ run: для `sauces` это `artifacts/reports/`, для новых катего
 Raw predictions и старые `matching_*` CSV этот benchmark не перезаписывает.
 
 В конце `03_matching_comparison.ipynb` есть общий benchmark всех текущих
-matching-моделей на одном и том же срезе:
+matching-моделей на одном frozen score scope:
 
 - `rule_based_fuzzy`;
 - `bi_encoder_zero_shot`;
@@ -1801,6 +1814,8 @@ matching-моделей на одном и том же срезе:
 - `reranker_bge_v2_m3`;
 - `reranker_qwen3_4b`;
 - `reranker_jina_v3`.
+- `ft_bge_reranker_v2_m3` — fine-tuned BGE из локального server backup,
+  если путь к модели существует.
 
 Главный файл для сравнения методов — теперь
 `binary_threshold_summary.csv` в reports-папке текущего run. Test split нельзя
@@ -1812,8 +1827,8 @@ matching-моделей на одном и том же срезе:
 линиями выбранных thresholds и bucket-разбор по объёму продаж, если weighted
 метрики доступны.
 
-Запуск теперь обычный: откройте notebook, найдите ячейку
-`Блок кода 16. Настройки общего бенчмарка` и поменяйте верхний блок
+Запуск zero-shot rerankers обычный: откройте notebook, найдите ячейку
+`Блок кода 16. Настройки zero-shot reranker benchmark` и поменяйте верхний блок
 `НАСТРОЙКИ ПОЛЬЗОВАТЕЛЯ`.
 
 Главные настройки:
@@ -1825,9 +1840,28 @@ MY_RERANKER_MODELS = [
     # "jina_v3",
     # "cross-encoder/ms-marco-MiniLM-L6-v2",
 ]
-MY_RERANKER_MAX_PAIRS = 120  # 0 = весь размеченный gold-set
+MY_RERANKER_MAX_PAIRS = 0  # весь выбранный frozen score scope
 MY_CUSTOM_RERANKER_BACKEND = CROSS_ENCODER_BACKEND
 ```
+
+Fine-tuned модели настраиваются в следующем блоке `Блок кода 18.
+Fine-tuned модели`:
+
+```python
+MY_FINE_TUNED_MODELS = [
+    {
+        "enabled": True,
+        "method": "ft_bge_reranker_v2_m3",
+        "model_path": "/Users/exoldoff/Desktop/mpstats_server_backup_20260630_041745/artifacts/models/dedup/bge_reranker_v2_m3_v1/final",
+        "score_column": "ft_bge_reranker_v2_m3",
+        "activation": "sigmoid",
+    },
+]
+```
+
+Для новых fine-tuned моделей можно добавить ещё один dict с `model_path`.
+Если score уже посчитан training script-ом, вместо `model_path` укажите
+`score_path` и `score_column`: notebook подхватит CSV без повторного inference.
 
 Cost-параметры можно менять через env:
 

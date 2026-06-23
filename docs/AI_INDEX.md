@@ -187,15 +187,20 @@ Research-код остаётся независимым: `research/dedup/` не 
   или `DEDUP_BI_ENCODER_BACKEND=polza_embedding` нужны только для нового
   прямого Polza model id, которого ещё нет в registry.
 - В конце `03_matching_comparison.ipynb` есть общий forced binary benchmark
-  всех matching-моделей на одном срезе: `rule_based_fuzzy`,
+  всех matching-моделей на frozen split:
+  `research/dedup/data/training/dedup_pairs_final_pair_stratified_split.csv`
+  (`2465` размеченных пар) по умолчанию. Сравниваются `rule_based_fuzzy`,
   `bi_encoder_zero_shot`, `cross_encoder_zero_shot`,
-  `reranker_qwen3_4b`, `reranker_bge_v2_m3`, `reranker_jina_v3`. Новые
+  `reranker_qwen3_4b`, `reranker_bge_v2_m3`, `reranker_jina_v3` и
+  fine-tuned модели вроде `ft_bge_reranker_v2_m3`. Новые zero-shot
   reranker-модели выбираются alias-ами registry в
   `RERANKER_BENCHMARK_MODELS` или через env
-  `DEDUP_RERANKER_BENCHMARK_MODELS`; главный отчёт лежит в reports-папке
-  текущего `DEDUP_CATEGORY_RUN` как `binary_threshold_summary.csv`.
-  Test split используется
-  только для финальной проверки выбранных на dev `threshold_same`.
+  `DEDUP_RERANKER_BENCHMARK_MODELS`; fine-tuned модели добавляются в
+  `MY_FINE_TUNED_MODELS` через `model_path` или готовый `score_path`. Главный
+  отчёт frozen/fine-tuning comparison по умолчанию лежит в
+  `artifacts/reports/fine_tuning/binary_threshold_summary.csv`.
+  Test split используется только для финальной проверки выбранных на dev
+  `threshold_same`.
   `reranker_qwen3_4b` по умолчанию грузится на CPU, потому что на MPS с
   лимитом около 9GB падает по памяти; для быстрого Qwen-smoke есть alias
   `qwen3_0_6b`.
@@ -212,12 +217,13 @@ Research-код остаётся независимым: `research/dedup/` не 
   `same_product_different_pack` считаются positive, `different_product` —
   negative. Если во входных данных уже есть колонка `same_base_product`, она
   считается источником правды.
-- `notebooks/03_matching_comparison.ipynb` теперь делает stratified dev/test
-  split и подбирает один `threshold_same` на dev для стратегий
+- `notebooks/03_matching_comparison.ipynb` теперь сохраняет готовый `split`
+  из frozen CSV; stratified dev/test split остаётся fallback только для
+  старых labeling CSV без split. На dev подбирается один `threshold_same` для
   `threshold_max_f1`, `threshold_cost_sensitive` и weighted-стратегий, если
   доступны объёмы продаж. Raw predictions и старые `matching_*` CSV не
-  перезаписываются; compact outputs пишутся в reports-папку текущего
-  category-run: `binary_threshold_summary.csv`,
+  перезаписываются; compact outputs пишутся в reports-папку notebook
+  comparison: `binary_threshold_summary.csv`,
   `binary_threshold_predictions.csv`,
   `binary_threshold_by_volume_bucket.csv` при available sales volume.
 - `notebooks/04_fusion_pack_grouping.ipynb` читает compact outputs из `03`,
