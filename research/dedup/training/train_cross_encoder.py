@@ -192,11 +192,22 @@ def _parse_lora_target_modules(value: str) -> list[str] | None:
     return targets or None
 
 
+def _transformer_module(cross_encoder: Any) -> Any:
+    for module in cross_encoder:
+        if hasattr(module, "model") and hasattr(module, "modality_config"):
+            return module
+    raise TypeError("CrossEncoder object does not expose a Transformer module; cannot apply PEFT LoRA")
+
+
 def _base_model(cross_encoder: Any) -> Any:
-    base = getattr(cross_encoder, "model", None)
+    base = getattr(_transformer_module(cross_encoder), "model", None)
     if base is None:
-        raise TypeError("CrossEncoder object does not expose .model; cannot apply PEFT LoRA")
+        raise TypeError("CrossEncoder Transformer module does not expose .model; cannot apply PEFT LoRA")
     return base
+
+
+def _set_base_model(cross_encoder: Any, base_model: Any) -> None:
+    _transformer_module(cross_encoder).model = base_model
 
 
 def _maybe_enable_gradient_checkpointing(cross_encoder: Any, args: argparse.Namespace) -> None:
@@ -226,9 +237,10 @@ def _maybe_apply_lora(cross_encoder: Any, args: argparse.Namespace) -> Any:
         target_modules=_parse_lora_target_modules(args.lora_target_modules),
         bias="none",
     )
-    cross_encoder.model = get_peft_model(base, lora_config)
-    if hasattr(cross_encoder.model, "print_trainable_parameters"):
-        cross_encoder.model.print_trainable_parameters()
+    peft_model = get_peft_model(base, lora_config)
+    _set_base_model(cross_encoder, peft_model)
+    if hasattr(peft_model, "print_trainable_parameters"):
+        peft_model.print_trainable_parameters()
     return cross_encoder
 
 
@@ -239,7 +251,7 @@ def _maybe_merge_lora_for_export(cross_encoder: Any, args: argparse.Namespace) -
     if not hasattr(base, "merge_and_unload"):
         print("LoRA merge skipped: PEFT model does not expose merge_and_unload()")
         return cross_encoder
-    cross_encoder.model = base.merge_and_unload()
+    _set_base_model(cross_encoder, base.merge_and_unload())
     print("Merged LoRA adapter into final CrossEncoder model")
     return cross_encoder
 

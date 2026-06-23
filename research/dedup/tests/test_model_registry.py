@@ -145,8 +145,10 @@ def test_cross_encoder_loader_uses_registry_device(monkeypatch, tmp_path) -> Non
                 "device": "cpu",
                 "prompts": {
                     "sku_match": (
-                        "Decide whether two ecommerce sauce products are the same SKU. "
-                        "Pay attention to brand, flavor or purpose, unit weight, total weight, and pack count."
+                        "Decide whether two ecommerce products are the same base SKU. "
+                        "Pay attention to brand, product line, flavor or scent or purpose, "
+                        "unit size, total size, and pack count. "
+                        "Treat different pack counts as the same base product when the underlying product is the same."
                     )
                 },
                 "default_prompt_name": "sku_match",

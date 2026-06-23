@@ -23,8 +23,9 @@ POLZA_BASE_URL_ENV = "POLZA_BASE_URL"
 E5_SYMMETRIC_TEXT_PREFIX = "query: "
 
 SKU_RERANKER_INSTRUCTION = (
-    "Decide whether two ecommerce sauce products are the same SKU. "
-    "Pay attention to brand, flavor or purpose, unit weight, total weight, and pack count."
+    "Decide whether two ecommerce products are the same base SKU. "
+    "Pay attention to brand, product line, flavor or scent or purpose, unit size, total size, and pack count. "
+    "Treat different pack counts as the same base product when the underlying product is the same."
 )
 
 

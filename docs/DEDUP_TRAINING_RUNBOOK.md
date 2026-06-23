@@ -435,6 +435,12 @@ python3 -m research.dedup.training.train_cross_encoder \
   --bf16
 ```
 
+LoRA применяется к внутренней Hugging Face-модели внутри
+`sentence_transformers` Transformer-модуля. Это важно для Qwen/ST 5.x:
+верхний `CrossEncoder` должен продолжать получать feature-dict, иначе
+`BinaryCrossEntropyLoss` может упасть на старте с ошибкой
+`embedding(): argument 'indices' must be Tensor, not BatchEncoding`.
+
 ### Jina reranker v3
 
 Jina оставляем в плане, но не запускаем первой GPU-сессией. У неё listwise /

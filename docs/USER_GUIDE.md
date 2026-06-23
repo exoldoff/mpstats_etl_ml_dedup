@@ -1840,6 +1840,8 @@ DEDUP_ENABLE_SALES_VOLUME_JOIN=1
 Модели можно писать короткими alias-ами из registry (`bge_m3`, `qwen3_4b`,
 `jina_v3`) или полными Hugging Face model ids
 (`BAAI/bge-reranker-v2-m3`, `Qwen/Qwen3-Reranker-4B`).
+Для Qwen reranker используется общий SKU-prompt без привязки к одной
+категории: он подходит для `sauces`, `coconut_oil` и `soap`.
 
 Для первого спокойного запуска оставьте `MY_RERANKER_MAX_PAIRS = 120`.
 В этом случае все методы, включая старые baseline, сравниваются на тех же
