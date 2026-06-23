@@ -402,6 +402,12 @@ product is the same.
 - главный продуктовый критерий: `threshold_weighted_cost`;
 - вторичный критерий: F1 при controlled false merge.
 
+Calibration после fine-tune запускается с `--require-weighted`: если
+`sales_volume_a/sales_volume_b` или `sales_volume_lookup.csv` не доступны,
+команда должна завершиться ошибкой. Таблица только с `threshold_max_f1` и
+`threshold_cost_sensitive` считается диагностической, но не финальным
+продуктовым сравнением.
+
 ### Шаг 5. Error analysis
 
 Для каждой модели сохранить:

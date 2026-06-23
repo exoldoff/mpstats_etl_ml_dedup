@@ -87,6 +87,20 @@ CSV-схема основного split намеренно чистая: `27` к
 и notebook-only полей. Конфликты/excluded/dropped лежат отдельными audit CSV и
 в train loss не попадают.
 
+Продажи для бизнес-калибровки не лежат в split CSV. Перед threshold
+calibration нужен отдельный lookup:
+
+```bash
+python3 -m research.dedup.training.export_sales_lookup \
+  --duckdb-path mpstats.duckdb \
+  --output-path research/dedup/data/training/sales_volume_lookup.csv
+```
+
+Файл `sales_volume_lookup.csv` содержит только `raw_record_id,sales_volume` и
+нужен, чтобы после обучения появились стратегии `threshold_max_weighted_f1` и
+`threshold_weighted_cost`. Если lookup не доступен, calibration с
+`--require-weighted` должна упасть, а не молча перейти в unweighted режим.
+
 Текущий фактический freeze:
 
 - `2465` binary pairs;
@@ -163,6 +177,22 @@ docker run --rm --gpus all \
   mpstats-dedup-training:cu128 prepare
 ```
 
+Если на сервер скопирован `mpstats.duckdb`, lookup продаж можно сделать прямо
+в контейнере:
+
+```bash
+docker run --rm \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/mpstats.duckdb:/workspace/mpstats.duckdb:ro" \
+  mpstats-dedup-training:cu128 export-sales-lookup \
+    --duckdb-path /workspace/mpstats.duckdb \
+    --output-path /workspace/research/dedup/data/training/sales_volume_lookup.csv
+```
+
+Если `sales_volume_lookup.csv` уже экспортирован локально и скопирован на
+сервер, DuckDB для calibration больше не нужен.
+
 Обязательный smoke:
 
 ```bash
@@ -221,6 +251,7 @@ research/dedup/model_registry.py
 research/dedup/threshold_calibration.py
 research/dedup/data/training/dedup_pairs_final_split.csv
 research/dedup/data/training/dedup_pairs_final_split_manifest.json
+research/dedup/data/training/sales_volume_lookup.csv
 docker/dedup-training/
 requirements-research.txt
 docs/DEDUP_FINE_TUNING_EXPERIMENT_PLAN.md
@@ -367,15 +398,46 @@ python3 -m research.dedup.training.score_cross_encoder \
 ## Threshold calibration
 
 Каждый fine-tuned score прогоняем через ту же dev/test threshold-логику, что и
-старый benchmark:
+старый benchmark. Для финального сравнения обязателен weighted режим по
+продажам:
 
 ```bash
 python3 -m research.dedup.training.calibrate_scores \
   --score-path artifacts/reports/fine_tuning/rubert_tiny2_scores.csv \
   --score-column ft_rubert_tiny2 \
   --method ft_rubert_tiny2 \
-  --reports-dir artifacts/reports/fine_tuning
+  --reports-dir artifacts/reports/fine_tuning \
+  --sales-lookup-path research/dedup/data/training/sales_volume_lookup.csv \
+  --require-weighted
 ```
+
+В Docker-команде `calibrate` флаг `--require-weighted` включён по умолчанию
+через `DEDUP_REQUIRE_WEIGHTED_CALIBRATION=1`. Отключать это можно только для
+диагностики:
+
+```bash
+docker run --rm --gpus all \
+  -e DEDUP_REQUIRE_WEIGHTED_CALIBRATION=0 \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/.hf_cache:/workspace/.hf_cache" \
+  mpstats-dedup-training:cu128 calibrate \
+    --score-path artifacts/reports/fine_tuning/rubert_tiny2_scores.csv \
+    --score-column ft_rubert_tiny2 \
+    --method ft_rubert_tiny2 \
+    --reports-dir artifacts/reports/fine_tuning
+```
+
+Нормальный вывод calibration должен содержать:
+
+```text
+sales_volume_status: {'status': 'joined_sales_volume', ...}
+weights_available: True
+```
+
+В summary должны быть строки `threshold_max_weighted_f1` и
+`threshold_weighted_cost`. Если видны только `threshold_max_f1` и
+`threshold_cost_sensitive`, это не финальный продуктовый режим.
 
 Итоги появятся в:
 
@@ -396,4 +458,6 @@ artifacts/reports/score_cache/model_scores_cache_latest.csv
 - false merge должен оставаться низким;
 - recall должен вырасти относительно zero-shot;
 - финальный threshold выбирается только на `dev`;
-- `test` смотрим один раз как честную проверку.
+- `test` смотрим один раз как честную проверку;
+- главный режим выбора — `threshold_weighted_cost`, обычные `max_f1` и
+  `cost_sensitive` остаются диагностикой.

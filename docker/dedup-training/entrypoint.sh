@@ -32,6 +32,9 @@ case "${command_name}" in
   prepare)
     exec python3 -m research.dedup.training.prepare_dataset "$@"
     ;;
+  export-sales-lookup)
+    exec python3 -m research.dedup.training.export_sales_lookup "$@"
+    ;;
   smoke-rubert)
     exec python3 -m research.dedup.training.train_pair_classifier \
       --model-name cointegrated/rubert-tiny2 \
@@ -99,7 +102,11 @@ case "${command_name}" in
     exec python3 -m research.dedup.training.score_cross_encoder "$@"
     ;;
   calibrate)
-    exec python3 -m research.dedup.training.calibrate_scores "$@"
+    calibrate_args=()
+    if [[ "${DEDUP_REQUIRE_WEIGHTED_CALIBRATION:-1}" != "0" ]]; then
+      calibrate_args=(--require-weighted)
+    fi
+    exec python3 -m research.dedup.training.calibrate_scores "${calibrate_args[@]}" "$@"
     ;;
   bash|sh)
     exec "${command_name}" "$@"
