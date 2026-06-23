@@ -98,6 +98,104 @@ python3 -m research.dedup.training.prepare_dataset --large-component-strategy st
 
 ## Что копировать на H200
 
+### Вариант A: Docker, предпочтительно
+
+Образ содержит код и зависимости. Локальные данные, модели, score-cache и
+Hugging Face cache монтируются volume-ами, чтобы не запекать CSV и веса модели
+в image.
+
+Сборка образа:
+
+```bash
+docker build \
+  -f docker/dedup-training/Dockerfile \
+  -t mpstats-dedup-training:cu128 \
+  .
+```
+
+Проверка GPU/runtime внутри контейнера:
+
+```bash
+docker run --rm --gpus all \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/.hf_cache:/workspace/.hf_cache" \
+  mpstats-dedup-training:cu128 doctor
+```
+
+Precision по умолчанию — `bf16`, это правильный режим для H200. Для A5000
+запускать контейнеры с `-e DEDUP_TRAINING_PRECISION=fp16`, потому что BF16 на
+такой карте может быть недоступен:
+
+```bash
+docker run --rm --gpus all \
+  -e DEDUP_TRAINING_PRECISION=fp16 \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/.hf_cache:/workspace/.hf_cache" \
+  mpstats-dedup-training:cu128 smoke-rubert
+```
+
+Подготовка split внутри контейнера:
+
+```bash
+docker run --rm --gpus all \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/.hf_cache:/workspace/.hf_cache" \
+  mpstats-dedup-training:cu128 prepare
+```
+
+Обязательный smoke:
+
+```bash
+docker run --rm --gpus all \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/.hf_cache:/workspace/.hf_cache" \
+  mpstats-dedup-training:cu128 smoke-rubert
+```
+
+Первый полный cheap baseline:
+
+```bash
+docker run --rm --gpus all \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/.hf_cache:/workspace/.hf_cache" \
+  mpstats-dedup-training:cu128 train-rubert
+```
+
+Дальше по готовности:
+
+```bash
+docker run --rm --gpus all \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/.hf_cache:/workspace/.hf_cache" \
+  mpstats-dedup-training:cu128 train-mmarco
+
+docker run --rm --gpus all \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/.hf_cache:/workspace/.hf_cache" \
+  mpstats-dedup-training:cu128 train-bge
+
+docker run --rm --gpus all \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/.hf_cache:/workspace/.hf_cache" \
+  mpstats-dedup-training:cu128 train-qwen
+```
+
+Если Docker daemon на сервере не настроен под GPU, сначала проверить host:
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
+```
+
+### Вариант B: без Docker
+
 На удалённой машине нужен не весь локальный мусор, а минимальный bundle:
 
 ```text
@@ -106,6 +204,7 @@ research/dedup/model_registry.py
 research/dedup/threshold_calibration.py
 research/dedup/data/training/dedup_pairs_v1_split.csv
 research/dedup/data/training/dedup_pairs_v1_split_manifest.json
+docker/dedup-training/
 requirements-research.txt
 docs/DEDUP_FINE_TUNING_EXPERIMENT_PLAN.md
 docs/DEDUP_TRAINING_RUNBOOK.md

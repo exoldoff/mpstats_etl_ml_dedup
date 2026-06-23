@@ -103,6 +103,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `research/dedup/annotator.py` | helper для ручной разметки |
 | `research/dedup/tests/` | узкие тесты research-модулей |
 | `tools/dedup_labeling_bot/` | отдельный Telegram-бот для многопользовательской разметки `labeling_*.csv` |
+| `docker/dedup-training/` | Docker image и entrypoint для H200/A5000 fine-tuning runtime |
 | `research/dedup/data/` | локальные CSV-артефакты, игнорируются `.gitignore` |
 | `notebooks/00_eda.ipynb` | EDA по выбранному `DEDUP_CATEGORY_RUN` |
 | `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking + supplemental training coverage pairs, генерация `candidates_<suffix>.csv` |

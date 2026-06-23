@@ -1,0 +1,29 @@
+.git/
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Local data and generated artifacts are mounted at runtime, not baked into the image.
+artifacts/
+data/
+output/
+temp/
+research/dedup/data/
+research/dedup/models/
+
+# Heavy/local state.
+*.duckdb
+*.db
+*.sqlite
+*.sqlite3
+*.parquet
+*.xlsx
+notebooks/
+
+# Local secrets/config.
+.env
+.env.*
+!.env.example
