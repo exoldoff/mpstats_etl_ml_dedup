@@ -179,6 +179,107 @@ reranker уже улучшен:
 
 ## 4. Как делаем эксперимент
 
+### 4.0. Архитектура обучения
+
+Текущий benchmark-код умеет считать scores и калибровать thresholds, но
+обучение должно быть отдельным research-слоем, чтобы не смешать data freeze,
+training и evaluation. Целевая структура:
+
+```text
+labeling CSV + Telegram SQLite + old sauce labels
+        │
+        ▼
+[A] frozen training dataset
+    dedup_pairs_v1.csv
+    dedup_pairs_v1_conflicts.csv
+    dedup_pairs_v1_manifest.json
+        │
+        ▼
+[B] component-aware split
+    dedup_pairs_v1_split.csv
+    dedup_pairs_v1_split_manifest.json
+        │
+        ▼
+[C] model-specific training adapters
+    CrossEncoderTrainer branch: Qwen 0.6B, BGE, mMARCO
+    Transformers Trainer branch: RuBERT tiny2 pair classifier
+    Custom/listwise branch: Jina v3
+        │
+        ▼
+[D] unified score cache
+    one score column per model on the same frozen split
+        │
+        ▼
+[E] existing threshold calibration + fusion notebooks
+    binary_threshold_* -> fusion_* -> evaluation report
+```
+
+Research-модули для этого стоит держать под `research/dedup/training/`:
+
+| Компонент | Ответственность |
+| --- | --- |
+| `dataset_freeze` | Смержить CSV + SQLite + old sauces, удалить/вынести конфликты, построить `same_base_product`, сохранить manifest. |
+| `splitter` | Построить graph components по `raw_record_id_*`, разложить components в train/dev/test без leakage, сохранить split manifest. |
+| `text_builder` | Единообразно собрать `sentence_A` / `sentence_B` из brand, title, subcategory, unit/total/multipack. |
+| `train_cross_encoder` | Общий supervised branch для моделей, которые грузятся как `sentence_transformers.CrossEncoder`: Qwen 0.6B, BGE, mMARCO. |
+| `train_pair_classifier` | Transformers branch для `cointegrated/rubert-tiny2`: `AutoModelForSequenceClassification`, tokenizer pair input, `Trainer`. |
+| `train_jina_adapter` | Отдельный experimental branch для Jina: custom/listwise scoring, `trust_remote_code=True`, adapter/PEFT только после smoke. |
+| `score_models` | Прогнать zero-shot и fine-tuned модели на frozen split, записать scores в общий cache. |
+| `training_report` | Собрать metrics, model manifests, error breakdown и ссылки на артефакты. |
+
+Model-specific training paths:
+
+- **Qwen 0.6B / BGE / mMARCO**: основной путь —
+  `sentence-transformers` v4-style `CrossEncoderTrainer` +
+  `BinaryCrossEntropyLoss`. Для Qwen предпочтительна sequence-classification
+  совместимая версия/обертка, если она стабильнее стандартного reranker
+  template. Scores могут быть raw logits или sigmoid probabilities, но
+  threshold calibration всегда проводится заново на dev именно для выбранного
+  score type.
+- **RuBERT tiny2**: не тренировать как bi-encoder. Это отдельный binary
+  pair-classifier: `AutoTokenizer` получает пару `(sentence_A, sentence_B)`,
+  `AutoModelForSequenceClassification(..., num_labels=2)` учится через
+  `transformers.Trainer`. Финальный score для calibration — вероятность или
+  logit класса `same_base_product=1`; формат фиксируется в manifest.
+- **Jina v3**: не притворяется обычным CrossEncoderTrainer. Public inference
+  API — `AutoModel(..., trust_remote_code=True).rerank(query, documents)`,
+  listwise и асимметричный. Поэтому первый шаг для Jina — zero-shot /
+  adapter-smoke на frozen split; fine-tune/adapter-tune идёт отдельным
+  experimental branch только после того, как базовый loop стабилен.
+- **Qwen 4B**: только benchmark-only scorer в первом цикле, без fine-tune.
+
+Каждый training run обязан сохранить:
+
+- `model_id`, `model_revision` или exact local path;
+- commit hash репозитория;
+- train/dev/test counts и label distribution;
+- hyperparameters (`lr`, batch size, epochs, max length, loss, pos_weight);
+- score type (`raw_logit`, `sigmoid_probability`, `softmax_same_probability`);
+- path к frozen dataset, split manifest, model artifact и score cache;
+- environment summary: `sentence-transformers`, `transformers`, `torch`,
+  `datasets`, `peft`/`accelerate`, если использовались.
+
+Smoke-gates перед дорогим прогоном:
+
+1. `dataset_freeze` находит 3 текущих label conflicts и не пускает их в train.
+2. `splitter` проверяет, что ни один `raw_record_id` component не попал сразу
+   в train и test.
+3. Training smoke на 16-32 парах проходит forward/backward для каждого trainer
+   branch.
+4. Scoring smoke на dev пишет score cache с тем же pair count, что входной
+   split.
+5. Threshold calibration читает этот cache без специальных notebook-hacks.
+
+Dependency impact перед реализацией:
+
+- текущий `requirements-research.txt` уже содержит `sentence-transformers>=5.0`
+  и `transformers>=4.51`;
+- для training implementation нужно будет добавить минимум `datasets` и
+  `accelerate`, потому что `CrossEncoderTrainer` / `transformers.Trainer`
+  ожидают dataset/trainer runtime;
+- `peft` нужен только если запускаем LoRA/adapters для Qwen/Jina, поэтому это
+  optional dependency, не обязательная для первого smoke на RuBERT/BGE/mMARCO.
+
 ### Шаг 0. Freeze исходных данных
 
 Собрать один immutable artifact:
