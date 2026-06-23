@@ -10,7 +10,7 @@ from typing import Any, Iterable
 import pandas as pd
 
 
-DEFAULT_SPLIT_DATA_PATH = Path("research/dedup/data/training/dedup_pairs_v1_split.csv")
+DEFAULT_SPLIT_DATA_PATH = Path("research/dedup/data/training/dedup_pairs_final_split.csv")
 DEFAULT_MODEL_OUTPUT_ROOT = Path("artifacts/models/dedup")
 
 LABEL2ID = {"different_product": 0, "same_base_product": 1}

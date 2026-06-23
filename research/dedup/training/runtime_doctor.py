@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from importlib.metadata import PackageNotFoundError, version
+import os
 import platform
 import shutil
 import subprocess
@@ -86,6 +87,7 @@ def _torch_report() -> tuple[bool, list[str]]:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     print(f"python: {sys.version.split()[0]} ({platform.platform()})")
+    print(f"DEDUP_TRAINING_PRECISION: {os.environ.get('DEDUP_TRAINING_PRECISION', 'fp16')}")
     for package in PACKAGES:
         print(f"{package}: {_package_version(package)}")
     _print_nvidia_smi()

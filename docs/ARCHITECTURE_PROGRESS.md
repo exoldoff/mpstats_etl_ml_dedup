@@ -81,7 +81,7 @@
 ### Зачем
 
 После завершения ручной разметки нужен воспроизводимый supervised training
-loop, который можно безопасно запустить на дорогой H200-сессии: без ручных
+loop, который можно безопасно запустить на GPU-сессии: без ручных
 notebook-ячеек, без перезаписи старого benchmark и с manifest для каждого
 датасета, модели и score-cache.
 
@@ -107,9 +107,14 @@ notebook-ячеек, без перезаписи старого benchmark и с 
   - `calibrate_scores.py` запускает существующую dev/test threshold calibration
     для fine-tuned score CSV без перезаписи старого benchmark.
 - Добавлен runbook `docs/DEDUP_TRAINING_RUNBOOK.md` с командами локального
-  freeze, H200 smoke/full training, scoring и calibration.
+  freeze, A5000-oriented Docker smoke/full training, scoring и calibration.
 - `requirements-research.txt` дополнен training-зависимостями:
   `datasets`, `accelerate`, `peft`.
+- Текущая разметка зафиксирована как final clean snapshot
+  `research/dedup/data/training/dedup_pairs_final_split.csv`; старые
+  generated `dedup_pairs_v1*` CSV удалены из локальной training-папки, чтобы
+  обучение не стартовало от неправильного файла. Backup final snapshot:
+  `artifacts/backups/dedup_training_freeze/20260629_final_a5000/`.
 
 ### Проверки
 

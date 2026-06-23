@@ -134,6 +134,13 @@ def test_write_outputs_create_csv_and_manifest(tmp_path):
     assert freeze_paths["manifest"].exists()
     assert split_paths["split_pairs"].exists()
     assert split_paths["split_manifest"].exists()
+    split_frame = pd.read_csv(split_paths["split_pairs"])
+    assert "sentence_A" in split_frame.columns
+    assert "sentence_B" in split_frame.columns
+    assert "split" in split_frame.columns
+    assert "csv_label" not in split_frame.columns
+    assert "sqlite_label" not in split_frame.columns
+    assert "source_priority" not in split_frame.columns
 
 
 def test_build_pair_text_uses_structured_fields_without_ids():

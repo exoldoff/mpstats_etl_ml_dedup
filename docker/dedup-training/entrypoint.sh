@@ -9,7 +9,7 @@ if [[ $# -gt 0 ]]; then
 fi
 
 precision_args=()
-case "${DEDUP_TRAINING_PRECISION:-bf16}" in
+case "${DEDUP_TRAINING_PRECISION:-fp16}" in
   bf16)
     precision_args=(--bf16)
     ;;
@@ -60,8 +60,9 @@ case "${command_name}" in
       --output-dir artifacts/models/dedup/mmarco_v1 \
       --num-train-epochs 3 \
       --learning-rate 2e-5 \
-      --per-device-train-batch-size 32 \
-      --per-device-eval-batch-size 64 \
+      --per-device-train-batch-size 16 \
+      --per-device-eval-batch-size 32 \
+      --gradient-accumulation-steps 2 \
       "${precision_args[@]}" \
       "$@"
     ;;
@@ -71,9 +72,9 @@ case "${command_name}" in
       --output-dir artifacts/models/dedup/bge_reranker_v2_m3_v1 \
       --num-train-epochs 3 \
       --learning-rate 2e-5 \
-      --per-device-train-batch-size 16 \
-      --per-device-eval-batch-size 32 \
-      --gradient-accumulation-steps 2 \
+      --per-device-train-batch-size 8 \
+      --per-device-eval-batch-size 16 \
+      --gradient-accumulation-steps 4 \
       "${precision_args[@]}" \
       "$@"
     ;;
@@ -83,9 +84,9 @@ case "${command_name}" in
       --output-dir artifacts/models/dedup/qwen3_reranker_0_6b_v1 \
       --num-train-epochs 2 \
       --learning-rate 1e-5 \
-      --per-device-train-batch-size 2 \
-      --per-device-eval-batch-size 4 \
-      --gradient-accumulation-steps 8 \
+      --per-device-train-batch-size 1 \
+      --per-device-eval-batch-size 2 \
+      --gradient-accumulation-steps 16 \
       --default-prompt-name sku_match \
       --trust-remote-code \
       "${precision_args[@]}" \

@@ -75,7 +75,10 @@ zero-shot / threshold benchmark результатами.
 all-edge component split создаёт giant component на 717 строк почти целиком из
 `coconut_oil`. Training-ready split после удаления crossing negative pairs:
 `1404 / 167 / 165` для train/dev/test; dropped audit сохраняется как
-`research/dedup/data/training/dedup_pairs_v1_split_dropped.csv`.
+`research/dedup/data/training/dedup_pairs_final_split_dropped.csv`.
+Основной training CSV зафиксирован в clean-схеме
+`dedup_training_clean_v1`: без служебных колонок разметчика и notebook-only
+диагностик.
 
 Это уже достаточно для первого supervised fine-tune reranker. Для большой 4B
 модели это все еще маленький датасет, поэтому первый прогон должен быть
@@ -199,14 +202,14 @@ labeling CSV + Telegram SQLite + old sauce labels
         │
         ▼
 [A] frozen training dataset
-    dedup_pairs_v1.csv
-    dedup_pairs_v1_conflicts.csv
-    dedup_pairs_v1_manifest.json
+    dedup_pairs_final.csv
+    dedup_pairs_final_conflicts.csv
+    dedup_pairs_final_manifest.json
         │
         ▼
 [B] component-aware split
-    dedup_pairs_v1_split.csv
-    dedup_pairs_v1_split_manifest.json
+    dedup_pairs_final_split.csv
+    dedup_pairs_final_split_manifest.json
         │
         ▼
 [C] model-specific training adapters
@@ -299,11 +302,11 @@ Dependency impact перед реализацией:
 
 - вход: новый CSV + Telegram SQLite + старый sauce CSV;
 - выход:
-  `research/dedup/data/training/dedup_pairs_v1.csv`;
+  `research/dedup/data/training/dedup_pairs_final.csv`;
 - отдельный файл конфликтов:
-  `research/dedup/data/training/dedup_pairs_v1_conflicts.csv`;
+  `research/dedup/data/training/dedup_pairs_final_conflicts.csv`;
 - отдельный manifest:
-  `research/dedup/data/training/dedup_pairs_v1_manifest.json`.
+  `research/dedup/data/training/dedup_pairs_final_manifest.json`.
 
 Правила:
 
@@ -311,8 +314,11 @@ Dependency impact перед реализацией:
 - legacy `same_product_different_pack`, если встретится, мапится в positive;
 - дубли пар схлопываются по unordered pair key;
 - при конфликте меток пара исключается до ручного решения;
-- в artifact сохраняются `category_run`, `candidate_source`,
-  `labeling_stratum`, `brand_relation`, marketplace/pack/weight fields.
+- в clean training artifact сохраняются только поля, нужные для обучения и
+  анализа ошибок: `split`, `pair_id`, `pair_key`, `category_run`, label/target,
+  `sentence_A/B`, raw ids, marketplace, sku/title/brand и pack/weight fields.
+  Служебные поля разметчика и notebook-only диагностики остаются вне основного
+  train CSV.
 
 ### Шаг 1. Split без leakage
 
@@ -327,10 +333,7 @@ train и test через разные пары.
 3. Сохранить стратификацию по:
    - `category_run`;
    - `same_base_product`;
-   - `candidate_source`;
-   - `is_cross_marketplace_pair`;
-   - `is_hard_negative_candidate`;
-   - `is_pack_variant_candidate`.
+   - marketplace/pack context в clean CSV для error analysis.
 
 Первый размер:
 
@@ -406,8 +409,7 @@ product is the same.
 - false merges на test;
 - false splits на test;
 - breakdown по category;
-- breakdown по `candidate_source`;
-- breakdown по hard-negative / pack-variant / cross-marketplace;
+- breakdown по marketplace/pack/weight context;
 - score distributions до/после fine-tune.
 
 Отдельно проверить 3 текущих conflict rows из CSV/SQLite merge: они не должны

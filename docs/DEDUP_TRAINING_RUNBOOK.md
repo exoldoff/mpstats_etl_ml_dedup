@@ -11,7 +11,7 @@
 
 Обучение делаем отдельными Python-модулями, не notebook-ячейками:
 
-1. Notebook удобен для графиков и выводов, но опасен для дорогой H200-сессии:
+1. Notebook удобен для графиков и выводов, но опасен для дорогой GPU-сессии:
    легко выполнить ячейки не в том порядке.
 2. Training script даёт воспроизводимую команду, manifest, commit hash,
    версии библиотек и один формат артефактов.
@@ -42,6 +42,19 @@ shasum -a 256 -c artifacts/backups/dedup_model_runs/20260629_204244/dedup_model_
 
 ## Локальная подготовка датасета
 
+Текущая разметка зафиксирована как финальный training snapshot. Новую разметку
+больше не добираем; обучение и сравнение идут от clean CSV:
+
+```text
+research/dedup/data/training/dedup_pairs_final_split.csv
+```
+
+Локальный backup финального freeze:
+
+```text
+artifacts/backups/dedup_training_freeze/20260629_final_a5000/
+```
+
 Сначала freeze. Эта команда пишет пары, excluded rows, conflicts и manifest,
 но останавливается с кодом `2`, если есть конфликты меток:
 
@@ -53,7 +66,7 @@ python3 -m research.dedup.training.prepare_dataset --fail-on-conflicts
 Их надо посмотреть в:
 
 ```text
-research/dedup/data/training/dedup_pairs_v1_conflicts.csv
+research/dedup/data/training/dedup_pairs_final_conflicts.csv
 ```
 
 Если конфликты понятны и мы осознанно исключаем их из train loss, создать
@@ -66,8 +79,13 @@ python3 -m research.dedup.training.prepare_dataset
 Главный файл для обучения:
 
 ```text
-research/dedup/data/training/dedup_pairs_v1_split.csv
+research/dedup/data/training/dedup_pairs_final_split.csv
 ```
+
+CSV-схема основного split намеренно чистая: `27` колонок, без служебных
+`csv_label`, `sqlite_label`, `status`, `source_priority`, component internals
+и notebook-only полей. Конфликты/excluded/dropped лежат отдельными audit CSV и
+в train loss не попадают.
 
 Текущий фактический freeze:
 
@@ -88,7 +106,7 @@ Splitter по умолчанию сначала пробует strict all-edge c
 - dropped crossing pairs: `729`, все negative;
 - raw-id leakage: `0`;
 - dropped audit:
-  `research/dedup/data/training/dedup_pairs_v1_split_dropped.csv`.
+  `research/dedup/data/training/dedup_pairs_final_split_dropped.csv`.
 
 Для аудита strict-режима:
 
@@ -96,7 +114,7 @@ Splitter по умолчанию сначала пробует strict all-edge c
 python3 -m research.dedup.training.prepare_dataset --large-component-strategy strict
 ```
 
-## Что копировать на H200
+## Что копировать на GPU-сервер
 
 ### Вариант A: Docker, предпочтительно
 
@@ -123,13 +141,12 @@ docker run --rm --gpus all \
   mpstats-dedup-training:cu128 doctor
 ```
 
-Precision по умолчанию — `bf16`, это правильный режим для H200. Для A5000
-запускать контейнеры с `-e DEDUP_TRAINING_PRECISION=fp16`, потому что BF16 на
-такой карте может быть недоступен:
+Precision по умолчанию — `fp16`, это профиль под A5000 24GB. Для H200 можно
+включить `bf16`:
 
 ```bash
 docker run --rm --gpus all \
-  -e DEDUP_TRAINING_PRECISION=fp16 \
+  -e DEDUP_TRAINING_PRECISION=bf16 \
   -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
   -v "$PWD/artifacts:/workspace/artifacts" \
   -v "$PWD/.hf_cache:/workspace/.hf_cache" \
@@ -202,8 +219,8 @@ docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
 research/dedup/training/
 research/dedup/model_registry.py
 research/dedup/threshold_calibration.py
-research/dedup/data/training/dedup_pairs_v1_split.csv
-research/dedup/data/training/dedup_pairs_v1_split_manifest.json
+research/dedup/data/training/dedup_pairs_final_split.csv
+research/dedup/data/training/dedup_pairs_final_split_manifest.json
 docker/dedup-training/
 requirements-research.txt
 docs/DEDUP_FINE_TUNING_EXPERIMENT_PLAN.md
@@ -213,7 +230,7 @@ docs/DEDUP_TRAINING_RUNBOOK.md
 Если запускаем прямо из repo checkout, отдельно копировать не надо.
 
 Важно: vLLM нужен для инференса, не для обучения. Для training-команд нужен
-PyTorch/Transformers runtime с CUDA под H200. Если H200-образ уже содержит
+PyTorch/Transformers runtime с CUDA на GPU-сервере. Если GPU-образ уже содержит
 рабочий `torch`, не переустанавливать его без причины; доставить только
 research-зависимости:
 
@@ -231,7 +248,7 @@ python3 -m research.dedup.training.train_pair_classifier \
   --num-train-epochs 1 \
   --per-device-train-batch-size 16 \
   --per-device-eval-batch-size 32 \
-  --bf16
+  --fp16
 ```
 
 Если smoke не проходит, большой запуск не начинать.
@@ -252,7 +269,7 @@ python3 -m research.dedup.training.train_pair_classifier \
   --learning-rate 3e-5 \
   --per-device-train-batch-size 32 \
   --per-device-eval-batch-size 64 \
-  --bf16
+  --fp16
 ```
 
 PEFT/LoRA для tiny2 не обязателен. Если нужно проверить adapter-only режим:
@@ -264,7 +281,7 @@ python3 -m research.dedup.training.train_pair_classifier \
   --use-peft-lora \
   --lora-target-modules query,value \
   --num-train-epochs 5 \
-  --bf16
+  --fp16
 ```
 
 ### mMARCO MiniLM
@@ -277,9 +294,10 @@ python3 -m research.dedup.training.train_cross_encoder \
   --output-dir artifacts/models/dedup/mmarco_v1 \
   --num-train-epochs 3 \
   --learning-rate 2e-5 \
-  --per-device-train-batch-size 32 \
-  --per-device-eval-batch-size 64 \
-  --bf16
+  --per-device-train-batch-size 16 \
+  --per-device-eval-batch-size 32 \
+  --gradient-accumulation-steps 2 \
+  --fp16
 ```
 
 ### BGE reranker v2 m3
@@ -292,10 +310,10 @@ python3 -m research.dedup.training.train_cross_encoder \
   --output-dir artifacts/models/dedup/bge_reranker_v2_m3_v1 \
   --num-train-epochs 3 \
   --learning-rate 2e-5 \
-  --per-device-train-batch-size 16 \
-  --per-device-eval-batch-size 32 \
-  --gradient-accumulation-steps 2 \
-  --bf16
+  --per-device-train-batch-size 8 \
+  --per-device-eval-batch-size 16 \
+  --gradient-accumulation-steps 4 \
+  --fp16
 ```
 
 ### Qwen3 Reranker 0.6B
@@ -309,17 +327,17 @@ python3 -m research.dedup.training.train_cross_encoder \
   --output-dir artifacts/models/dedup/qwen3_reranker_0_6b_v1 \
   --num-train-epochs 2 \
   --learning-rate 1e-5 \
-  --per-device-train-batch-size 2 \
-  --per-device-eval-batch-size 4 \
-  --gradient-accumulation-steps 8 \
+  --per-device-train-batch-size 1 \
+  --per-device-eval-batch-size 2 \
+  --gradient-accumulation-steps 16 \
   --default-prompt-name sku_match \
   --trust-remote-code \
-  --bf16
+  --fp16
 ```
 
 ### Jina reranker v3
 
-Jina оставляем в плане, но не запускаем первой H200-сессией. У неё listwise /
+Jina оставляем в плане, но не запускаем первой GPU-сессией. У неё listwise /
 remote-code path, поэтому сначала стабилизируем frozen split, score-cache и
 threshold loop на tiny2, mMARCO, BGE и Qwen 0.6B.
 

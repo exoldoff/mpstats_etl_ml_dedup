@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--telegram-state-path", type=Path, default=DEFAULT_TELEGRAM_STATE_PATH)
     parser.add_argument("--old-sauces-path", type=Path, default=DEFAULT_OLD_SAUCES_PATH)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--prefix", default="dedup_pairs_v1")
+    parser.add_argument("--prefix", default="dedup_pairs_final")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train-ratio", type=float, default=DEFAULT_TRAIN_RATIO)
     parser.add_argument("--dev-ratio", type=float, default=DEFAULT_DEV_RATIO)

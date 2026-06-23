@@ -19,6 +19,70 @@ DEFAULT_TRAIN_RATIO = 0.70
 DEFAULT_DEV_RATIO = 0.15
 DEFAULT_TEST_RATIO = 0.15
 
+CLEAN_PAIR_COLUMNS = [
+    "pair_id",
+    "pair_key",
+    "source_dataset",
+    "category_run",
+    "label",
+    "same_base_product",
+    "sentence_A",
+    "sentence_B",
+    "raw_record_id_a",
+    "raw_record_id_b",
+    "marketplace_a",
+    "marketplace_b",
+    "sku_a",
+    "sku_b",
+    "title_a",
+    "title_b",
+    "brand_a",
+    "brand_b",
+    "subcategory_a",
+    "subcategory_b",
+    "unit_amount_a",
+    "unit_amount_b",
+    "total_amount_a",
+    "total_amount_b",
+    "multipack_count_a",
+    "multipack_count_b",
+]
+
+CLEAN_SPLIT_COLUMNS = ["split", *CLEAN_PAIR_COLUMNS]
+CLEAN_DROPPED_COLUMNS = ["drop_reason", *CLEAN_PAIR_COLUMNS]
+CLEAN_CONFLICT_COLUMNS = [
+    "pair_id",
+    "pair_key",
+    "conflict_type",
+    "category_run",
+    "source_dataset",
+    "raw_record_id_a",
+    "raw_record_id_b",
+    "title_a",
+    "title_b",
+    "brand_a",
+    "brand_b",
+    "csv_label",
+    "sqlite_label",
+    "label",
+]
+CLEAN_EXCLUDED_COLUMNS = [
+    "pair_id",
+    "pair_key",
+    "exclude_reason",
+    "source_dataset",
+    "category_run",
+    "label",
+    "sentence_A",
+    "sentence_B",
+    "raw_record_id_a",
+    "raw_record_id_b",
+    "title_a",
+    "title_b",
+    "brand_a",
+    "brand_b",
+]
+
 
 def _empty_series(frame: pd.DataFrame) -> pd.Series:
     return pd.Series(["" for _ in range(len(frame))], index=frame.index, dtype=object)
@@ -79,6 +143,11 @@ def pair_key(left: object, right: object) -> str:
     if left_text <= right_text:
         return f"{left_text} || {right_text}"
     return f"{right_text} || {left_text}"
+
+
+def pair_id_from_key(value: object) -> str:
+    digest = hashlib.sha256(_clean_text(value).encode("utf-8")).hexdigest()
+    return f"pair_{digest[:16]}"
 
 
 def _sha256_file(path: Path) -> str | None:
@@ -657,7 +726,27 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(_json_safe(payload), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def write_freeze_outputs(result: DatasetFreezeResult, output_dir: Path, *, prefix: str = "dedup_pairs_v1") -> dict[str, Path]:
+def clean_output_frame(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    output = frame.copy()
+    if "pair_id" not in output.columns:
+        if "pair_key" in output.columns:
+            output["pair_id"] = output["pair_key"].map(pair_id_from_key)
+        elif {"raw_record_id_a", "raw_record_id_b"}.issubset(output.columns):
+            keys = [
+                pair_key(left, right)
+                for left, right in zip(output["raw_record_id_a"], output["raw_record_id_b"], strict=False)
+            ]
+            output["pair_id"] = [pair_id_from_key(value) for value in keys]
+    existing_columns = [column for column in columns if column in output.columns]
+    return output.reindex(columns=existing_columns).copy()
+
+
+def write_freeze_outputs(
+    result: DatasetFreezeResult,
+    output_dir: Path,
+    *,
+    prefix: str = "dedup_pairs_final",
+) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = {
         "pairs": output_dir / f"{prefix}.csv",
@@ -665,16 +754,17 @@ def write_freeze_outputs(result: DatasetFreezeResult, output_dir: Path, *, prefi
         "excluded": output_dir / f"{prefix}_excluded.csv",
         "manifest": output_dir / f"{prefix}_manifest.json",
     }
-    result.pairs.to_csv(paths["pairs"], index=False)
-    result.conflicts.to_csv(paths["conflicts"], index=False)
-    result.excluded.to_csv(paths["excluded"], index=False)
+    clean_output_frame(result.pairs, CLEAN_PAIR_COLUMNS).to_csv(paths["pairs"], index=False)
+    clean_output_frame(result.conflicts, CLEAN_CONFLICT_COLUMNS).to_csv(paths["conflicts"], index=False)
+    clean_output_frame(result.excluded, CLEAN_EXCLUDED_COLUMNS).to_csv(paths["excluded"], index=False)
     manifest = dict(result.manifest)
+    manifest["csv_schema"] = "dedup_training_clean_v1"
     manifest["output_paths"] = {key: str(path) for key, path in paths.items()}
     write_json(paths["manifest"], manifest)
     return paths
 
 
-def write_split_outputs(result: SplitResult, output_dir: Path, *, prefix: str = "dedup_pairs_v1") -> dict[str, Path]:
+def write_split_outputs(result: SplitResult, output_dir: Path, *, prefix: str = "dedup_pairs_final") -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = {
         "split_pairs": output_dir / f"{prefix}_split.csv",
@@ -682,10 +772,11 @@ def write_split_outputs(result: SplitResult, output_dir: Path, *, prefix: str = 
     }
     if result.dropped_pairs is not None and not result.dropped_pairs.empty:
         paths["split_dropped"] = output_dir / f"{prefix}_split_dropped.csv"
-    result.pairs.to_csv(paths["split_pairs"], index=False)
+    clean_output_frame(result.pairs, CLEAN_SPLIT_COLUMNS).to_csv(paths["split_pairs"], index=False)
     if "split_dropped" in paths and result.dropped_pairs is not None:
-        result.dropped_pairs.to_csv(paths["split_dropped"], index=False)
+        clean_output_frame(result.dropped_pairs, CLEAN_DROPPED_COLUMNS).to_csv(paths["split_dropped"], index=False)
     manifest = dict(result.manifest)
+    manifest["csv_schema"] = "dedup_training_clean_v1"
     manifest["output_paths"] = {key: str(path) for key, path in paths.items()}
     write_json(paths["split_manifest"], manifest)
     return paths
