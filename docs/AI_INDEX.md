@@ -37,6 +37,7 @@
 | `docs/THRESHOLD_CALIBRATION_REPORT.md` | критерии SKU matching benchmark | cost-sensitive пороги, manual review, почему macro-F1 не главный критерий |
 | `docs/DEDUP_MODEL_HF_AUDIT.md` | HF-аудит моделей dedup research | prefixes, pooling, prompts, reranker settings, known mismatches |
 | `docs/DEDUP_FINE_TUNING_EXPERIMENT_PLAN.md` | план первого supervised fine-tuning эксперимента SKU dedup | после завершения ручной разметки: состав gold/training set, выбор reranker-моделей, split без leakage, метрики и порядок обучения |
+| `docs/DEDUP_TRAINING_RUNBOOK.md` | команды запуска первого fine-tuning цикла | подготовка frozen split, запуск smoke/full training на H200, scoring fine-tuned моделей и threshold calibration |
 | `docs/DEDUP_PRODUCTION_OPTIMIZATION_AUDIT.md` | аудит прод-готовности dedup flow | что оптимизировать перед переносом из notebooks/research в production: FAISS/mmap, artifacts, manifests, safety gates |
 | `README.md` | краткий обзор | запуск, структура, состояние проекта |
 | `docs/USER_GUIDE.md` | пользовательская инструкция web-app | изменения UI, workflow, расчётов, статусов, справочника, классификатора |
@@ -97,6 +98,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `research/dedup/fusion.py` | выбор fusion-run по dev-summary и подготовка family/pack pair edges |
 | `research/dedup/model_registry.py` | единый registry/manager/pool для local-моделей и Polza.ai online embeddings |
 | `research/dedup/matchers/` | baseline matching engines A/B и общий интерфейс |
+| `research/dedup/training/` | research-only freeze/split/train/score/calibrate scripts для supervised reranker fine-tuning |
 | `research/dedup/threshold_calibration.py` | forced binary dev calibration для `threshold_same`, cost/weighted strategies и compact CSV |
 | `research/dedup/annotator.py` | helper для ручной разметки |
 | `research/dedup/tests/` | узкие тесты research-модулей |

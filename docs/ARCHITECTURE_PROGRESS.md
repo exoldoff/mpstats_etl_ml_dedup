@@ -76,6 +76,46 @@
   `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
   `mpstats_products` и показывает склеенные SKU-группы.
 
+## 2026-06-29 — Fine-tuning experiment implementation
+
+### Зачем
+
+После завершения ручной разметки нужен воспроизводимый supervised training
+loop, который можно безопасно запустить на дорогой H200-сессии: без ручных
+notebook-ячеек, без перезаписи старого benchmark и с manifest для каждого
+датасета, модели и score-cache.
+
+### Что сделано
+
+- Старые результаты model benchmark сохранены в ignored backup:
+  `artifacts/backups/dedup_model_runs/20260629_204244/`.
+- Добавлен research-only пакет `research/dedup/training/`:
+  - `prepare_dataset.py` мержит current labeling CSV, Telegram SQLite sidecar
+    и старый `labeling_sauces.csv`, выносит конфликты отдельно и строит
+    component-aware train/dev/test split. Если strict all-edge components дают
+    giant component, включается `positive_record_holdout`: positive-дубли
+    остаются вместе, raw records не протекают между split, crossing negative
+    pairs пишутся в dropped audit.
+  - `train_pair_classifier.py` обучает `cointegrated/rubert-tiny2` и другие
+    `AutoModelForSequenceClassification` как binary pair-classifier; PEFT/LoRA
+    доступен флагом `--use-peft-lora`.
+  - `train_cross_encoder.py` обучает SentenceTransformers CrossEncoder модели
+    через `CrossEncoderTrainer` + `BinaryCrossEntropyLoss`: Qwen 0.6B, BGE,
+    mMARCO.
+  - `score_pair_classifier.py` и `score_cross_encoder.py` прогоняют
+    fine-tuned модели по frozen split и пишут score CSV.
+  - `calibrate_scores.py` запускает существующую dev/test threshold calibration
+    для fine-tuned score CSV без перезаписи старого benchmark.
+- Добавлен runbook `docs/DEDUP_TRAINING_RUNBOOK.md` с командами локального
+  freeze, H200 smoke/full training, scoring и calibration.
+- `requirements-research.txt` дополнен training-зависимостями:
+  `datasets`, `accelerate`, `peft`.
+
+### Проверки
+
+См. финальный ответ текущего изменения: узкие pytest/compile/data-freeze
+проверки запускались после реализации.
+
 ## 2026-06-28 — Supplemental training coverage for candidate pool
 
 ### Зачем

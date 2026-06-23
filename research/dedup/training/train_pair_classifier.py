@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Any
+
+from .common import (
+    DEFAULT_MODEL_OUTPUT_ROOT,
+    DEFAULT_SPLIT_DATA_PATH,
+    ID2LABEL,
+    LABEL2ID,
+    binary_metrics_from_predictions,
+    frame_to_pair_dataset,
+    git_commit,
+    package_versions,
+    read_split_pairs,
+    safe_slug,
+    split_frame,
+    split_label_counts,
+    supported_kwargs,
+    trainer_tokenizer_kwarg,
+)
+from .data import write_json
+
+
+DEFAULT_MODEL_NAME = "cointegrated/rubert-tiny2"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Fine-tune a Hugging Face sequence-classification model as a SKU pair classifier."
+    )
+    parser.add_argument("--data-path", type=Path, default=DEFAULT_SPLIT_DATA_PATH)
+    parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--cache-dir", type=Path)
+    parser.add_argument("--local-files-only", action="store_true")
+    parser.add_argument("--trust-remote-code", action="store_true")
+    parser.add_argument("--max-length", type=int, default=192)
+    parser.add_argument("--learning-rate", type=float, default=3e-5)
+    parser.add_argument("--num-train-epochs", type=float, default=5.0)
+    parser.add_argument("--per-device-train-batch-size", type=int, default=32)
+    parser.add_argument("--per-device-eval-batch-size", type=int, default=64)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
+    parser.add_argument("--warmup-ratio", type=float, default=0.1)
+    parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--dataloader-num-workers", type=int, default=2)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--bf16", action="store_true")
+    parser.add_argument("--fp16", action="store_true")
+    parser.add_argument("--smoke-limit", type=int)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--use-peft-lora", action="store_true")
+    parser.add_argument("--lora-r", type=int, default=8)
+    parser.add_argument("--lora-alpha", type=int, default=16)
+    parser.add_argument("--lora-dropout", type=float, default=0.05)
+    parser.add_argument(
+        "--lora-target-modules",
+        default="query,value",
+        help="Comma-separated module names for PEFT LoRA; default fits BERT-like attention blocks.",
+    )
+    return parser
+
+
+def _args_payload(args: argparse.Namespace) -> dict[str, Any]:
+    payload = vars(args).copy()
+    for key, value in list(payload.items()):
+        if isinstance(value, Path):
+            payload[key] = str(value)
+    return payload
+
+
+def _default_output_dir(model_name: str) -> Path:
+    return DEFAULT_MODEL_OUTPUT_ROOT / f"{safe_slug(model_name)}_pair_classifier"
+
+
+def _from_pretrained_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "num_labels": 2,
+        "id2label": ID2LABEL,
+        "label2id": LABEL2ID,
+    }
+    if args.cache_dir is not None:
+        kwargs["cache_dir"] = str(args.cache_dir)
+    if args.local_files_only:
+        kwargs["local_files_only"] = True
+    if args.trust_remote_code:
+        kwargs["trust_remote_code"] = True
+    return kwargs
+
+
+def _tokenizer_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    if args.cache_dir is not None:
+        kwargs["cache_dir"] = str(args.cache_dir)
+    if args.local_files_only:
+        kwargs["local_files_only"] = True
+    if args.trust_remote_code:
+        kwargs["trust_remote_code"] = True
+    return kwargs
+
+
+def _build_dataset(frame: Any, tokenizer: Any, max_length: int) -> Any:
+    from datasets import Dataset
+
+    dataset = Dataset.from_pandas(frame_to_pair_dataset(frame), preserve_index=False)
+
+    def tokenize(batch: dict[str, list[Any]]) -> dict[str, Any]:
+        return tokenizer(
+            batch["sentence_A"],
+            batch["sentence_B"],
+            truncation=True,
+            max_length=max_length,
+        )
+
+    return dataset.map(tokenize, batched=True, remove_columns=["sentence_A", "sentence_B"])
+
+
+def _compute_metrics(eval_prediction: Any) -> dict[str, float]:
+    import numpy as np
+
+    logits, labels = eval_prediction
+    if isinstance(logits, tuple):
+        logits = logits[0]
+    predictions = np.asarray(logits).argmax(axis=-1)
+    return binary_metrics_from_predictions(labels, predictions)
+
+
+def _training_arguments(args: argparse.Namespace, output_dir: Path) -> Any:
+    from transformers import TrainingArguments
+
+    kwargs = {
+        "output_dir": str(output_dir),
+        "learning_rate": args.learning_rate,
+        "per_device_train_batch_size": args.per_device_train_batch_size,
+        "per_device_eval_batch_size": args.per_device_eval_batch_size,
+        "num_train_epochs": args.num_train_epochs,
+        "weight_decay": args.weight_decay,
+        "warmup_ratio": args.warmup_ratio,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "dataloader_num_workers": args.dataloader_num_workers,
+        "eval_strategy": "epoch",
+        "save_strategy": "epoch",
+        "logging_steps": 25,
+        "logging_first_step": True,
+        "save_total_limit": 2,
+        "load_best_model_at_end": True,
+        "metric_for_best_model": "eval_f1",
+        "greater_is_better": True,
+        "report_to": [],
+        "seed": args.seed,
+        "bf16": args.bf16,
+        "fp16": args.fp16,
+    }
+    return TrainingArguments(**supported_kwargs(TrainingArguments.__init__, kwargs))
+
+
+def _maybe_apply_lora(model: Any, args: argparse.Namespace) -> Any:
+    if not args.use_peft_lora:
+        return model
+    from peft import LoraConfig, TaskType, get_peft_model
+
+    target_modules = [item.strip() for item in args.lora_target_modules.split(",") if item.strip()]
+    lora_config = LoraConfig(
+        task_type=TaskType.SEQ_CLS,
+        inference_mode=False,
+        r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        target_modules=target_modules or None,
+    )
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
+    return model
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    output_dir = args.output_dir or _default_output_dir(args.model_name)
+    frame = read_split_pairs(args.data_path, smoke_limit=args.smoke_limit)
+    train_frame = split_frame(frame, "train")
+    dev_frame = split_frame(frame, "dev")
+    test_frame = split_frame(frame, "test")
+    if train_frame.empty or dev_frame.empty:
+        raise ValueError("split dataset must contain non-empty train and dev splits")
+
+    manifest_base = {
+        "trainer": "transformers.AutoModelForSequenceClassification",
+        "model_name": args.model_name,
+        "data_path": str(args.data_path),
+        "output_dir": str(output_dir),
+        "score_type": "softmax_same_probability",
+        "split_label_counts": split_label_counts(frame),
+        "rows": {
+            "total": int(len(frame)),
+            "train": int(len(train_frame)),
+            "dev": int(len(dev_frame)),
+            "test": int(len(test_frame)),
+        },
+        "args": _args_payload(args),
+        "git_commit": git_commit(),
+        "dependencies": package_versions(["transformers", "datasets", "accelerate", "peft", "torch"]),
+    }
+
+    if args.dry_run:
+        write_json(output_dir / "dry_run_manifest.json", manifest_base)
+        print(f"Dry run ok. Manifest: {output_dir / 'dry_run_manifest.json'}")
+        return 0
+
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer, DataCollatorWithPadding, Trainer
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, **_tokenizer_kwargs(args))
+    model = AutoModelForSequenceClassification.from_pretrained(args.model_name, **_from_pretrained_kwargs(args))
+    model = _maybe_apply_lora(model, args)
+
+    train_dataset = _build_dataset(train_frame, tokenizer, args.max_length)
+    dev_dataset = _build_dataset(dev_frame, tokenizer, args.max_length)
+    test_dataset = _build_dataset(test_frame, tokenizer, args.max_length) if not test_frame.empty else None
+
+    trainer_kwargs = {
+        "model": model,
+        "args": _training_arguments(args, output_dir),
+        "train_dataset": train_dataset,
+        "eval_dataset": dev_dataset,
+        "data_collator": DataCollatorWithPadding(tokenizer=tokenizer),
+        "compute_metrics": _compute_metrics,
+        **trainer_tokenizer_kwarg(Trainer, tokenizer),
+    }
+    trainer = Trainer(**trainer_kwargs)
+    train_result = trainer.train()
+
+    final_output_dir = output_dir / "final"
+    trainer.save_model(str(final_output_dir))
+    tokenizer.save_pretrained(str(final_output_dir))
+
+    metrics = {
+        "train": train_result.metrics,
+        "dev": trainer.evaluate(dev_dataset, metric_key_prefix="dev"),
+    }
+    if test_dataset is not None:
+        metrics["test"] = trainer.evaluate(test_dataset, metric_key_prefix="test")
+
+    manifest = {
+        **manifest_base,
+        "final_output_dir": str(final_output_dir),
+        "metrics": metrics,
+    }
+    write_json(output_dir / "training_manifest.json", manifest)
+    write_json(final_output_dir / "training_manifest.json", manifest)
+    print(f"Saved model: {final_output_dir}")
+    print(f"Saved manifest: {output_dir / 'training_manifest.json'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

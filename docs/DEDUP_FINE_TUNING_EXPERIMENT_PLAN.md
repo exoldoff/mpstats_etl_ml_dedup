@@ -60,13 +60,22 @@ zero-shot / threshold benchmark результатами.
 
 ### Общий объем для первого обучения
 
-После дедупликации пар и приоритета нового multi-category set:
+Фактический freeze, который пишет `research.dedup.training.prepare_dataset`
+после дедупликации пар, исключения конфликтов CSV-vs-Telegram и приоритета
+нового multi-category set:
 
-- 2399 уникальных пар всего;
-- 2366 бинарно пригодных пар;
-- 750 positive (`exact_duplicate`, включая legacy positive-логику);
-- 1616 negative (`different_product`);
-- 33 `uncertain` не идут в train loss, но остаются для ручного анализа.
+- 2465 уникальных бинарно пригодных пар;
+- 779 positive (`exact_duplicate`, включая legacy positive-логику);
+- 1686 negative (`different_product`);
+- 33 `uncertain` не идут в train loss, но остаются для ручного анализа;
+- 3 conflict rows между CSV и Telegram SQLite пишутся отдельно и не идут в
+  train loss.
+
+Текущий split использует fallback `positive_record_holdout`, потому что strict
+all-edge component split создаёт giant component на 717 строк почти целиком из
+`coconut_oil`. Training-ready split после удаления crossing negative pairs:
+`1404 / 167 / 165` для train/dev/test; dropped audit сохраняется как
+`research/dedup/data/training/dedup_pairs_v1_split_dropped.csv`.
 
 Это уже достаточно для первого supervised fine-tune reranker. Для большой 4B
 модели это все еще маленький датасет, поэтому первый прогон должен быть
@@ -226,6 +235,10 @@ Research-модули для этого стоит держать под `resear
 | `train_jina_adapter` | Отдельный experimental branch для Jina: custom/listwise scoring, `trust_remote_code=True`, adapter/PEFT только после smoke. |
 | `score_models` | Прогнать zero-shot и fine-tuned модели на frozen split, записать scores в общий cache. |
 | `training_report` | Собрать metrics, model manifests, error breakdown и ссылки на артефакты. |
+
+Implementation note: первый воспроизводимый слой реализован в
+`research/dedup/training/`, а команды запуска зафиксированы в
+`docs/DEDUP_TRAINING_RUNBOOK.md`.
 
 Model-specific training paths:
 
