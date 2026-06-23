@@ -108,7 +108,10 @@ hard negatives и cross-marketplace парах.
 | `deepvk/RuModernBERT-small` | 66.2% | 57.3% | raw encoder, не dedicated sentence embedder |
 
 Embedding retriever пока не главный bottleneck для fine-tune: первый фокус -
-pairwise scorer/reranker.
+pairwise scorer/reranker. `cointegrated/rubert-tiny2` в таблице выше не надо
+читать как готовую embedding-модель: для нашего эксперимента он интересен как
+маленький encoder, который можно специально заточить под бинарную pairwise
+задачу.
 
 ## 3. Какие модели тюнить
 
@@ -128,7 +131,17 @@ pairwise scorer/reranker.
      архитектура лучший прирост от наших hard negatives.
    - Роль: стабильный open baseline, проще Qwen.
 
-3. `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`
+3. `cointegrated/rubert-tiny2`
+   - Почему: маленькая русскоязычная BERT-like модель; как retrieval embedding
+     она была слабее E5/FRIDA, но как supervised pair classifier может хорошо
+     выучить наши SKU-признаки.
+   - Как тюнить: не как bi-encoder, а как cross-encoder / sequence
+     classification: на вход подается пара текстов SKU, на выходе один binary
+     score.
+   - Роль: обязательный cheap supervised baseline под русские товарные
+     названия.
+
+4. `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`
    - Почему: уже есть как `cross_encoder_zero_shot`, маленький и быстрый.
    - Как тюнить: binary CrossEncoder baseline.
    - Роль: cheap sanity baseline. Если даже он сильно прибавит, значит датасет
@@ -136,20 +149,21 @@ pairwise scorer/reranker.
 
 ### Второй эшелон
 
-4. `Qwen/Qwen3-Reranker-4B`
-   - Почему: лучший F1 zero-shot, сильный текущий scorer.
-   - Ограничение: локально тяжелый; полноценный fine-tune лучше делать как
-     cloud/LoRA job, не на Mac CPU.
-   - Роль: quality ceiling после того, как pipeline обучения уже отлажен на
-     0.6B/малых моделях.
-
 5. `jinaai/jina-reranker-v3`
    - Почему: сильный 0.6B multilingual/listwise reranker; в публичной карточке
      сравнивается конкурентно с Qwen/BGE.
    - Ограничение: `trust_remote_code=True`, listwise API, лицензия
      `cc-by-nc-4.0`; fine-tune path менее прямой, чем CrossEncoderTrainer.
-   - Роль: оставить для evaluation/fusion и, возможно, adapter tuning позже,
-     но не начинать с него первый supervised fine-tune.
+   - Роль: оставить в плане fine-tune, но запускать после простого
+     CrossEncoder/Qwen/BGE/RuBERT loop, когда уже понятен frozen split,
+     score-cache и threshold protocol.
+
+### Benchmark-only, без fine-tune в первом цикле
+
+`Qwen/Qwen3-Reranker-4B` остается в сравнении как сильный zero-shot scorer и
+quality ceiling, но не входит в fine-tune plan. Причина простая: локально он
+тяжелый, а первый supervised цикл должен отладить данные, split, loss,
+threshold calibration и error analysis на более дешевых моделях.
 
 ### Отдельно: bi-encoder
 
@@ -243,8 +257,9 @@ Training details:
 - loss: `BinaryCrossEntropyLoss`;
 - `pos_weight`: ratio negatives/positives на train, потому что negative больше;
 - 2-4 эпохи максимум для первого прогона;
-- learning rate: стартовать с `2e-5` для малых CrossEncoder/BGE; для Qwen 0.6B
-  использовать более осторожный LR/LoRA, если full fine-tune нестабилен;
+- learning rate: стартовать с `2e-5` для малых CrossEncoder/BGE/RuBERT; для
+  Qwen 0.6B использовать более осторожный LR/LoRA, если full fine-tune
+  нестабилен;
 - early stopping по dev weighted cost или dev false-merge-constrained F1;
 - сохранять model artifact и score cache с manifest.
 
@@ -314,7 +329,11 @@ false merge в итоговых компонентах.
   увеличивает recall относительно текущего строгого режима;
 - `BGE v2-m3 fine-tuned` становится близким к Qwen 0.6B по weighted cost и
   быстрее/дешевле на inference;
-- `Qwen 4B` остается quality ceiling, но не блокирует локальный research loop.
+- `RuBERT tiny2 fine-tuned` дает понятный cheap baseline и показывает, сколько
+  качества можно получить из маленькой модели, заточенной именно под наши пары;
+- `Jina v3` остается в плане как более сложный fine-tune candidate;
+- `Qwen 4B` остается benchmark-only quality ceiling, но не блокирует локальный
+  research loop.
 
 ## 6. Короткий порядок запуска
 
@@ -322,8 +341,10 @@ false merge в итоговых компонентах.
 2. Resolve 3 conflicts вручную.
 3. Create frozen component-aware split.
 4. Re-run zero-shot benchmark на frozen split.
-5. Fine-tune `cross_encoder_mmarco` и `bge_v2_m3` как быстрый smoke.
+5. Fine-tune `rubert_tiny2`, `cross_encoder_mmarco` и `bge_v2_m3` как быстрый
+   smoke.
 6. Fine-tune `qwen3_0_6b`.
-7. Если прирост есть, запускать `qwen3_4b` в cloud/LoRA как quality ceiling.
+7. Fine-tune / adapter-tune `jina_v3`, если первые прогоны показали прирост и
+   training path не раздувает эксперимент.
 8. Re-run threshold calibration and fusion/grouping.
 9. Обновить итоговый report/visuals.
