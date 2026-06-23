@@ -249,9 +249,10 @@ docker run --rm --gpus all \
   mpstats-dedup-training:cu128 train-qwen
 ```
 
-`train-qwen` использует `bf16` по умолчанию, даже если общий default контейнера
-`fp16`: Qwen reranker поднимает BF16 weights, а fp16 GradScaler падает на
-BF16 gradients. Если precision задаётся явно, использовать:
+`train-qwen` и `train-qwen4-lora` используют `bf16` по умолчанию, даже если
+общий default контейнера `fp16`: Qwen reranker поднимает BF16 weights, а fp16
+GradScaler падает на BF16 gradients. Если precision задаётся явно,
+использовать:
 
 ```bash
 docker run --rm --gpus all \
@@ -261,6 +262,22 @@ docker run --rm --gpus all \
   -v "$PWD/.hf_cache:/workspace/.hf_cache" \
   mpstats-dedup-training:cu128 train-qwen
 ```
+
+Экспериментальный Qwen 4B LoRA:
+
+```bash
+docker run --rm --gpus all \
+  -e DEDUP_TRAINING_PRECISION=bf16 \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/.hf_cache:/workspace/.hf_cache" \
+  mpstats-dedup-training:cu128 train-qwen4-lora
+```
+
+Это не full fine-tune: base 4B заморожена, обучаются только LoRA adapters,
+затем adapter по умолчанию merge-ится в final CrossEncoder. Если A5000 всё
+равно падает по памяти, сначала уменьшить `--max-length 128` или
+`--lora-r 4`; если не помогает — переносить на H200.
 
 Если Docker daemon на сервере не настроен под GPU, сначала проверить host:
 
@@ -376,8 +393,8 @@ python3 -m research.dedup.training.train_cross_encoder \
 
 ### Qwen3 Reranker 0.6B
 
-Главный практичный кандидат. `Qwen3-Reranker-4B` в первом цикле не тюним,
-оставляем только benchmark-only.
+Главный практичный кандидат. `Qwen3-Reranker-4B` full fine-tune на A5000 не
+запускаем, но можно проверить LoRA-only эксперимент.
 
 ```bash
 python3 -m research.dedup.training.train_cross_encoder \
@@ -390,6 +407,31 @@ python3 -m research.dedup.training.train_cross_encoder \
   --gradient-accumulation-steps 16 \
   --default-prompt-name sku_match \
   --trust-remote-code \
+  --bf16
+```
+
+### Qwen3 Reranker 4B LoRA
+
+Экспериментальный adapter-run для проверки потолка качества без full
+fine-tune:
+
+```bash
+python3 -m research.dedup.training.train_cross_encoder \
+  --model-name Qwen/Qwen3-Reranker-4B \
+  --output-dir artifacts/models/dedup/qwen3_reranker_4b_lora_v1 \
+  --num-train-epochs 2 \
+  --learning-rate 1e-4 \
+  --per-device-train-batch-size 1 \
+  --per-device-eval-batch-size 1 \
+  --gradient-accumulation-steps 16 \
+  --default-prompt-name sku_match \
+  --trust-remote-code \
+  --use-peft-lora \
+  --lora-r 8 \
+  --lora-alpha 16 \
+  --lora-dropout 0.05 \
+  --lora-target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj \
+  --gradient-checkpointing \
   --bf16
 ```
 

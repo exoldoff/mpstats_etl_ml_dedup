@@ -51,6 +51,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--smoke-limit", type=int)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--prediction-threshold", type=float, default=0.5)
+    parser.add_argument("--gradient-checkpointing", action="store_true")
+    parser.add_argument("--use-peft-lora", action="store_true")
+    parser.add_argument("--lora-r", type=int, default=8)
+    parser.add_argument("--lora-alpha", type=int, default=16)
+    parser.add_argument("--lora-dropout", type=float, default=0.05)
+    parser.add_argument(
+        "--lora-target-modules",
+        default="query,value",
+        help="Comma-separated module names for PEFT LoRA. Use q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj for Qwen.",
+    )
+    parser.add_argument(
+        "--no-merge-peft-lora",
+        dest="merge_peft_lora",
+        action="store_false",
+        help="Save adapter-only PEFT weights instead of merging LoRA into the final CrossEncoder.",
+    )
+    parser.set_defaults(merge_peft_lora=True)
     parser.add_argument(
         "--pos-weight",
         type=float,
@@ -155,6 +172,7 @@ def _training_arguments(args: argparse.Namespace, output_dir: Path, cross_encode
         "seed": args.seed,
         "bf16": args.bf16,
         "fp16": args.fp16,
+        "gradient_checkpointing": args.gradient_checkpointing,
     }
     return cross_encoder_training_args(**supported_kwargs(cross_encoder_training_args.__init__, kwargs))
 
@@ -167,6 +185,63 @@ def _auto_pos_weight(train_frame: Any, explicit: float | None) -> float:
     if positives <= 0:
         return 1.0
     return max(1.0, negatives / positives)
+
+
+def _parse_lora_target_modules(value: str) -> list[str] | None:
+    targets = [item.strip() for item in value.split(",") if item.strip()]
+    return targets or None
+
+
+def _base_model(cross_encoder: Any) -> Any:
+    base = getattr(cross_encoder, "model", None)
+    if base is None:
+        raise TypeError("CrossEncoder object does not expose .model; cannot apply PEFT LoRA")
+    return base
+
+
+def _maybe_enable_gradient_checkpointing(cross_encoder: Any, args: argparse.Namespace) -> None:
+    if not args.gradient_checkpointing:
+        return
+    base = _base_model(cross_encoder)
+    config = getattr(base, "config", None)
+    if config is not None and hasattr(config, "use_cache"):
+        config.use_cache = False
+    if hasattr(base, "gradient_checkpointing_enable"):
+        base.gradient_checkpointing_enable()
+        print("Enabled gradient checkpointing")
+
+
+def _maybe_apply_lora(cross_encoder: Any, args: argparse.Namespace) -> Any:
+    if not args.use_peft_lora:
+        return cross_encoder
+    from peft import LoraConfig, TaskType, get_peft_model
+
+    base = _base_model(cross_encoder)
+    lora_config = LoraConfig(
+        task_type=TaskType.SEQ_CLS,
+        inference_mode=False,
+        r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        target_modules=_parse_lora_target_modules(args.lora_target_modules),
+        bias="none",
+    )
+    cross_encoder.model = get_peft_model(base, lora_config)
+    if hasattr(cross_encoder.model, "print_trainable_parameters"):
+        cross_encoder.model.print_trainable_parameters()
+    return cross_encoder
+
+
+def _maybe_merge_lora_for_export(cross_encoder: Any, args: argparse.Namespace) -> Any:
+    if not args.use_peft_lora or not args.merge_peft_lora:
+        return cross_encoder
+    base = _base_model(cross_encoder)
+    if not hasattr(base, "merge_and_unload"):
+        print("LoRA merge skipped: PEFT model does not expose merge_and_unload()")
+        return cross_encoder
+    cross_encoder.model = base.merge_and_unload()
+    print("Merged LoRA adapter into final CrossEncoder model")
+    return cross_encoder
 
 
 def _predict_probabilities(model: Any, frame: Any, batch_size: int) -> Any:
@@ -238,6 +313,8 @@ def main(argv: list[str] | None = None) -> int:
 
     cross_encoder_trainer, training_args_cls, bce_loss_cls = _cross_encoder_imports()
     model = _load_cross_encoder(args)
+    _maybe_enable_gradient_checkpointing(model, args)
+    model = _maybe_apply_lora(model, args)
     train_dataset = _build_dataset(train_frame)
     dev_dataset = _build_dataset(dev_frame)
 
@@ -252,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
     train_result = trainer.train()
 
     final_output_dir = output_dir / "final"
+    model = _maybe_merge_lora_for_export(model, args)
     model.save_pretrained(str(final_output_dir))
 
     metrics = {

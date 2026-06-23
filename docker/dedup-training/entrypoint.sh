@@ -9,11 +9,11 @@ if [[ $# -gt 0 ]]; then
 fi
 
 requested_precision="${DEDUP_TRAINING_PRECISION:-fp16}"
-if [[ "${command_name}" == "train-qwen" && -z "${DEDUP_TRAINING_PRECISION+x}" ]]; then
+if [[ "${command_name}" =~ ^train-qwen && -z "${DEDUP_TRAINING_PRECISION+x}" ]]; then
   requested_precision="bf16"
 fi
-if [[ "${command_name}" == "train-qwen" && "${requested_precision}" == "fp16" ]]; then
-  echo "train-qwen uses Qwen BF16 weights; set DEDUP_TRAINING_PRECISION=bf16 or fp32/none, not fp16." >&2
+if [[ "${command_name}" =~ ^train-qwen && "${requested_precision}" == "fp16" ]]; then
+  echo "${command_name} uses Qwen BF16 weights; set DEDUP_TRAINING_PRECISION=bf16 or fp32/none, not fp16." >&2
   exit 2
 fi
 
@@ -101,6 +101,26 @@ case "${command_name}" in
       --gradient-accumulation-steps 16 \
       --default-prompt-name sku_match \
       --trust-remote-code \
+      "${precision_args[@]}" \
+      "$@"
+    ;;
+  train-qwen4-lora)
+    exec python3 -m research.dedup.training.train_cross_encoder \
+      --model-name Qwen/Qwen3-Reranker-4B \
+      --output-dir artifacts/models/dedup/qwen3_reranker_4b_lora_v1 \
+      --num-train-epochs 2 \
+      --learning-rate 1e-4 \
+      --per-device-train-batch-size 1 \
+      --per-device-eval-batch-size 1 \
+      --gradient-accumulation-steps 16 \
+      --default-prompt-name sku_match \
+      --trust-remote-code \
+      --use-peft-lora \
+      --lora-r 8 \
+      --lora-alpha 16 \
+      --lora-dropout 0.05 \
+      --lora-target-modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj \
+      --gradient-checkpointing \
       "${precision_args[@]}" \
       "$@"
     ;;

@@ -262,7 +262,10 @@ Model-specific training paths:
   listwise и асимметричный. Поэтому первый шаг для Jina — zero-shot /
   adapter-smoke на frozen split; fine-tune/adapter-tune идёт отдельным
   experimental branch только после того, как базовый loop стабилен.
-- **Qwen 4B**: только benchmark-only scorer в первом цикле, без fine-tune.
+- **Qwen 4B**: full fine-tune не запускаем на A5000, но допускаем
+  LoRA-only эксперимент: base model заморожена, обучаются adapters,
+  `gradient_checkpointing` включён, финальный adapter merge-ится перед
+  обычным CrossEncoder scoring.
 
 Каждый training run обязан сохранить:
 
