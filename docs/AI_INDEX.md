@@ -127,8 +127,8 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking + supplemental training coverage pairs, генерация `candidates_<suffix>.csv` |
 | `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_<suffix>.csv` для одного run или multi-category labeling CSV для fine-tuning reranker |
 | `notebooks/03_matching_comparison.ipynb` | сравнение baseline/reranker methods на размеченном gold-set выбранного run |
-| `notebooks/04_fusion_pack_grouping.ipynb` | выбор fusion-run, family/pack grouping и CSV `fusion_*_<suffix>.csv` |
-| `notebooks/05_evaluation_report.ipynb` | финальный research-отчёт по matching + fusion + graph quality выбранного run |
+| `notebooks/04_fusion_pack_grouping.ipynb` | post-03 fusion для одного или нескольких category-runs, family/pack grouping, graph-quality диагностика, 3D components и CSV `fusion_*_<suffix>.csv` |
+| `notebooks/05_evaluation_report.ipynb` | read-only компактный research-отчёт по уже сохранённым `binary_threshold_*` + `fusion_*` |
 | `notebooks/06_grouped_sku_demo.ipynb` | демонстрация склеенных SKU из DuckDB + `fusion_*` выбранного run |
 
 Локальные CSV/backup/model artifacts — рабочие данные, они не коммитятся и
@@ -243,13 +243,17 @@ fine-tuning outputs и report paths смотри в `docs/ARCHITECTURE_PROGRESS.
   `binary_threshold_by_volume_bucket.csv` при available sales volume.
 - `notebooks/04_fusion_pack_grouping.ipynb` читает compact outputs из `03`,
   выбирает method/strategy только по `dev`; дефолт — `threshold_weighted_cost`
-  с весом продаж, fallback — `threshold_cost_sensitive`; сохраняет
+  с весом продаж, fallback — `threshold_cost_sensitive`. Для нового
+  frozen/fine-tuning benchmark он умеет один раз читать общий
+  `artifacts/reports/fine_tuning/`, восстановить `category_run` через frozen
+  split, разложить пары по `sauces` / `coconut_oil` / `soap`, сохранить
   `fusion_components_<suffix>.csv` плюс `fusion_pair_eval_<suffix>.csv` в
-  data-папку текущего category-run.
+  data-папку каждого category-run и показать graph-quality diagnostics,
+  false/missed links и 3D component visualization.
 - `notebooks/05_evaluation_report.ipynb` читает `binary_threshold_*` и
   `fusion_*`, без старых `matching_*` / `auto_same` / `manual_review`
-  артефактов, и собирает текущий research-отчёт вместе с family/pack graph
-  diagnostics.
+  артефактов, и остаётся read-only compact report поверх уже собранного
+  downstream.
 - `notebooks/06_grouped_sku_demo.ipynb` показывает результат как витрину:
   реальные SKU из `mpstats_products` в DuckDB + текущие
   `fusion_family_id` / `fusion_pack_id`; это demo текущего research-среза,

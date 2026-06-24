@@ -68,13 +68,46 @@
 - Downstream теперь идёт через `notebooks/04_fusion_pack_grouping.ipynb`:
   notebook выбирает fusion-run только по `dev`, строит `family` и `pack`
   группы и сохраняет `fusion_components_<suffix>.csv` /
-  `fusion_pair_eval_<suffix>.csv` в data-папку текущего category-run.
-- Финальный downstream-отчёт теперь один:
-  `notebooks/05_evaluation_report.ipynb` объединяет прежнюю проверку
-  family/pack graph resolution и итоговый report по matching + fusion.
+  `fusion_pair_eval_<suffix>.csv` в data-папку category-run. Для нового
+  frozen/fine-tuning benchmark `04` запускается один раз на
+  `sauces,coconut_oil,soap`: читает общий `artifacts/reports/fine_tuning/`,
+  восстанавливает `category_run` через frozen split, строит отдельные графы
+  по категориям и показывает graph-quality диагностику плюс 3D components.
+- `notebooks/05_evaluation_report.ipynb` остаётся read-only compact report
+  поверх уже сохранённых `binary_threshold_*` и `fusion_*`.
 - Для просмотра результата на реальных строках DuckDB добавлен
   `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
   `mpstats_products` и показывает склеенные SKU-группы.
+
+## 2026-06-30 — Multi-category fusion notebook refresh
+
+### Зачем
+
+После перехода `03_matching_comparison.ipynb` на общий frozen/fine-tuning
+benchmark старый `04` всё ещё ожидал один `MY_CATEGORY_RUN` и стандартные
+per-category reports paths. Это заставляло бы запускать downstream три раза и
+не видело новый `artifacts/reports/fine_tuning/`.
+
+### Что сделано
+
+- `notebooks/04_fusion_pack_grouping.ipynb` теперь принимает
+  `MY_CATEGORY_RUNS = ["sauces", "coconut_oil", "soap"]` и может читать общий
+  `MY_REPORTS_DIR_OVERRIDE = "artifacts/reports/fine_tuning"`.
+- Если predictions CSV не содержит `category_run`, notebook восстанавливает
+  его через `MY_EVAL_DATA_PATH` и `benchmark_pair_key`.
+- Для каждой найденной категории notebook строит свои family/pack components
+  и сохраняет стандартные `fusion_components_<suffix>.csv` /
+  `fusion_pair_eval_<suffix>.csv`.
+- Основные graph-quality таблицы, false/missed link examples и примеры
+  `same family, different pack` перенесены в `04`, чтобы не открывать `05`
+  только ради диагностики после сборки графа.
+- Добавлена 3D component visualization: интерактивный Plotly-граф при
+  установленном `plotly` и matplotlib 3D fallback без новой обязательной
+  runtime-зависимости.
+
+### Проверки
+
+См. финальный ответ текущего изменения.
 
 ## 2026-06-30 — Frozen reranker benchmark and fine-tuned BGE comparison
 

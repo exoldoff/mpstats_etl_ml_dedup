@@ -1896,15 +1896,28 @@ Jina v3 удобна для эксперимента, но перед production
 python3 -m pip install -U -r requirements-research.txt
 ```
 
-После `03` запустите `04_fusion_pack_grouping.ipynb` с тем же
-`MY_CATEGORY_RUN`. Он не запускает модели заново: берёт
-`binary_threshold_summary.csv` и `binary_threshold_predictions.csv` из
-reports-папки текущего run, выбирает один fusion-run только по `dev` и строит
-два уровня групп:
+После `03` запустите `04_fusion_pack_grouping.ipynb`. Он не запускает модели
+заново: берёт `binary_threshold_summary.csv` и
+`binary_threshold_predictions.csv`, выбирает fusion-run только по `dev` и
+строит два уровня групп:
 
 - `family` — один базовый товар, даже если отличается вес или multipack;
 - `pack` — конкретная фасовка внутри family по `Вес, кг (ед.)`, `Вес, кг` и
   `multipack_count`.
+
+Для текущего frozen/fine-tuning benchmark `04` можно запускать один раз на все
+три категории. По умолчанию:
+
+- `MY_CATEGORY_RUNS = ["sauces", "coconut_oil", "soap"]`;
+- `MY_REPORTS_DIR_OVERRIDE = "artifacts/reports/fine_tuning"` — общий reports
+  folder из `03`;
+- `MY_EVAL_DATA_PATH` указывает на frozen split и нужен, если predictions CSV
+  не содержит `category_run`.
+
+Notebook сам восстановит `category_run` по `benchmark_pair_key`, разложит пары
+по категориям и сохранит отдельные `fusion_*` CSV в стандартные пути каждого
+run. Если нужно вернуться к старому per-category режиму, поставьте
+`MY_REPORTS_DIR_OVERRIDE = None`.
 
 По умолчанию `04` выбирает бизнес-взвешенный режим: сначала
 `threshold_weighted_cost`, где ошибки на товарах с большими продажами стоят
@@ -1935,6 +1948,12 @@ reports-папки текущего run, выбирает один fusion-run т
 - `MY_FUSION_EVAL_SPLIT = "test"` — смотреть честную диагностику на test.
   Можно поставить `"dev"` для просмотра калибровочного среза или `"all"` для
   просмотра всех пар вместе.
+- `MY_REQUIRE_ALL_CATEGORY_RUNS = False` — пропускать категории, которых нет в
+  текущем smoke-output из `03`. Для финального полного прогона можно поставить
+  `True`.
+- `MY_3D_CATEGORY_RUN = "auto"`, `MY_3D_GRAPH = "family"` — 3D-визуализация
+  крупнейших graph components. Если установлен `plotly`, граф интерактивный;
+  иначе используется статичный matplotlib fallback.
 
 Окружение/env не используется как скрытый override для `04`: что написано в
 `MY_*`, то и применяется.
@@ -1946,9 +1965,10 @@ reports-папки текущего run, выбирает один fusion-run т
 - `fusion_pair_eval_<suffix>.csv` — пары с флагами `true/pred_same_family` и
   `true/pred_same_pack`.
 
-`05_evaluation_report.ipynb` собирает текущий research-отчёт: качество
-разметки, сравнение methods, false-merge примеры, итог family/pack fusion и
-качество graph resolution с примерами false links / missed links.
+`04` также показывает основную graph-quality диагностику, false links / missed
+links, примеры "same family, different pack" и 3D-карту components. Поэтому
+`05_evaluation_report.ipynb` теперь можно использовать как отдельный read-only
+компактный отчёт, если нужно посмотреть summary без пересборки `fusion_*`.
 
 `06_grouped_sku_demo.ipynb` показывает результат уже как таблицу товаров:
 берёт реальные строки `mpstats_products` из `mpstats.duckdb`, накладывает

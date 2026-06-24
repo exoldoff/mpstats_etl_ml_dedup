@@ -185,8 +185,10 @@ binary benchmark с `pair_weight = 1`.
 - Research v1 делает это отдельным шагом после `03_matching_comparison.ipynb`:
   `04_fusion_pack_grouping.ipynb` выбирает `method + threshold_strategy`
   только по `dev`, затем сохраняет `fusion_components_<suffix>.csv` и
-  `fusion_pair_eval_<suffix>.csv` для downstream-отчётов выбранного
-  category-run.
+  `fusion_pair_eval_<suffix>.csv` для downstream-отчётов. Для общего
+  frozen/fine-tuning benchmark notebook может запускаться один раз на
+  `sauces,coconut_oil,soap`: он восстанавливает `category_run` из frozen
+  split и строит отдельные family/pack графы внутри каждой категории.
 - Текущий threshold benchmark не создаёт `manual_review` / triage-зону.
 
 ## 6.1 Организация кода на research-этапе (пересмотрено по запросу)
@@ -237,11 +239,12 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
   `soap`, с теми же стратами внутри каждой категории.
 - `03_matching_comparison.ipynb` — A vs B vs C vs D vs E на gold-set из 02,
   метрики — см. раздел 8.
-- `04_fusion_pack_grouping.ipynb` — выбор fusion-run по `dev`, family/pack
-  grouping и compact CSV `fusion_*`.
-- `05_evaluation_report.ipynb` — финальные сравнительные таблицы для
-  презентации жюри плюс проверка family/pack graph resolution на уровне
-  связей.
+- `04_fusion_pack_grouping.ipynb` — выбор fusion-run по `dev`, multi-category
+  family/pack grouping, compact CSV `fusion_*`, graph-quality diagnostics,
+  примеры ошибок и 3D-визуализация components.
+- `05_evaluation_report.ipynb` — read-only компактный отчёт по уже
+  сохранённым `binary_threshold_*` и `fusion_*`, если нужен отдельный summary
+  без пересборки графов.
 - `06_grouped_sku_demo.ipynb` — демонстрационная витрина: реальные SKU из
   DuckDB, на которые наложены текущие `fusion_family_id` / `fusion_pack_id`.
 
@@ -304,9 +307,10 @@ manual review, LLM-review или triage. Test нельзя использова�
 threshold или модели.
 
 ### 8.5 Качественный анализ
-Отдельно показать 5-10 примеров ошибок каждого типа в `05_evaluation_report.ipynb`
-(особенно hard negatives, смерженные неправильно) — не метрика, но
-полезно и для дебага, и для защиты проекта.
+Отдельно показать 5-10 примеров ошибок каждого типа в
+`04_fusion_pack_grouping.ipynb` или `05_evaluation_report.ipynb` (особенно
+hard negatives, смерженные неправильно) — не метрика, но полезно и для
+дебага, и для защиты проекта.
 
 ## 9. Открытые вопросы / следующие шаги (обновлено)
 - ~~Контракт `mpstats_products` vs `merge_service.py`~~ — снято с приоритета
