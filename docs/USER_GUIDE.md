@@ -1966,9 +1966,7 @@ run. Если нужно вернуться к старому per-category ре�
   `true/pred_same_pack`.
 
 `04` также показывает основную graph-quality диагностику, false links / missed
-links, примеры "same family, different pack" и 3D-карту components. Поэтому
-`05_evaluation_report.ipynb` теперь можно использовать как отдельный read-only
-компактный отчёт, если нужно посмотреть summary без пересборки `fusion_*`.
+links, примеры "same family, different pack" и 3D-карту components.
 
 `06_grouped_sku_demo.ipynb` показывает результат уже как таблицу товаров:
 берёт реальные строки `mpstats_products` из `mpstats.duckdb`, накладывает

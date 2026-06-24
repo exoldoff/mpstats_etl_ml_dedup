@@ -73,11 +73,29 @@
   `sauces,coconut_oil,soap`: читает общий `artifacts/reports/fine_tuning/`,
   восстанавливает `category_run` через frozen split, строит отдельные графы
   по категориям и показывает graph-quality диагностику плюс 3D components.
-- `notebooks/05_evaluation_report.ipynb` остаётся read-only compact report
-  поверх уже сохранённых `binary_threshold_*` и `fusion_*`.
 - Для просмотра результата на реальных строках DuckDB добавлен
   `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
   `mpstats_products` и показывает склеенные SKU-группы.
+
+## 2026-06-30 — Remove obsolete notebook 05
+
+### Зачем
+
+После переноса graph-quality таблиц, false/missed link examples и 3D
+components в `04_fusion_pack_grouping.ipynb` отдельный
+`05_evaluation_report.ipynb` стал дублирующим read-only слоем.
+
+### Что сделано
+
+- `notebooks/05_evaluation_report.ipynb` удалён из активного workflow.
+- Актуальный downstream теперь: `03_matching_comparison.ipynb` ->
+  `04_fusion_pack_grouping.ipynb` -> `06_grouped_sku_demo.ipynb`.
+- Документация обновлена так, чтобы `04` был единственным notebook для
+  fusion/grouping/report diagnostics.
+
+### Проверки
+
+См. финальный ответ текущего изменения.
 
 ## 2026-06-30 — Multi-category fusion notebook refresh
 

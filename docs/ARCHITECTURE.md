@@ -242,9 +242,6 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
 - `04_fusion_pack_grouping.ipynb` — выбор fusion-run по `dev`, multi-category
   family/pack grouping, compact CSV `fusion_*`, graph-quality diagnostics,
   примеры ошибок и 3D-визуализация components.
-- `05_evaluation_report.ipynb` — read-only компактный отчёт по уже
-  сохранённым `binary_threshold_*` и `fusion_*`, если нужен отдельный summary
-  без пересборки графов.
 - `06_grouped_sku_demo.ipynb` — демонстрационная витрина: реальные SKU из
   DuckDB, на которые наложены текущие `fusion_family_id` / `fusion_pack_id`.
 
@@ -308,9 +305,8 @@ threshold или модели.
 
 ### 8.5 Качественный анализ
 Отдельно показать 5-10 примеров ошибок каждого типа в
-`04_fusion_pack_grouping.ipynb` или `05_evaluation_report.ipynb` (особенно
-hard negatives, смерженные неправильно) — не метрика, но полезно и для
-дебага, и для защиты проекта.
+`04_fusion_pack_grouping.ipynb` (особенно hard negatives, смерженные
+неправильно) — не метрика, но полезно и для дебага, и для защиты проекта.
 
 ## 9. Открытые вопросы / следующие шаги (обновлено)
 - ~~Контракт `mpstats_products` vs `merge_service.py`~~ — снято с приоритета

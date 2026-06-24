@@ -128,7 +128,6 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_<suffix>.csv` для одного run или multi-category labeling CSV для fine-tuning reranker |
 | `notebooks/03_matching_comparison.ipynb` | сравнение baseline/reranker methods на размеченном gold-set выбранного run |
 | `notebooks/04_fusion_pack_grouping.ipynb` | post-03 fusion для одного или нескольких category-runs, family/pack grouping, graph-quality диагностика, 3D components и CSV `fusion_*_<suffix>.csv` |
-| `notebooks/05_evaluation_report.ipynb` | read-only компактный research-отчёт по уже сохранённым `binary_threshold_*` + `fusion_*` |
 | `notebooks/06_grouped_sku_demo.ipynb` | демонстрация склеенных SKU из DuckDB + `fusion_*` выбранного run |
 
 Локальные CSV/backup/model artifacts — рабочие данные, они не коммитятся и
@@ -250,10 +249,6 @@ fine-tuning outputs и report paths смотри в `docs/ARCHITECTURE_PROGRESS.
   `fusion_components_<suffix>.csv` плюс `fusion_pair_eval_<suffix>.csv` в
   data-папку каждого category-run и показать graph-quality diagnostics,
   false/missed links и 3D component visualization.
-- `notebooks/05_evaluation_report.ipynb` читает `binary_threshold_*` и
-  `fusion_*`, без старых `matching_*` / `auto_same` / `manual_review`
-  артефактов, и остаётся read-only compact report поверх уже собранного
-  downstream.
 - `notebooks/06_grouped_sku_demo.ipynb` показывает результат как витрину:
   реальные SKU из `mpstats_products` в DuckDB + текущие
   `fusion_family_id` / `fusion_pack_id`; это demo текущего research-среза,
@@ -350,7 +345,6 @@ for notebook in [
     "notebooks/02_labeling_dataset.ipynb",
     "notebooks/03_matching_comparison.ipynb",
     "notebooks/04_fusion_pack_grouping.ipynb",
-    "notebooks/05_evaluation_report.ipynb",
     "notebooks/06_grouped_sku_demo.ipynb",
 ]:
     path = Path(notebook)

@@ -295,10 +295,9 @@ near-threshold, disagreement, graph-bridge и sales-weighted risk strata.
 production это должно стать config/run selection policy с safety constraints,
 а не notebook edit.
 
-### `notebooks/05_evaluation_report.ipynb`
-
-Добавить cluster-level metrics и risk summaries. Этот notebook должен быть
-final report, а не единственный валидатор production решения.
+Graph-quality metrics и risk summaries теперь должны жить в
+`notebooks/04_fusion_pack_grouping.ipynb`, чтобы production-кандидат не
+зависел от отдельного read-only report notebook.
 
 ### `notebooks/06_grouped_sku_demo.ipynb`
 
@@ -360,4 +359,3 @@ false-merge и component-risk. Cost sorting не должен быть един�
 5. Усилить fusion selection hard gates и quarantine risky components.
 6. Только после этого проектировать production DB schema/migrations для
    identity layer.
-
