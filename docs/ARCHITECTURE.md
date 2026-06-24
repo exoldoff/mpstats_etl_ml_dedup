@@ -285,8 +285,9 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
   `weighted_recall`, `weighted_f1`, `weighted_false_merge_cost`,
   `weighted_false_split_cost`, `weighted_total_cost`.
 - Downstream fusion по умолчанию использует `threshold_weighted_cost`, чтобы
-  ошибки на SKU с большим объёмом продаж весили сильнее; если weighted-строк
-  нет, используется fallback `threshold_cost_sensitive`.
+  ошибки на SKU с большим объёмом продаж весили сильнее. Для финального
+  сравнения reranker / fine-tuned моделей weighted-строки обязательны:
+  fallback `threshold_cost_sensitive` допустим только как диагностика.
 - Breakdown по bucket объёма продаж: `zero / low / medium / high`. Cutoffs
   считаются только на dev и применяются к test без пересчёта.
 - **Асимметрия цены ошибки**: false merge (`same_base_product=0`, но

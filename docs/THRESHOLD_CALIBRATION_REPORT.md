@@ -55,8 +55,11 @@ pair_weight = log1p(pair_importance)
 ```
 
 Если объёмы продаж нельзя подтянуть надёжно, benchmark не пытается матчить по
-названию. Он использует `pair_weight = 1`, оставляет weighted-метрики пустыми
-и пишет `weight_source = unit_weight_fallback`.
+названию. Для диагностики можно разрешить fallback: тогда он использует
+`pair_weight = 1`, оставляет weighted-метрики пустыми и пишет
+`weight_source = unit_weight_fallback`. Для финального сравнения reranker /
+fine-tuned моделей fallback запрещён: запуск должен падать, пока не появятся
+`sales_volume_a/b` и строки `threshold_weighted_cost`.
 
 ## Основные артефакты
 
@@ -84,8 +87,9 @@ Bucket-и объёма продаж: `zero / low / medium / high`. Cutoffs сч�
 - `weighted_f1`, `weighted_total_cost`;
 - `weight_source`.
 
-Если weighted-метрики недоступны, обычный unweighted binary benchmark всё
-равно считается полностью.
+Если weighted-метрики недоступны, обычный unweighted binary benchmark можно
+считать только как диагностику. Финальный продуктовый вывод по моделям по нему
+не делается.
 
 ## Downstream Fusion
 
@@ -93,8 +97,8 @@ Bucket-и объёма продаж: `zero / low / medium / high`. Cutoffs сч�
 `binary_threshold_summary.csv` и `binary_threshold_predictions.csv`, выбирает
 `method + threshold_strategy` только по `dev`, а затем строит два уровня
 групп. Дефолт для downstream — `threshold_weighted_cost`, то есть минимальная
-цена ошибок с весом продаж; если weighted-строк нет, fallback —
-`threshold_cost_sensitive`.
+цена ошибок с весом продаж. Если weighted-строк нет, это диагностический
+fallback, а не финальный режим выбора модели.
 
 - `fusion_family_id` — базовый товар;
 - `fusion_pack_id` — конкретная фасовка внутри family по deterministic

@@ -480,8 +480,10 @@ exact-title дублями с cosine около `1.0`.
   - `threshold_weighted_cost`, если есть объёмы продаж.
 - Weighted-метрики строятся по объёму продаж, не по выручке:
   `pair_weight = log1p(max(sales_volume_a, sales_volume_b))`.
-  Если объём нельзя надёжно подтянуть, используется `pair_weight=1`,
-  `weight_source=unit_weight_fallback`, weighted-метрики остаются пустыми.
+  Если объём нельзя надёжно подтянуть, fallback `pair_weight=1` допустим
+  только для диагностики. Финальное сравнение reranker / fine-tuned моделей
+  должно падать до появления `sales_volume_a/b`, `threshold_max_weighted_f1`
+  и `threshold_weighted_cost`.
 - `notebooks/03_matching_comparison.ipynb` больше не пишет старые
   `matching_*` / workbook / pair-review artifacts и сохраняет только:
   - `artifacts/reports/binary_threshold_summary.csv`;
