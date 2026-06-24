@@ -1358,28 +1358,25 @@ category-run:
 - `coconut_oil` — проект `кокос_тест`, категория `Кокосовое масло`;
 - `soap` — проект `мыло_тест`, категория `Мыло`.
 
-Локальные переменные для research-сценария можно хранить в `.env` в корне
-репозитория:
+Обычные параметры research-ноутбуков теперь задаются прямо в первых
+code-ячейках через `MY_*`. В `.env` оставляйте только секреты и машинные
+служебные настройки, которые не хочется хранить в notebook:
 
 ```env
-DEDUP_CATEGORY_RUN=soap
-MPSTATS_DUCKDB_PATH=/absolute/path/to/mpstats.duckdb
 POLZA_API_KEY=...
+POLZA_BASE_URL=https://polza.ai/api/v1
+DEDUP_MODEL_CACHE_DIR=research/dedup/models
+DEDUP_MODEL_LOCAL_ONLY=0
 ```
 
 Research helpers автоматически читают `.env` при импорте `research.dedup`.
-Туда можно класть `DEDUP_*`, `MPSTATS_DUCKDB_PATH`, `POLZA_*` и другие
-переменные, которые уже использует dedup-пайплайн. Переменные, явно заданные в
-shell перед запуском, главнее значений из `.env`.
+Они по-прежнему используют `POLZA_*`, `HF_TOKEN`,
+`DEDUP_MODEL_CACHE_DIR`, `DEDUP_MODEL_LOCAL_ONLY` и настройки Telegram-бота.
+Category-run, DuckDB path, размеры выборок, FAISS/reranker-параметры и
+пороговые настройки меняйте в notebook, не в `.env`.
 
-Также run можно задать разово через переменную окружения:
-
-```bash
-DEDUP_CATEGORY_RUN=soap
-```
-
-Если переменная не задана, используется `sauces`. Для `sauces` сохранены
-старые пути `research/dedup/data/*_sauces.csv` и
+Если `MY_CATEGORY_RUN` не менять, используется `sauces`. Для `sauces`
+сохранены старые пути `research/dedup/data/*_sauces.csv` и
 `artifacts/reports/binary_threshold_*.csv`. Для новых категорий файлы
 изолированы и не перетирают sauce-артефакты:
 `research/dedup/data/coconut_oil/`, `artifacts/reports/coconut_oil/`,
@@ -1395,13 +1392,13 @@ python3 -m pip install -r requirements-research.txt
 `notebooks/01_candidate_generation.ipynb` строит большой пул пар-кандидатов.
 Основной слой — dense embeddings и FAISS top-k: FAISS отвечает за поиск
 похожих соседей, но теперь не является единственным источником обучающих пар.
-Чтобы дорогая разметка не зависела только от текущего `FAISS_TOP_K`, candidate
+Чтобы дорогая разметка не зависела только от текущего `MY_FAISS_TOP_K`, candidate
 CSV дополнительно получает supplemental пары: lexical overlap,
 same-brand/same-pack controls, cross-marketplace random и random controls.
 Затем `notebooks/02_labeling_dataset.ipynb` выбирает из этого пула CSV для
 ручной разметки: часть cross-marketplace, часть hard negatives, часть pack
 variants, часть high/medium/low similarity. По умолчанию notebook 01 берёт
-`FAISS_TOP_K=30`; для локального E5 embedding используется `query:` prefix,
+`MY_FAISS_TOP_K = 30`; для локального E5 embedding используется `query:` prefix,
 потому что товары сравниваются друг с другом как symmetric similarity, а не
 как поисковый запрос против документа.
 Score-страты в `02` по умолчанию считаются относительно текущего списка
@@ -1409,55 +1406,53 @@ FAISS-кандидатов: top 25% score идут в `high_similarity`, bottom 
 `random_easy_negative`, середина — в `medium_similarity`. Это важно, потому
 что cosine scores зависят от embedding-модели и категории. Старый режим
 абсолютных порогов можно включить через
-`DEDUP_LABELING_SCORE_STRATIFICATION=absolute`; доли quantile-режима меняются
-через `DEDUP_LABELING_HIGH_TOP_SHARE` и
-`DEDUP_LABELING_EASY_BOTTOM_SHARE`.
+`MY_LABELING_SCORE_STRATIFICATION = "absolute"`; доли quantile-режима меняются
+через `MY_LABELING_HIGH_TOP_SHARE` и `MY_LABELING_EASY_BOTTOM_SHARE`.
 Пары, где оба бренда заполнены и бренды разные, ограничены отдельным лимитом:
-по умолчанию `DEDUP_LABELING_MAX_DIFFERENT_BRAND_SHARE=0.20`, то есть не
+по умолчанию `MY_LABELING_MAX_DIFFERENT_BRAND_SHARE = 0.20`, то есть не
 больше 20% итогового CSV. Уже размеченные строки не удаляются при
 перегенерации: `02` читает существующий `LABELING_PATH`, сохраняет заполненные
 `label`-строки, пишет рядом backup `*_preserved_labels.csv` и добирает только
 незаполненный остаток.
 Для параллельной разметки можно задавать разным людям разные random-срезы
-через `DEDUP_LABELING_BATCH_ID`, например `exoldoff` и `friend`. Это меняет
+через `MY_LABELING_BATCH_ID`, например `exoldoff` и `friend`. Это меняет
 seed выборки, но оставляет воспроизводимость: один и тот же batch id даёт тот
 же случайный срез при тех же входных candidates.
 Для быстрого benchmark старый сценарий остаётся прежним: один
-`DEDUP_CATEGORY_RUN` и около 400 строк. Для датасета под fine-tuning reranker
+category-run в `MY_CATEGORY_RUNS` и около 400 строк. Для датасета под
+fine-tuning reranker
 сначала перегенерируйте `01_candidate_generation.ipynb` для каждой категории,
 чтобы `candidates_<suffix>.csv` уже содержал широкий training pool. Затем
-собирайте один CSV по всем трём категориям:
+собирайте один CSV по всем трём категориям, поменяв первую code-ячейку `02`:
 
-```bash
-DEDUP_LABELING_CATEGORY_RUNS=sauces,coconut_oil,soap \
-DEDUP_LABELING_TARGET_SIZE=3000 \
-jupyter notebook notebooks/02_labeling_dataset.ipynb
+```python
+MY_CATEGORY_RUNS = ["sauces", "coconut_oil", "soap"]
+MY_LABELING_TARGET_SIZE = 3000
+MY_LABELING_SCORE_STRATIFICATION = "quantile"
+MY_LABELING_MAX_DIFFERENT_BRAND_SHARE = 0.20
+MY_LABELING_PRESERVE_EXISTING_LABELS = True
 ```
 
-Рекомендуемый `.env`-пресет для первого fine-tuning labeling set:
+Рекомендуемый набор в первой code-ячейке `01` для первого fine-tuning
+labeling set:
 
-```env
-DEDUP_FAISS_TOP_K=30
-DEDUP_FAISS_SUBCATEGORY_BLOCKING=1
-DEDUP_FAISS_GLOBAL_SAFETY_TOP_K=5
-DEDUP_FAISS_UNKNOWN_SUBCATEGORY_TOP_K=30
-DEDUP_FAISS_MAX_CANDIDATES=1000000
-DEDUP_SUPPLEMENTAL_PAIRS=1
-DEDUP_SUPPLEMENTAL_LEXICAL_PAIRS=8000
-DEDUP_SUPPLEMENTAL_SAME_BRAND_PACK_PAIRS=6000
-DEDUP_SUPPLEMENTAL_CROSS_MARKETPLACE_RANDOM_PAIRS=3000
-DEDUP_SUPPLEMENTAL_RANDOM_PAIRS=3000
-DEDUP_LABELING_CATEGORY_RUNS=sauces,coconut_oil,soap
-DEDUP_LABELING_TARGET_SIZE=3000
-DEDUP_LABELING_SCORE_STRATIFICATION=quantile
-DEDUP_LABELING_MAX_DIFFERENT_BRAND_SHARE=0.20
-DEDUP_LABELING_PRESERVE_EXISTING_LABELS=1
+```python
+MY_FAISS_TOP_K = 30
+MY_FAISS_SUBCATEGORY_BLOCKING = True
+MY_FAISS_GLOBAL_SAFETY_TOP_K = 5
+MY_FAISS_UNKNOWN_SUBCATEGORY_TOP_K = 30
+MY_FAISS_MAX_CANDIDATES = 1000000
+MY_SUPPLEMENTAL_PAIRS_ENABLED = True
+MY_SUPPLEMENTAL_LEXICAL_PAIRS = 8000
+MY_SUPPLEMENTAL_SAME_BRAND_PACK_PAIRS = 6000
+MY_SUPPLEMENTAL_CROSS_MARKETPLACE_RANDOM_PAIRS = 3000
+MY_SUPPLEMENTAL_RANDOM_PAIRS = 3000
 ```
 
 При таком запуске notebook делит размер примерно поровну между категориями
 и добавляет в CSV колонки `category_run`, `category_name`, `project_name`.
 Если нужно оставить больше FAISS-соседей вместе с supplemental парами,
-перед запуском `01` можно увеличить `DEDUP_FAISS_MAX_CANDIDATES`, например до
+перед запуском `01` можно увеличить `MY_FAISS_MAX_CANDIDATES`, например до
 `120000`.
 Если в срезе есть заполненная колонка `Подкатегория`, FAISS по умолчанию
 ищет основной top-k внутри одной подкатегории. Это сокращает пул кандидатов
@@ -1468,10 +1463,10 @@ DEDUP_LABELING_PRESERVE_EXISTING_LABELS=1
 FAISS-поиск без ограничения по подкатегории.
 Для защиты от ошибок классификации остаётся маленький full-global safety-net,
 а строки с пустой `Подкатегория` тоже ищут соседей по всему срезу. Настройки:
-`DEDUP_FAISS_SUBCATEGORY_BLOCKING=0` отключает режим,
-`DEDUP_FAISS_GLOBAL_SAFETY_TOP_K` задаёт размер safety-net,
-`DEDUP_FAISS_UNKNOWN_SUBCATEGORY_TOP_K` задаёт top-k для строк с пустой
-подкатегорией; если переменная не задана, используется тот же `FAISS_TOP_K=30`.
+`MY_FAISS_SUBCATEGORY_BLOCKING = False` отключает режим,
+`MY_FAISS_GLOBAL_SAFETY_TOP_K` задаёт размер safety-net,
+`MY_FAISS_UNKNOWN_SUBCATEGORY_TOP_K` задаёт top-k для строк с пустой
+подкатегорией.
 Перед расчётом embeddings строки с одинаковым title и одинаковым `Бренд`
 автоматически схлопываются в один research-record. Пустой `Бренд` считается
 отдельным значением, поэтому одинаковые безбрендовые SKU тоже схлопываются.
@@ -1479,15 +1474,11 @@ FAISS-поиск без ограничения по подкатегории.
 остаются в метаданных `source_raw_record_ids` / `source_skus`.
 После FAISS-блока notebook показывает несколько anchor-SKU и их ближайших
 соседей из текущего shortlist. Количество групп, размер группы и режим выбора
-можно менять через `DEDUP_NEIGHBOR_GROUP_COUNT`,
-`DEDUP_NEIGHBOR_GROUP_SIZE` и `DEDUP_NEIGHBOR_GROUP_SAMPLE_MODE`.
+можно менять через `MY_NEIGHBOR_GROUP_COUNT`,
+`MY_NEIGHBOR_GROUP_SIZE` и `MY_NEIGHBOR_GROUP_SAMPLE_MODE`.
 
-Для запуска новой категории достаточно поменять `.env` и открыть notebook.
-Если нужен разовый override без изменения `.env`, запускайте так:
-
-```bash
-DEDUP_CATEGORY_RUN=soap jupyter notebook notebooks/00_eda.ipynb
-```
+Для запуска новой категории поменяйте `MY_CATEGORY_RUN` в `00`, `01`, `03`,
+`04`, `05`, `06`; в `02` поменяйте `MY_CATEGORY_RUNS`.
 
 Все research-ноутбуки фильтруют DuckDB не только по `Категория`, но и по
 `__project_name`, чтобы `Мыло` из проекта `мыло_тест` не смешивалось с другими
@@ -1759,10 +1750,11 @@ research/dedup/data/training/dedup_pairs_final_pair_stratified_split.csv
 ```
 
 Это all-pairs benchmark на 2465 размеченных пар. Если нужен strict no-leak
-split, который использовался для обучения текущей BGE, переопределите путь:
+split, который использовался для обучения текущей BGE, поменяйте путь в
+первой code-ячейке:
 
-```bash
-DEDUP_EVAL_DATA_PATH=research/dedup/data/training/dedup_pairs_final_split.csv
+```python
+MY_EVAL_DATA_PATH = "research/dedup/data/training/dedup_pairs_final_split.csv"
 ```
 
 Notebook сохраняет готовую колонку `split`: `train` можно скорить для
@@ -1791,10 +1783,10 @@ Notebook сравнивает текущие методы:
 reranker-модели из общего benchmark.
 Cross-encoder — более внимательная проверка пары, но первый запуск может
 скачивать модель из Hugging Face. Если нужно временно пропустить этот блок,
-запустите notebook с `DEDUP_RUN_CROSS_ENCODER=0`.
+поставьте в первой code-ячейке `MY_RUN_CROSS_ENCODER = False`.
 
 После прогона `03` сохраняет compact-отчёты в `artifacts/reports/fine_tuning/`,
-если `DEDUP_REPORTS_DIR` не переопределён.
+если `MY_REPORTS_DIR` не переопределён.
 
 - `binary_threshold_summary.csv` — одна строка на
   `method + split + threshold_strategy`;
@@ -1827,9 +1819,8 @@ matching-моделей на одном frozen score scope:
 линиями выбранных thresholds и bucket-разбор по объёму продаж, если weighted
 метрики доступны.
 
-Запуск zero-shot rerankers обычный: откройте notebook, найдите ячейку
-`Блок кода 16. Настройки zero-shot reranker benchmark` и поменяйте верхний блок
-`НАСТРОЙКИ ПОЛЬЗОВАТЕЛЯ`.
+Запуск zero-shot rerankers обычный: откройте notebook и поменяйте первую
+code-ячейку с `MY_*` настройками.
 
 Главные настройки:
 
@@ -1841,11 +1832,10 @@ MY_RERANKER_MODELS = [
     # "cross-encoder/ms-marco-MiniLM-L6-v2",
 ]
 MY_RERANKER_MAX_PAIRS = 0  # весь выбранный frozen score scope
-MY_CUSTOM_RERANKER_BACKEND = CROSS_ENCODER_BACKEND
+MY_CUSTOM_RERANKER_BACKEND = "cross_encoder"
 ```
 
-Fine-tuned модели настраиваются в следующем блоке `Блок кода 18.
-Fine-tuned модели`:
+Fine-tuned модели настраиваются там же, в первой code-ячейке:
 
 ```python
 MY_FINE_TUNED_MODELS = [
@@ -1863,12 +1853,12 @@ MY_FINE_TUNED_MODELS = [
 Если score уже посчитан training script-ом, вместо `model_path` укажите
 `score_path` и `score_column`: notebook подхватит CSV без повторного inference.
 
-Cost-параметры можно менять через env:
+Cost-параметры и weighted-join тоже задаются в первой code-ячейке:
 
-```bash
-DEDUP_FP_COST=5
-DEDUP_FN_COST=1
-DEDUP_ENABLE_SALES_VOLUME_JOIN=1
+```python
+MY_FP_COST = 5
+MY_FN_COST = 1
+MY_ENABLE_SALES_VOLUME_JOIN = True
 ```
 
 Модели можно писать короткими alias-ами из registry (`bge_m3`, `qwen3_4b`,
@@ -1883,9 +1873,9 @@ DEDUP_ENABLE_SALES_VOLUME_JOIN=1
 `MY_RERANKER_MAX_PAIRS = 0`.
 
 Если вписываете свой model id, которого ещё нет в registry, оставьте
-`MY_CUSTOM_RERANKER_BACKEND = CROSS_ENCODER_BACKEND` для обычных
+`MY_CUSTOM_RERANKER_BACKEND = "cross_encoder"` для обычных
 `sentence_transformers.CrossEncoder` моделей. Для Jina-like моделей с
-методом `.rerank` используйте `TRANSFORMERS_AUTO_MODEL_BACKEND`.
+методом `.rerank` используйте `"transformers_auto_model"`.
 
 Можно запускать только одну модель:
 
@@ -1907,7 +1897,7 @@ python3 -m pip install -U -r requirements-research.txt
 ```
 
 После `03` запустите `04_fusion_pack_grouping.ipynb` с тем же
-`DEDUP_CATEGORY_RUN`. Он не запускает модели заново: берёт
+`MY_CATEGORY_RUN`. Он не запускает модели заново: берёт
 `binary_threshold_summary.csv` и `binary_threshold_predictions.csv` из
 reports-папки текущего run, выбирает один fusion-run только по `dev` и строит
 два уровня групп:
