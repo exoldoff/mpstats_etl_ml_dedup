@@ -8,13 +8,30 @@
 
 1. `AGENTS.md` — правила работы, коммиты, проверки, ограничения.
 2. `docs/AI_INDEX.md` — этот индекс.
-3. `docs/ARCHITECTURE.md` — архитектурный контекст и research-направление,
+3. `docs/AGENT_NAVIGATION.md` — операционный навигатор для нетривиальных
+   задач, документации и выбора между треками.
+4. `docs/ARCHITECTURE.md` — архитектурный контекст и research-направление,
    особенно для задач по SKU deduplication.
-4. `docs/ARCHITECTURE_PROGRESS.md` — что уже сделано на текущем research-этапе.
-5. `README.md` — только если нужен человеческий quick start или общая картина.
-6. Релевантные файлы по задаче из разделов ниже.
+5. `docs/ARCHITECTURE_PROGRESS.md` — что уже сделано на текущем research-этапе.
+6. `README.md` — только если нужен человеческий quick start или общая картина.
+7. Релевантные файлы по задаче из разделов ниже.
 
 Не сканируй весь проект без причины: сначала определи трек задачи.
+
+## Система навигации для агентов
+
+- `AGENTS.md` задаёт обязательные правила: границы, коммиты, проверки и
+  финальный формат.
+- `docs/AI_INDEX.md` остаётся коротким роутером по проекту.
+- `docs/AGENT_NAVIGATION.md` описывает рабочий алгоритм: как выбрать маршрут,
+  какие источники читать, какие проверки запускать и как не смешивать
+  research, production web-app и docs-only задачи.
+- `docs/ARCHITECTURE.md` фиксирует стабильную research-методологию, а
+  `docs/ARCHITECTURE_PROGRESS.md` хранит mutable статус.
+
+Если задача выглядит как "разобраться в проекте", "обновить документацию",
+"куда смотреть" или может затронуть больше одного трека, сначала используй
+`docs/AGENT_NAVIGATION.md`, затем читай только выбранные источники.
 
 ## Два рабочих трека
 
@@ -32,6 +49,7 @@
 | --- | --- | --- |
 | `AGENTS.md` | источник правил | всегда перед работой |
 | `docs/AI_INDEX.md` | индекс для агентов | всегда после `AGENTS.md` |
+| `docs/AGENT_NAVIGATION.md` | навигационная система для агентов | docs/onboarding задачи, выбор между треками, нетривиальные изменения |
 | `docs/ARCHITECTURE.md` | источник research-архитектуры | задачи по dedup, matching, evaluation, notebooks, ML-методологии |
 | `docs/ARCHITECTURE_PROGRESS.md` | журнал research-этапов | понять, что уже сделано, какие CSV/ноутбуки/проверки актуальны |
 | `docs/THRESHOLD_CALIBRATION_REPORT.md` | критерии SKU matching benchmark | cost-sensitive пороги, manual review, почему macro-F1 не главный критерий |
@@ -113,14 +131,11 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `notebooks/05_evaluation_report.ipynb` | финальный research-отчёт по matching + fusion + graph quality выбранного run |
 | `notebooks/06_grouped_sku_demo.ipynb` | демонстрация склеенных SKU из DuckDB + `fusion_*` выбранного run |
 
-Текущие локальные CSV после последнего research-этапа:
-
-- `research/dedup/data/candidates_sauces.csv` — 60 000 пар из
-  `faiss_embedding_topk`, 25 093 cross-marketplace.
-- `research/dedup/data/labeling_sauces.csv` — 400 пар из
-  `faiss_embedding_topk`, 216 cross-marketplace.
-
-Эти CSV — рабочие данные, они не коммитятся.
+Локальные CSV/backup/model artifacts — рабочие данные, они не коммитятся и
+могут отличаться между машинами. Текущий research-state, frozen split,
+fine-tuning outputs и report paths смотри в `docs/ARCHITECTURE_PROGRESS.md`
+и узких `docs/DEDUP_*.md`; если пользователь просит выводы по CSV/DB,
+сначала инспектируй конкретные указанные artifacts.
 
 Для новых category-runs пути изолированы:
 
@@ -392,8 +407,10 @@ python3 -m pytest tests/test_web_api.py
 - Browser/e2e-регрессий frontend.
 - Полной настройки порогов качества данных через web UI.
 - Полной уборки исторических локальных DB/CSV-артефактов из tracked-части.
-- Размеченного gold-set для `notebooks/03_matching_comparison.ipynb`.
-- Реализаций research engines C/D/E, clustering notebook и финального отчёта.
+- Финального выбора dedup-технологии и production-интеграции после research
+  benchmark.
+- Дополнительных hard-negative/quality проходов по fine-tuned reranker перед
+  переносом в production.
 
 ## Риски
 

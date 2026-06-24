@@ -42,6 +42,10 @@ MPStats cookie хранится только локально. Локальна�
 
 ## Документация
 
+- `docs/AI_INDEX.md` — быстрый индекс проекта для агентов и разработки.
+- `docs/AGENT_NAVIGATION.md` — система навигации по трекам проекта для агентов.
+- `docs/ARCHITECTURE.md` — архитектура research-направления SKU deduplication.
+- `docs/ARCHITECTURE_PROGRESS.md` — текущий журнал research-этапов.
 - `docs/USER_GUIDE.md` — подробная пользовательская инструкция.
 - `docs/THRESHOLD_CALIBRATION_REPORT.md` — как читать cost-sensitive benchmark для SKU matching.
 - `filter.md` — справочник синтаксиса фильтров MPStats.
