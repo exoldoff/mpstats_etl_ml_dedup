@@ -1995,6 +1995,12 @@ links, примеры "same family, different pack" и 3D-карту components.
 соседей через FAISS, пересчитывает пары cross-encoder и собирает группы.
 Результат показывается как дерево: Level 1 — каноничный SKU с агрегатами
 продаж/выручки всей группы, Level 2 — реальные SKU, входящие в эту группу.
+По умолчанию cross-encoder в demo — `ft_bge_reranker_v2_m3`: это fine-tuned
+BGE из server backup, поэтому его путь задаётся в первой ячейке в
+`MY_FINE_TUNED_CROSS_ENCODER_MODELS`, а не в общем `model_registry`. Если
+backup лежит в другом месте, поменяйте только `model_path`; для временного
+zero-shot запуска можно поставить `MY_CROSS_ENCODER_MODEL` равным
+`"cross_encoder_mmarco"`.
 При чтении старого куба notebook применяет тот же sales-фильтр: нули и строки
 ниже общего минимума `15` продаж не попадают в demo-срез. Дополнительно
 сохраняет дерево в reports-папку текущего run.

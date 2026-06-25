@@ -81,7 +81,33 @@
   `notebooks/05_grouped_sku_demo.ipynb`: он сам берёт маленький срез похожих
   SKU из `mpstats_products`, прогоняет bi-encoder embeddings + FAISS +
   cross-encoder, собирает группы и показывает дерево `каноничный SKU ->
-  входящие SKU` с агрегатами куба.
+  входящие SKU` с агрегатами куба. Demo default использует локальный
+  fine-tuned cross-encoder `ft_bge_reranker_v2_m3` через отдельный
+  notebook-config, потому что этот метод не является alias-ом общего
+  `model_registry`.
+
+## 2026-06-30 — Fine-tuned cross-encoder alias in demo notebook
+
+### Зачем
+
+`05_grouped_sku_demo.ipynb` переключили на `MY_CROSS_ENCODER_MODEL =
+"ft_bge_reranker_v2_m3"`, но это имя является method id из benchmark, а не
+alias в `research/dedup/model_registry.py`. Из-за этого scoring cell падал с
+`KeyError` до запуска fine-tuned модели.
+
+### Что сделано
+
+- В первой code-cell notebook добавлен `MY_FINE_TUNED_CROSS_ENCODER_MODELS`
+  с локальным `model_path`, `hf_model_id`, `activation="sigmoid"` и
+  false-merge-averse threshold для `ft_bge_reranker_v2_m3`.
+- Cross-encoder scoring cell теперь сначала ищет модель в этом notebook-level
+  config, а только потом обращается к общему `model_registry`.
+- Для custom registry/HF id scoring cell передаёт backend `cross_encoder`,
+  поэтому unknown custom id больше не ломается на `KeyError`.
+
+### Проверки
+
+См. финальный ответ текущего изменения.
 
 ## 2026-06-30 — Dedup demo notebook as active notebook 05
 
