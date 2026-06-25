@@ -24,6 +24,10 @@ class WeightParserServiceTest(unittest.TestCase):
         self.assertEqual(extract_total_weight_kg_from_name("Напиток 2 по 1,5 л"), 3.0)
         self.assertEqual(extract_weight_kg_from_name("Товар 10 г * 100 шт"), 0.01)
         self.assertEqual(extract_total_weight_kg_from_name("Товар 10 г * 100 шт"), 1.0)
+        self.assertEqual(extract_weight_kg_from_name("Roi Thai 600 мл, комплект: 16 упаковок по 600 г"), 0.6)
+        self.assertEqual(extract_total_weight_kg_from_name("Roi Thai 600 мл, комплект: 16 упаковок по 600 г"), 9.6)
+        self.assertEqual(extract_weight_kg_from_name("Roi Thai, комплект: 7 упаковок по 1 л"), 1.0)
+        self.assertEqual(extract_total_weight_kg_from_name("Roi Thai, комплект: 7 упаковок по 1 л"), 7.0)
 
     def test_sanitize_weight_fixes_big_liters(self) -> None:
         fixed, is_anomaly, reason = sanitize_weight_kg("Средство 174л", 174.0, 40.0)
