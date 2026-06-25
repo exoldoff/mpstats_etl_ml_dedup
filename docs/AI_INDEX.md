@@ -253,11 +253,9 @@ fine-tuning outputs и report paths смотри в `docs/ARCHITECTURE_PROGRESS.
   дедупликатора: берёт небольшой срез похожих SKU из `mpstats_products`,
   строит bi-encoder embeddings, ищет соседей через FAISS, rerank-ит пары
   cross-encoder и показывает дерево `каноничный SKU -> входящие SKU` с
-  агрегатами куба. Это demo текущего research-подхода, а не production
-  identity mapping всего куба.
-  Следующий ML-шаг — улучшать scorer/rerank/fusion на hard negatives без
-  manual review / LLM-review в текущем benchmark-этапе, не переносить код в
-  production pipeline.
+  агрегатами куба. Production v1 перенесён в основной pipeline отдельным
+  identity layer, а notebook остаётся demo/research-песочницей для будущих
+  проверок и hard-negative улучшений.
 
 ## Production Web-App: карта проекта
 
@@ -266,6 +264,7 @@ fine-tuning outputs и report paths смотри в `docs/ARCHITECTURE_PROGRESS.
 | Web-app backend | `mpstats_app/` | API, настройки, DuckDB repository, сервисы локального приложения |
 | Web frontend | `web/` | React UI локальной web-app |
 | Pipeline services | `pipeline/services/` | шаги 1-6 основного workflow |
+| Production ML-дедуп | `pipeline/services/dedup/`, `pipeline/services/dedup/model_profile.json`, `mpstats_app/api/dedup.py`, `pipeline/migrations/012_dedup_identity.sql`, `tests/test_dedup_service.py`, `tests/test_dedup_api.py` | запуск dedup после куба, FAISS K=30, fine-tuned BGE scoring, identity tables |
 | Pipeline repositories | `pipeline/repositories/` | CSV/JSON/DuckDB data layer |
 | DuckDB migrations | `pipeline/migrations/` | schema changes |
 | Классификатор | `classifiers/rules.csv`, `classifiers/engine.py`, `mpstats_app/services/classifier_rules_service.py` | правила web-редактора и движок классификации |
@@ -279,8 +278,9 @@ fine-tuning outputs и report paths смотри в `docs/ARCHITECTURE_PROGRESS.
 MPStats API
   -> data/projects/{project}/raw
   -> data/projects/{project}/processed
-  -> data/projects/{project}/merged
-  -> data/projects/{project}/exports
+  -> mpstats.duckdb / mpstats_products
+  -> optional dedup_* identity tables
+  -> data/projects/{project}/reports|exports
 Справочник категорий MP STATS.csv
   -> план задач marketplace + category + year + month
   -> mpstats.duckdb / cube_registry / mpstats_products
@@ -397,6 +397,9 @@ python3 -m pytest tests/test_web_api.py
 - Data layer и DuckDB-миграции для production workflow.
 - Web UI для справочника категорий и правил классификатора.
 - MVP проверок качества данных.
+- Production ML-дедуп v1 для `Соус/Соусы`, `Кокосовое масло`, `Мыло`:
+  FAISS `K=30`, fine-tuned BGE `ft_bge_reranker_v2_m3`,
+  `threshold_weighted_cost=0.872321`, identity tables без мутации фактов.
 - Research-песочница `research/dedup/` и notebooks для SKU deduplication.
 - Regression tests для web API, pipeline services, parser/quality и
   research/dedup.
@@ -407,10 +410,8 @@ python3 -m pytest tests/test_web_api.py
 - Browser/e2e-регрессий frontend.
 - Полной настройки порогов качества данных через web UI.
 - Полной уборки исторических локальных DB/CSV-артефактов из tracked-части.
-- Финального выбора dedup-технологии и production-интеграции после research
-  benchmark.
 - Дополнительных hard-negative/quality проходов по fine-tuned reranker перед
-  переносом в production.
+  расширением production ML-дедупа на новые категории.
 
 ## Риски
 

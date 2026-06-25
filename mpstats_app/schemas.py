@@ -186,6 +186,19 @@ class PipelineActionPayload(BaseModel):
     wait: bool = False
 
 
+class DedupSettingsPayload(BaseModel):
+    model_path: str = ""
+    hf_model_id: str = "exoldoff/bge-reranker-v2-m3-cross-encoder-marketplaces-rus"
+    embedding_model_name: str = "intfloat/multilingual-e5-small"
+    embedding_batch_size: int = Field(default=64, ge=1, le=512)
+    cross_encoder_batch_size: int = Field(default=32, ge=1, le=256)
+
+
+class DedupRunPayload(ProjectPayload):
+    category_keys: list[str]
+    wait: bool = False
+
+
 class MonthlySyncPayload(ProjectPayload):
     settings: PipelineSettingsPayload | None = None
     start_immediately: bool = True

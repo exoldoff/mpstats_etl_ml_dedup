@@ -2189,8 +2189,22 @@ a.ghost-button {
   gap: 12px;
 }
 
+.dedup-summary-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 10px;
+}
+
+.dedup-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(260px, 0.8fr);
+  gap: 12px;
+}
+
 .export-settings-main,
+.dedup-settings-main,
 .export-selector,
+.dedup-runs-panel,
 .export-artifacts,
 .export-filter-panel,
 .export-breakdown {
@@ -2201,6 +2215,24 @@ a.ghost-button {
   border: 1px solid #d8e1e4;
   border-radius: 8px;
   background: #fbfcfc;
+}
+
+.dedup-panel,
+.dedup-runs-panel {
+  gap: 14px;
+}
+
+.dedup-profile-summary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dedup-category-selector .selector-list {
+  max-height: 314px;
+}
+
+.dedup-artifact {
+  margin-top: 0;
 }
 
 .export-mode-row,
@@ -2857,6 +2889,7 @@ th {
 
 .badge.saved_to_db,
 .badge.succeeded,
+.badge.success,
 .badge.processed,
 .badge.classified,
 .badge.export,
@@ -3337,6 +3370,7 @@ th {
   .editor-layout,
   .manual-override-layout,
   .export-settings,
+  .dedup-settings,
   .export-selectors,
   .reports-overview,
   .reports-settings,

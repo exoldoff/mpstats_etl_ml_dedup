@@ -13,6 +13,10 @@
 ## Текущий статус
 
 - Scope: category-runs `sauces`, `coconut_oil`, `soap`, research-only.
+- Production v1 для этих категорий перенесён в основной web pipeline как
+  identity layer: FAISS `K=30`, fine-tuned BGE
+  `ft_bge_reranker_v2_m3`, `threshold_weighted_cost=0.872321`, без fallback
+  на rule-based/zero-shot.
 - Главная ветка работ: кандидаты -> ручная разметка gold-set -> сравнение
   matching engines -> кластеризация.
 - `sauces` сохраняет legacy-пути `research/dedup/data/*_sauces.csv` и
@@ -85,6 +89,30 @@
   fine-tuned cross-encoder `ft_bge_reranker_v2_m3` через отдельный
   notebook-config, потому что этот метод не является alias-ом общего
   `model_registry`.
+
+## 2026-06-30 — Production ML-dedup identity layer
+
+### Зачем
+
+Research v1 выбран для переноса в основной MPStats workflow: dedup должен
+запускаться из web-app после сохранения куба в DuckDB, а не из notebook.
+
+### Что сделано
+
+- Добавлен production service `pipeline/services/dedup/`: node catalog из
+  `mpstats_products`, FAISS retrieval `K=30`, scoring только fine-tuned BGE
+  cross-encoder `ft_bge_reranker_v2_m3`, binary decision через
+  `threshold_weighted_cost` с `threshold_same=0.872321`.
+- Результат хранится в identity tables `dedup_runs`, `dedup_sku_nodes`,
+  `dedup_sku_edges`, `dedup_sku_groups`; `mpstats_products` не схлопывается.
+- Web-app получила вкладку `Данные` -> `ML-дедуп`, API `/api/dedup/*` и
+  export/report join к latest successful dedup-run.
+- Fine-tuned модель обязательна: если веса недоступны, production run падает
+  ошибкой и не использует rule-based/zero-shot fallback.
+
+### Проверки
+
+См. финальный ответ текущего изменения.
 
 ## 2026-06-30 — Fine-tuned cross-encoder alias in demo notebook
 

@@ -1,0 +1,9 @@
+{
+  "method": "ft_bge_reranker_v2_m3",
+  "hf_model_id": "exoldoff/bge-reranker-v2-m3-cross-encoder-marketplaces-rus",
+  "embedding_model_name": "intfloat/multilingual-e5-small",
+  "activation": "sigmoid",
+  "threshold_strategy": "threshold_weighted_cost",
+  "threshold_same": 0.872321,
+  "faiss_top_k": 30
+}

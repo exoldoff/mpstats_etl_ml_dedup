@@ -3,6 +3,7 @@ import {
   Archive,
   BarChart3,
   BookOpen,
+  Brain,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -44,6 +45,9 @@ import {
   ClassifierCondition,
   ClassifierRule,
   CubeItem,
+  DedupCategory,
+  DedupRun,
+  DedupSettings,
   ExportArtifact,
   ExportBuildJob,
   ExportColumnFilter,
@@ -74,8 +78,8 @@ import {
 } from "./api";
 
 type Mode = "historical_backfill" | "monthly_sync";
-type Tab = "projects" | "categories" | "catalog" | "plan" | "files" | "cube" | "reports" | "export" | "classifier" | "quality";
-type DataTab = "files" | "cube" | "reports" | "export" | "quality";
+type Tab = "projects" | "categories" | "catalog" | "plan" | "files" | "cube" | "reports" | "export" | "classifier" | "quality" | "dedup";
+type DataTab = "files" | "cube" | "reports" | "export" | "quality" | "dedup";
 type FileKindFilter = "all" | "raw" | "processed" | "classified" | "export" | "other";
 
 const defaultPipelineSettings: PipelineSettings = {
@@ -87,6 +91,19 @@ const defaultPipelineSettings: PipelineSettings = {
   timeout_seconds: 300,
   pause_between_requests: 2,
   max_weight_kg: 40
+};
+
+const defaultDedupSettings: DedupSettings = {
+  model_method: "ft_bge_reranker_v2_m3",
+  model_path: "",
+  hf_model_id: "exoldoff/bge-reranker-v2-m3-cross-encoder-marketplaces-rus",
+  embedding_model_name: "intfloat/multilingual-e5-small",
+  activation: "sigmoid",
+  threshold_strategy: "threshold_weighted_cost",
+  threshold_same: 0.872321,
+  faiss_top_k: 30,
+  embedding_batch_size: 64,
+  cross_encoder_batch_size: 32
 };
 
 const smartPlanFilters: Array<{ value: SmartPlanStatus | "all"; label: string }> = [
@@ -209,6 +226,7 @@ const statusLabels: Record<string, string> = {
   stopping: "остановка...",
   stopped: "остановлено",
   succeeded: "готово",
+  success: "готово",
   completed_with_errors: "с ошибками",
   ready: "готово",
   missing: "нет файлов",
@@ -463,7 +481,7 @@ function runTypeLabel(type?: string) {
 }
 
 function isDataTab(tab: Tab): tab is DataTab {
-  return tab === "files" || tab === "cube" || tab === "reports" || tab === "export" || tab === "quality";
+  return tab === "files" || tab === "cube" || tab === "reports" || tab === "export" || tab === "quality" || tab === "dedup";
 }
 
 export function App() {
@@ -487,6 +505,12 @@ export function App() {
   const [selectedCatalogId, setSelectedCatalogId] = useState<string | null>(null);
   const [savedCatalogSnapshot, setSavedCatalogSnapshot] = useState<string | null>(null);
   const [pipelineSettings, setPipelineSettings] = useState<PipelineSettings>(defaultPipelineSettings);
+  const [dedupSettings, setDedupSettings] = useState<DedupSettings>(defaultDedupSettings);
+  const [dedupCategories, setDedupCategories] = useState<DedupCategory[]>([]);
+  const [selectedDedupCategoryKeys, setSelectedDedupCategoryKeys] = useState<Set<string>>(new Set());
+  const [dedupRuns, setDedupRuns] = useState<DedupRun[]>([]);
+  const [dedupArtifactRows, setDedupArtifactRows] = useState<Record<string, unknown>[]>([]);
+  const [dedupArtifactTitle, setDedupArtifactTitle] = useState("");
   const [classifierRules, setClassifierRules] = useState<ClassifierRule[]>([]);
   const [rulesPath, setRulesPath] = useState("");
   const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
@@ -642,6 +666,11 @@ export function App() {
   }, [tab]);
 
   useEffect(() => {
+    if (tab !== "dedup") return;
+    void loadDedupWorkspace();
+  }, [tab, projectName]);
+
+  useEffect(() => {
     if (tab !== "projects") return;
     void loadProjects();
   }, [tab]);
@@ -649,9 +678,10 @@ export function App() {
   async function initialLoad() {
     setError(null);
     const loadErrors: string[] = [];
-    const [settingsResult, pipelineResult, categoryResult, rulesResult, manualOverridesResult, projectsResult] = await Promise.allSettled([
+    const [settingsResult, pipelineResult, dedupSettingsResult, categoryResult, rulesResult, manualOverridesResult, projectsResult] = await Promise.allSettled([
       api.getWorkflowSettings(),
       api.getPipelineSettings(),
+      api.getDedupSettings(),
       api.listCategories(),
       api.getClassifierRules(),
       api.getManualOverrides(),
@@ -680,6 +710,12 @@ export function App() {
       setPipelineSettings({ ...defaultPipelineSettings, ...pipelineResult.value });
     } else {
       addLoadError(loadErrors, "Настройки pipeline", pipelineResult.reason);
+    }
+
+    if (dedupSettingsResult.status === "fulfilled") {
+      setDedupSettings({ ...defaultDedupSettings, ...dedupSettingsResult.value });
+    } else {
+      addLoadError(loadErrors, "Настройки ML-дедупа", dedupSettingsResult.reason);
     }
 
     if (categoryResult.status === "fulfilled") {
@@ -791,6 +827,11 @@ export function App() {
     setProducts(null);
     setReportPreview(null);
     setReportArtifacts([]);
+    setDedupCategories([]);
+    setSelectedDedupCategoryKeys(new Set());
+    setDedupRuns([]);
+    setDedupArtifactRows([]);
+    setDedupArtifactTitle("");
     await api.saveWorkflowSettings(workflowSettingsPayload(targetProjectName));
     const [runResponse, cubeResponse, fileResponse] = await Promise.all([
       api.listRuns(targetProjectName),
@@ -1579,6 +1620,64 @@ export function App() {
     setPipelineSettings((prev) => ({ ...prev, [key]: value }));
   }
 
+  function setDedupValue<K extends keyof DedupSettings>(key: K, value: DedupSettings[K]) {
+    setDedupSettings((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function toggleDedupCategory(categoryKey: string) {
+    setSelectedDedupCategoryKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(categoryKey)) next.delete(categoryKey);
+      else next.add(categoryKey);
+      return next;
+    });
+  }
+
+  async function loadDedupWorkspace() {
+    const [settingsResponse, eligibleResponse, runsResponse] = await Promise.all([
+      api.getDedupSettings(),
+      api.getDedupEligibleCategories(projectName),
+      api.listDedupRuns(projectName)
+    ]);
+    setDedupSettings({ ...defaultDedupSettings, ...settingsResponse });
+    setDedupCategories(eligibleResponse.categories);
+    setDedupRuns(runsResponse.runs);
+    setSelectedDedupCategoryKeys((prev) => {
+      const available = new Set(eligibleResponse.categories.map((item) => item.category_key));
+      const kept = new Set([...prev].filter((key) => available.has(key)));
+      if (kept.size) return kept;
+      return new Set(eligibleResponse.categories.map((item) => item.category_key));
+    });
+    return { categories: eligibleResponse.categories.length, runs: runsResponse.runs.length };
+  }
+
+  async function saveDedupSettings() {
+    const saved = await api.saveDedupSettings(dedupSettings);
+    setDedupSettings({ ...defaultDedupSettings, ...saved });
+    return saved;
+  }
+
+  async function startDedupRuns() {
+    const categoryKeys = [...selectedDedupCategoryKeys];
+    if (!categoryKeys.length) throw new Error("Выбери хотя бы одну категорию.");
+    await api.saveDedupSettings(dedupSettings);
+    const response = await api.startDedupRuns({ project_name: projectName, category_keys: categoryKeys });
+    setDedupRuns((prev) => {
+      const existing = new Map(prev.map((item) => [item.run_id, item]));
+      for (const run of response.runs) existing.set(run.run_id, run);
+      return [...existing.values()].sort((left, right) => String(right.created_at ?? "").localeCompare(String(left.created_at ?? "")));
+    });
+    window.setTimeout(() => void loadDedupWorkspace().catch((exc) => setError(`ML-дедуп: ${errorText(exc)}`)), 1500);
+    return response;
+  }
+
+  async function loadDedupArtifact(runId: string, artifact: "groups" | "edges") {
+    const response = await api.exportDedupArtifact(runId, artifact);
+    setDedupArtifactRows(response.rows);
+    setDedupArtifactTitle(`${artifact === "groups" ? "Группы" : "Пары"}: ${runId}`);
+    return response;
+  }
+
   function updateCatalogRow(id: string, patch: Partial<CategorySourceRow>) {
     setCatalogRows((prev) => prev.map((row) => {
       if (row.id !== id) return row;
@@ -2043,7 +2142,7 @@ export function App() {
             <button className={tab === "projects" ? "active" : ""} title="Список проектов, выбор и удаление." onClick={() => changeTab("projects", loadProjects)}>Проекты</button>
             <button className={tab === "plan" ? "active" : ""} onClick={() => changeTab("plan")}>Умный план</button>
             <button className={tab === "categories" ? "active" : ""} title="Выбор активных путей для исторической загрузки." onClick={() => changeTab("categories")}>Категории</button>
-            <button className={isDataTab(tab) ? "active" : ""} title="Куб, отчёты, файлы, выгрузка и проверка качества." onClick={() => changeTab("cube")}>Данные</button>
+            <button className={isDataTab(tab) ? "active" : ""} title="Куб, отчёты, файлы, выгрузка, качество и ML-дедуп." onClick={() => changeTab("cube")}>Данные</button>
             <button className={tab === "classifier" ? "active" : ""} title="Правила классификатора без ручного JSON." onClick={() => changeTab("classifier")}>Классификатор</button>
           </nav>
 
@@ -2384,6 +2483,25 @@ export function App() {
               onReloadProjects={loadQualityProjects}
               onRun={() => void runQualityReport()}
               onCopySummary={() => void copyQualitySummary()}
+            />
+          ) : null}
+
+          {tab === "dedup" ? (
+            <DedupWorkspace
+              projectName={projectName}
+              settings={dedupSettings}
+              categories={dedupCategories}
+              selectedCategoryKeys={selectedDedupCategoryKeys}
+              runs={dedupRuns}
+              artifactTitle={dedupArtifactTitle}
+              artifactRows={dedupArtifactRows}
+              busy={Boolean(busy)}
+              onSettingChange={setDedupValue}
+              onToggleCategory={toggleDedupCategory}
+              onReload={() => void runAction("Обновление ML-дедупа", loadDedupWorkspace)}
+              onSaveSettings={() => void runAction("Сохранение настроек ML-дедупа", saveDedupSettings)}
+              onStart={() => void runAction("Запуск ML-дедупа", startDedupRuns)}
+              onLoadArtifact={(runId, artifact) => void runAction("Загрузка артефакта ML-дедупа", () => loadDedupArtifact(runId, artifact))}
             />
           ) : null}
 
@@ -2735,7 +2853,8 @@ function DataSubnav(props: { activeTab: DataTab; onSelect: (tab: DataTab) => voi
     { tab: "reports", label: "Отчёты", icon: <BarChart3 size={16} /> },
     { tab: "files", label: "Файлы", icon: <Archive size={16} /> },
     { tab: "export", label: "Выгрузка", icon: <Download size={16} /> },
-    { tab: "quality", label: "Качество", icon: <CheckCircle2 size={16} /> }
+    { tab: "quality", label: "Качество", icon: <CheckCircle2 size={16} /> },
+    { tab: "dedup", label: "ML-дедуп", icon: <Brain size={16} /> }
   ];
   return (
     <nav className="data-subnav" aria-label="Данные">
@@ -3624,6 +3743,160 @@ function ExportBreakdownTable(props: { rows: ExportPreview["breakdown"] }) {
         ]}
       />
     </div>
+  );
+}
+
+function DedupWorkspace(props: {
+  projectName: string;
+  settings: DedupSettings;
+  categories: DedupCategory[];
+  selectedCategoryKeys: Set<string>;
+  runs: DedupRun[];
+  artifactTitle: string;
+  artifactRows: Record<string, unknown>[];
+  busy: boolean;
+  onSettingChange: <K extends keyof DedupSettings>(key: K, value: DedupSettings[K]) => void;
+  onToggleCategory: (categoryKey: string) => void;
+  onReload: () => void;
+  onSaveSettings: () => void;
+  onStart: () => void;
+  onLoadArtifact: (runId: string, artifact: "groups" | "edges") => void;
+}) {
+  const selectedCount = props.categories.filter((category) => props.selectedCategoryKeys.has(category.category_key)).length;
+  const latestRun = props.runs[0] ?? null;
+  const hasModelPath = Boolean(props.settings.model_path.trim());
+  return (
+    <section className="panel stage-panel dedup-panel">
+      <SectionTitle
+        icon={<Brain />}
+        title="ML-дедуп"
+        meta={latestRun ? `${statusLabels[latestRun.status] ?? latestRun.status} · ${latestRun.category_name ?? latestRun.category_key}` : "запуски не создавались"}
+        hint="Dedup запускается после сохранения куба в DuckDB и пишет identity-таблицы, не меняя mpstats_products."
+      />
+
+      <div className="dedup-summary-row">
+        <Metric label="Проект" value={props.projectName || "-"} />
+        <Metric label="Категорий" value={formatNumber(props.categories.length)} />
+        <Metric label="Выбрано" value={formatNumber(selectedCount)} />
+        <Metric label="K FAISS" value={formatNumber(props.settings.faiss_top_k)} />
+        <Metric label="Порог" value={String(props.settings.threshold_same)} />
+      </div>
+
+      <div className="dedup-settings">
+        <div className="dedup-settings-main">
+          <div className="form-grid two-cols">
+            <label>
+              <FieldLabel text="Локальный путь модели" hint="Путь к fine-tuned cross-encoder весам на этой машине. Если путь не задан, backend попробует hf_model_id." />
+              <input
+                value={props.settings.model_path}
+                onChange={(event) => props.onSettingChange("model_path", event.target.value)}
+                placeholder="/models/ft_bge_reranker_v2_m3"
+              />
+            </label>
+            <label>
+              <FieldLabel text="HF model id" hint="Fine-tuned BGE cross-encoder. Rule-based и zero-shot fallback не используются." />
+              <input value={props.settings.hf_model_id} onChange={(event) => props.onSettingChange("hf_model_id", event.target.value)} />
+            </label>
+            <label>
+              <FieldLabel text="Embedding model" hint="Модель для векторного поиска кандидатов перед cross-encoder scoring." />
+              <input value={props.settings.embedding_model_name} onChange={(event) => props.onSettingChange("embedding_model_name", event.target.value)} />
+            </label>
+            <label>
+              <FieldLabel text="Batch scoring" hint="Размер батча для fine-tuned cross-encoder." />
+              <input
+                type="number"
+                min={1}
+                max={256}
+                value={props.settings.cross_encoder_batch_size}
+                onChange={(event) => props.onSettingChange("cross_encoder_batch_size", Number(event.target.value))}
+              />
+            </label>
+          </div>
+          <div className="settings-summary dedup-profile-summary">
+            <span>{props.settings.model_method}</span>
+            <span>{props.settings.activation}</span>
+            <span>{props.settings.threshold_strategy}</span>
+            <span>threshold_same={props.settings.threshold_same}</span>
+            <span>faiss_top_k={props.settings.faiss_top_k}</span>
+          </div>
+          {!hasModelPath ? <div className="export-warning">Локальный путь модели не задан. Запуск возможен только если HF модель доступна из окружения.</div> : null}
+          <div className="toolbar wrap">
+            <button className="ghost-button" disabled={props.busy} onClick={props.onReload}><RefreshCcw size={17} />Обновить</button>
+            <button className="ghost-button" disabled={props.busy} onClick={props.onSaveSettings}><Save size={17} />Сохранить настройки</button>
+            <button className="primary-inline-button" disabled={props.busy || !selectedCount} onClick={props.onStart}><Play size={17} />Запустить</button>
+          </div>
+        </div>
+
+        <div className="export-selector dedup-category-selector">
+          <div className="selector-head">
+            <strong>Eligible-категории</strong>
+            <span>{selectedCount}/{props.categories.length}</span>
+          </div>
+          <div className="selector-list">
+            {props.categories.map((category) => (
+              <label className="check-row export-check-row" key={category.category_key}>
+                <input
+                  type="checkbox"
+                  checked={props.selectedCategoryKeys.has(category.category_key)}
+                  onChange={() => props.onToggleCategory(category.category_key)}
+                />
+                <span>
+                  <strong>{category.category_name || category.category_key}</strong>
+                  <small>{category.category_key} · {formatNumber(category.rows_count)} строк · {formatNumber(category.slices_count)} срезов</small>
+                  {category.latest_successful_run ? <small>latest: {formatDateTime(category.latest_successful_run.finished_at)}</small> : null}
+                </span>
+              </label>
+            ))}
+            {!props.categories.length ? <Empty text="В кубе пока нет eligible-категорий: Соус/Соусы, Кокосовое масло, Мыло." /> : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="dedup-runs-panel">
+        <h3>Запуски</h3>
+        <FilterableTable
+          rows={props.runs}
+          rowKey={(run) => run.run_id}
+          emptyText="Запуски ML-дедупа появятся здесь."
+          columns={[
+            { id: "status", label: "Статус", value: (run) => run.status, render: (run) => <Badge value={run.status} /> },
+            { id: "category", label: "Категория", value: (run) => run.category_name ?? run.category_key },
+            { id: "nodes", label: "SKU", value: (run) => run.node_count ?? 0, render: (run) => formatNumber(run.node_count), numeric: true },
+            { id: "candidates", label: "Кандидаты", value: (run) => run.candidate_count ?? 0, render: (run) => formatNumber(run.candidate_count), numeric: true },
+            { id: "edges", label: "Пары", value: (run) => run.edge_count ?? 0, render: (run) => formatNumber(run.edge_count), numeric: true },
+            { id: "groups", label: "Группы", value: (run) => run.group_count ?? 0, render: (run) => formatNumber(run.group_count), numeric: true },
+            { id: "created", label: "Создан", value: (run) => run.created_at ?? "", render: (run) => formatDateTime(run.created_at) },
+            {
+              id: "actions",
+              label: "",
+              value: (run) => run.run_id,
+              render: (run) => (
+                <div className="table-actions">
+                  <button className="tiny-button" disabled={run.status !== "success"} onClick={() => props.onLoadArtifact(run.run_id, "groups")}>groups</button>
+                  <button className="tiny-button" disabled={run.status !== "success"} onClick={() => props.onLoadArtifact(run.run_id, "edges")}>edges</button>
+                </div>
+              ),
+              filterable: false,
+              sortable: false
+            }
+          ]}
+        />
+        {props.runs.find((run) => run.error) ? (
+          <div className="quality-warning-list">
+            {props.runs.filter((run) => run.error).slice(0, 3).map((run) => (
+              <span key={run.run_id}>{run.category_name ?? run.category_key}: {run.error}</span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      {props.artifactRows.length ? (
+        <div className="db-results dedup-artifact">
+          <h3>{props.artifactTitle}: {formatNumber(props.artifactRows.length)} строк</h3>
+          <SimpleTable columns={visibleProductColumns(Object.keys(props.artifactRows[0] ?? {}))} rows={props.artifactRows} />
+        </div>
+      ) : null}
+    </section>
   );
 }
 

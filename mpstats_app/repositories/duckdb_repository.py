@@ -63,6 +63,13 @@ REPORT_REVENUE_COLUMNS = ("Выручка, руб", "Выручка", "revenue")
 REPORT_VOLUME_KG_COLUMNS = ("Объем, кг", "Объём, кг", "volume_kg")
 REPORT_VOLUME_T_COLUMNS = ("Объем, т", "Объём, т", "volume_t")
 REPORT_CLASSIFICATION_COLUMNS = ("Тип", "Подкатегория", "Вид", "Вид мяса", "Сегмент")
+DEDUP_EXPORT_COLUMNS = (
+    "ML-группа товара",
+    "ML-группа фасовки",
+    "ML-канонический SKU",
+    "ML-dedup статус",
+    "ML-dedup run",
+)
 XLSX_MAX_DATA_ROWS_WITH_HEADER = 1_048_575
 CSV_DECIMAL_COMMA_PROTECTED_COLUMNS = {
     "дата",
@@ -884,6 +891,321 @@ class DuckDbAppRepository:
     def get_setting(self, key: str) -> str | None:
         row = self._fetch_one("SELECT value FROM app_settings WHERE key = ?", [key])
         return str(row["value"]) if row and row.get("value") is not None else None
+
+    def create_dedup_run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._lock, connect(self.settings.db_path) as con:
+            apply_migrations(con)
+            con.execute(
+                """
+                INSERT INTO dedup_runs (
+                    run_id, project_name, category_key, category_name, status,
+                    model_method, model_path, hf_model_id, embedding_model_name,
+                    activation, threshold_strategy, threshold_same, faiss_top_k,
+                    manifest_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    payload["run_id"],
+                    payload["project_name"],
+                    payload["category_key"],
+                    payload.get("category_name"),
+                    payload.get("status", "queued"),
+                    payload["model_method"],
+                    payload.get("model_path"),
+                    payload.get("hf_model_id"),
+                    payload.get("embedding_model_name"),
+                    payload.get("activation"),
+                    payload["threshold_strategy"],
+                    float(payload["threshold_same"]),
+                    int(payload["faiss_top_k"]),
+                    json.dumps(payload.get("manifest") or {}, ensure_ascii=False),
+                ],
+            )
+        return self.get_dedup_run(str(payload["run_id"])) or {}
+
+    def update_dedup_run(self, run_id: str, values: dict[str, Any]) -> dict[str, Any] | None:
+        allowed = {
+            "status",
+            "node_count",
+            "candidate_count",
+            "edge_count",
+            "group_count",
+            "manifest_path",
+            "manifest_json",
+            "error",
+            "started_at",
+            "finished_at",
+        }
+        assignments = [key for key in values if key in allowed]
+        if not assignments:
+            return self.get_dedup_run(run_id)
+        sql = ", ".join(f"{key} = ?" for key in assignments)
+        params: list[Any] = []
+        for key in assignments:
+            value = values[key]
+            if key == "manifest_json" and isinstance(value, (dict, list)):
+                value = json.dumps(value, ensure_ascii=False)
+            params.append(value)
+        params.append(run_id)
+        with self._lock, connect(self.settings.db_path) as con:
+            apply_migrations(con)
+            con.execute(f"UPDATE dedup_runs SET {sql} WHERE run_id = ?", params)
+        return self.get_dedup_run(run_id)
+
+    def get_dedup_run(self, run_id: str) -> dict[str, Any] | None:
+        return self._fetch_one("SELECT * FROM dedup_runs WHERE run_id = ?", [run_id])
+
+    def list_dedup_runs(
+        self,
+        *,
+        project_name: str | None = None,
+        category_key: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        where: list[str] = []
+        params: list[Any] = []
+        if project_name:
+            where.append("project_name = ?")
+            params.append(project_name)
+        if category_key:
+            where.append("category_key = ?")
+            params.append(category_key)
+        where_sql = "WHERE " + " AND ".join(where) if where else ""
+        params.append(max(1, min(int(limit), 500)))
+        return self._fetch_records(
+            f"""
+            SELECT *
+            FROM dedup_runs
+            {where_sql}
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            params,
+        )
+
+    def latest_successful_dedup_run(self, *, project_name: str, category_key: str) -> dict[str, Any] | None:
+        return self._fetch_one(
+            """
+            SELECT *
+            FROM dedup_runs
+            WHERE project_name = ? AND category_key = ? AND status = 'success'
+            ORDER BY COALESCE(finished_at, created_at) DESC, created_at DESC
+            LIMIT 1
+            """,
+            [project_name, category_key],
+        )
+
+    def list_dedup_eligible_categories(self, *, project_name: str) -> list[dict[str, Any]]:
+        return self._fetch_records(
+            """
+            SELECT
+                category_key,
+                MIN(category_name) AS category_name,
+                SUM(rows_count) AS rows_count,
+                COUNT(*) AS slices_count,
+                MAX(saved_to_db_at) AS latest_saved_at,
+                MAX(COALESCE(exported_at, saved_to_db_at)) AS latest_source_at
+            FROM cube_registry
+            WHERE project_name = ?
+              AND lower(trim(CAST(category_name AS VARCHAR))) IN (
+                'соус', 'соусы', 'кокосовое масло', 'мыло'
+              )
+            GROUP BY category_key
+            ORDER BY category_name, category_key
+            """,
+            [project_name],
+        )
+
+    def fetch_dedup_source_dataframe(
+        self,
+        *,
+        table_name: str,
+        project_name: str,
+        category_key: str,
+    ) -> pd.DataFrame:
+        columns = self.table_columns(table_name)
+        self._require_export_metadata(columns)
+        quoted_table = quote_identifier(table_name)
+
+        def text_expr(column: str, fallback: str = "NULL") -> str:
+            if column in columns:
+                return f"NULLIF(TRIM(CAST({quote_duckdb_name(column)} AS VARCHAR)), '')"
+            return fallback
+
+        article_expr = text_expr("Артикул", "NULL")
+        if "__business_row_hash" in columns:
+            article_expr = f"COALESCE({article_expr}, NULLIF(TRIM(CAST({quote_duckdb_name('__business_row_hash')} AS VARCHAR)), ''))"
+        if "__row_hash" in columns:
+            article_expr = f"COALESCE({article_expr}, NULLIF(TRIM(CAST({quote_duckdb_name('__row_hash')} AS VARCHAR)), ''))"
+
+        title_expr = f"COALESCE({text_expr('SKU')}, {text_expr('Название')}, {article_expr})"
+        marketplace_expr = f"COALESCE({text_expr('Маркетплейс')}, {text_expr('__marketplace_code')})"
+        category_expr = f"COALESCE({text_expr('Категория')}, {text_expr('__category_key')})"
+        unit_expr = _number_expr("Вес, кг (ед.)") if "Вес, кг (ед.)" in columns else "CAST(NULL AS DOUBLE)"
+        total_expr = _number_expr("Вес, кг") if "Вес, кг" in columns else "CAST(NULL AS DOUBLE)"
+        sales_col = _first_existing_column(columns, CUBE_SALES_FILTER_COLUMNS)
+        revenue_col = _first_existing_column(columns, REPORT_REVENUE_COLUMNS)
+        sales_expr = _number_expr(sales_col) if sales_col else "CAST(0 AS DOUBLE)"
+        revenue_expr = _number_expr(revenue_col) if revenue_col else "CAST(0 AS DOUBLE)"
+
+        with self._lock, connect(self.settings.db_path, read_only=True, temp_directory=self._duckdb_temp_directory()) as con:
+            return con.execute(
+                f"""
+                SELECT
+                    CAST({quote_duckdb_name('__project_name')} AS VARCHAR) AS project_name,
+                    CAST({quote_duckdb_name('__category_key')} AS VARCHAR) AS category_key,
+                    {category_expr} AS category_name,
+                    CAST({quote_duckdb_name('__marketplace_code')} AS VARCHAR) AS marketplace_code,
+                    {marketplace_expr} AS marketplace,
+                    {article_expr} AS article,
+                    {title_expr} AS sku,
+                    {text_expr('Бренд')} AS brand,
+                    {text_expr('Подкатегория')} AS subcategory,
+                    {unit_expr} AS unit_amount,
+                    {total_expr} AS total_amount,
+                    {sales_expr} AS sales_volume,
+                    {revenue_expr} AS revenue,
+                    {text_expr('__row_hash')} AS row_hash,
+                    {text_expr('__business_row_hash')} AS business_row_hash
+                FROM {quoted_table}
+                WHERE {quote_duckdb_name('__project_name')} = ?
+                  AND {quote_duckdb_name('__category_key')} = ?
+                """,
+                [project_name, category_key],
+            ).fetchdf()
+
+    def replace_dedup_nodes(self, run_id: str, rows: list[dict[str, Any]]) -> None:
+        self._replace_dedup_rows(
+            table_name="dedup_sku_nodes",
+            run_id=run_id,
+            columns=[
+                "run_id",
+                "node_id",
+                "project_name",
+                "category_key",
+                "category_name",
+                "marketplace_code",
+                "marketplace",
+                "article",
+                "sku",
+                "brand",
+                "subcategory",
+                "unit_amount",
+                "total_amount",
+                "multipack_count",
+                "sales_volume",
+                "revenue",
+                "row_count",
+                "source_row_hashes_json",
+                "embedding_text",
+            ],
+            rows=rows,
+        )
+
+    def replace_dedup_edges(self, run_id: str, rows: list[dict[str, Any]]) -> None:
+        self._replace_dedup_rows(
+            table_name="dedup_sku_edges",
+            run_id=run_id,
+            columns=[
+                "run_id",
+                "edge_id",
+                "node_id_a",
+                "node_id_b",
+                "score",
+                "threshold_strategy",
+                "threshold_same",
+                "predicted_binary",
+                "predicted_label",
+                "candidate_rank",
+                "candidate_source",
+                "blocking_scope",
+                "same_pack_signature",
+            ],
+            rows=rows,
+        )
+
+    def replace_dedup_groups(self, run_id: str, rows: list[dict[str, Any]]) -> None:
+        self._replace_dedup_rows(
+            table_name="dedup_sku_groups",
+            run_id=run_id,
+            columns=[
+                "run_id",
+                "node_id",
+                "ml_family_id",
+                "ml_pack_id",
+                "canonical_node_id",
+                "canonical_sku",
+                "ml_dedup_status",
+                "confidence_score",
+                "component_size",
+            ],
+            rows=rows,
+        )
+
+    def _replace_dedup_rows(
+        self,
+        *,
+        table_name: str,
+        run_id: str,
+        columns: list[str],
+        rows: list[dict[str, Any]],
+    ) -> None:
+        quoted_table = quote_identifier(table_name)
+        placeholders = ", ".join("?" for _ in columns)
+        column_sql = ", ".join(columns)
+        values = [[row.get(column) for column in columns] for row in rows]
+        with self._lock, connect(self.settings.db_path) as con:
+            apply_migrations(con)
+            with duckdb_transaction(con):
+                con.execute(f"DELETE FROM {quoted_table} WHERE run_id = ?", [run_id])
+                if values:
+                    con.executemany(
+                        f"INSERT INTO {quoted_table} ({column_sql}) VALUES ({placeholders})",
+                        values,
+                    )
+
+    def fetch_dedup_artifact(self, *, run_id: str, artifact: str, limit: int = 1000) -> list[dict[str, Any]]:
+        if artifact == "edges":
+            return self._fetch_records(
+                """
+                SELECT *
+                FROM dedup_sku_edges
+                WHERE run_id = ?
+                ORDER BY predicted_binary DESC, score DESC NULLS LAST, edge_id
+                LIMIT ?
+                """,
+                [run_id, max(1, min(int(limit), 100_000))],
+                read_only=True,
+                temp_directory=self._duckdb_temp_directory(),
+            )
+        if artifact == "groups":
+            return self._fetch_records(
+                """
+                SELECT
+                    g.*,
+                    n.category_key,
+                    n.category_name,
+                    n.marketplace,
+                    n.marketplace_code,
+                    n.article,
+                    n.sku,
+                    n.brand,
+                    n.subcategory,
+                    n.sales_volume,
+                    n.revenue
+                FROM dedup_sku_groups AS g
+                LEFT JOIN dedup_sku_nodes AS n
+                  ON n.run_id = g.run_id AND n.node_id = g.node_id
+                WHERE g.run_id = ?
+                ORDER BY g.ml_family_id, g.ml_pack_id, n.sku
+                LIMIT ?
+                """,
+                [run_id, max(1, min(int(limit), 100_000))],
+                read_only=True,
+                temp_directory=self._duckdb_temp_directory(),
+            )
+        raise ValueError("artifact должен быть groups или edges.")
 
     def list_project_database_summaries(self, *, table_name: str) -> list[dict[str, Any]]:
         names: set[str] = set()
@@ -2497,7 +2819,7 @@ class DuckDbAppRepository:
             "categories": self.large_category_summary(project_name=project_name),
             "period_from": _period_index_to_label(min_period) if min_period else None,
             "period_to": _period_index_to_label(max_period) if max_period else None,
-            "columns": [column for column in columns if not column.startswith("__")],
+            "columns": self.export_visible_columns(table_name=table_name, project_name=project_name),
             "warnings": warnings,
         }
 
@@ -2809,7 +3131,7 @@ class DuckDbAppRepository:
             }
 
         columns = self.table_columns(table_name)
-        visible_columns = self.export_visible_columns(table_name=table_name)
+        visible_columns = self.export_visible_columns(table_name=table_name, project_name=project_name)
         missing = [column for column in EXPORT_METADATA_COLUMNS if column not in columns]
         warnings: list[str] = []
         if missing:
@@ -2849,8 +3171,12 @@ class DuckDbAppRepository:
             "warnings": warnings,
         }
 
-    def export_visible_columns(self, *, table_name: str) -> list[str]:
-        return [column for column in self.table_columns(table_name) if not column.startswith("__")]
+    def export_visible_columns(self, *, table_name: str, project_name: str | None = None) -> list[str]:
+        columns = self.table_columns(table_name)
+        visible = [column for column in columns if not column.startswith("__")]
+        if project_name and self._project_has_successful_dedup(project_name=project_name):
+            visible.extend(column for column in DEDUP_EXPORT_COLUMNS if column not in visible)
+        return visible
 
     def export_categories(
         self,
@@ -2969,8 +3295,9 @@ class DuckDbAppRepository:
         filters: list[dict[str, str]] | None = None,
         excluded_row_hashes: list[str] | None = None,
     ) -> int:
-        columns = self.table_columns(table_name)
+        columns = self._export_columns_with_dedup(table_name=table_name, project_name=project_name)
         self._require_export_metadata(columns)
+        source_sql = self._export_source_sql(table_name=table_name, project_name=project_name, columns=columns)
         where_sql, params = self._export_where_sql(
             columns=columns,
             project_name=project_name,
@@ -2981,7 +3308,7 @@ class DuckDbAppRepository:
             excluded_row_hashes=excluded_row_hashes,
         )
         row = self._fetch_one(
-            f"SELECT COUNT(*) AS total FROM {quote_identifier(table_name)}{where_sql}",
+            f"SELECT COUNT(*) AS total FROM ({source_sql}) AS export_source{where_sql}",
             params,
             read_only=True,
             temp_directory=self._duckdb_temp_directory(),
@@ -3006,12 +3333,13 @@ class DuckDbAppRepository:
         include_row_hash: bool = False,
         default_order: bool = True,
     ) -> pd.DataFrame:
-        columns = self.table_columns(table_name)
+        columns = self._export_columns_with_dedup(table_name=table_name, project_name=project_name)
         self._require_export_metadata(columns)
         selected_columns = self._safe_export_columns(columns, output_columns)
         if include_row_hash and "__row_hash" in columns and "__row_hash" not in selected_columns:
             selected_columns = [*selected_columns, "__row_hash"]
         select_sql = ", ".join(quote_duckdb_name(column) for column in selected_columns)
+        source_sql = self._export_source_sql(table_name=table_name, project_name=project_name, columns=columns)
         where_sql, params = self._export_where_sql(
             columns=columns,
             project_name=project_name,
@@ -3031,7 +3359,7 @@ class DuckDbAppRepository:
             return con.execute(
                 f"""
                 SELECT {select_sql}
-                FROM {quote_identifier(table_name)}
+                FROM ({source_sql}) AS export_source
                 {where_sql}
                 {order_sql}
                 LIMIT ? OFFSET ?
@@ -3056,10 +3384,11 @@ class DuckDbAppRepository:
         limit: int | None = None,
         offset: int = 0,
     ) -> tuple[str, list[Any], list[str]]:
-        columns = self.table_columns(table_name)
+        columns = self._export_columns_with_dedup(table_name=table_name, project_name=project_name)
         self._require_export_metadata(columns)
         selected_columns = self._safe_export_columns(columns, output_columns)
         select_sql = ", ".join(_raw_export_column_expr(column) for column in selected_columns)
+        source_sql = self._export_source_sql(table_name=table_name, project_name=project_name, columns=columns)
         where_sql, params = self._export_where_sql(
             columns=columns,
             project_name=project_name,
@@ -3077,7 +3406,7 @@ class DuckDbAppRepository:
         )
         query = f"""
             SELECT {select_sql}
-            FROM {quote_identifier(table_name)}
+            FROM ({source_sql}) AS export_source
             {where_sql}
             {order_sql}
         """
@@ -3173,9 +3502,10 @@ class DuckDbAppRepository:
         period_from_index: int | None,
         period_to_index: int | None,
     ) -> tuple[str, list[Any], list[str]]:
-        columns = self.table_columns(table_name)
+        columns = self._export_columns_with_dedup(table_name=table_name, project_name=project_name)
         self._require_export_metadata(columns)
         clean_report_type = report_type if report_type in {"category_month", "brand_month", "classification_month", "top_sku"} else "category_month"
+        source_sql = self._export_source_sql(table_name=table_name, project_name=project_name, columns=columns)
         where_sql, params = self._export_where_sql(
             columns=columns,
             project_name=project_name,
@@ -3202,7 +3532,22 @@ class DuckDbAppRepository:
         elif clean_report_type == "classification_month":
             dimensions.extend(self._report_optional_dimensions(columns, REPORT_CLASSIFICATION_COLUMNS))
         elif clean_report_type == "top_sku":
-            dimensions.extend(self._report_optional_dimensions(columns, ("SKU", "Название", "Бренд", "Тип", "Подкатегория")))
+            dimensions.extend(
+                self._report_optional_dimensions(
+                    columns,
+                    (
+                        "SKU",
+                        "Название",
+                        "Бренд",
+                        "Тип",
+                        "Подкатегория",
+                        "ML-группа товара",
+                        "ML-группа фасовки",
+                        "ML-канонический SKU",
+                        "ML-dedup статус",
+                    ),
+                )
+            )
 
         sales_expr = self._report_sum_expr(columns, CUBE_SALES_FILTER_COLUMNS)
         revenue_expr = self._report_sum_expr(columns, REPORT_REVENUE_COLUMNS)
@@ -3233,7 +3578,7 @@ class DuckDbAppRepository:
         order_sql = self._report_order_sql(clean_report_type, [alias for alias, _ in dimensions])
         query = f"""
             SELECT {", ".join(select_parts + metric_parts)}
-            FROM {quote_identifier(table_name)}
+            FROM ({source_sql}) AS report_source
             {where_sql}
             GROUP BY {group_sql}
             {order_sql}
@@ -3290,10 +3635,113 @@ class DuckDbAppRepository:
     def _report_order_sql(report_type: str, dimensions: list[str]) -> str:
         if report_type == "top_sku":
             return f"ORDER BY {quote_duckdb_name('Выручка, руб')} DESC NULLS LAST, {quote_duckdb_name('Продажи, шт')} DESC NULLS LAST"
-        order_columns = [column for column in ("Год", "Месяц", "Категория", "Маркетплейс", "Бренд", "Тип", "Подкатегория") if column in dimensions]
+        order_columns = [
+            column
+            for column in (
+                "Год",
+                "Месяц",
+                "Категория",
+                "Маркетплейс",
+                "Бренд",
+                "Тип",
+                "Подкатегория",
+                "ML-группа товара",
+                "ML-группа фасовки",
+            )
+            if column in dimensions
+        ]
         if not order_columns:
             return ""
         return "ORDER BY " + ", ".join(quote_duckdb_name(column) for column in order_columns)
+
+    def _project_has_successful_dedup(self, *, project_name: str) -> bool:
+        if not self.table_exists("dedup_runs"):
+            return False
+        row = self._fetch_one(
+            """
+            SELECT COUNT(*) AS runs_count
+            FROM dedup_runs
+            WHERE project_name = ? AND status = 'success'
+            """,
+            [project_name],
+            read_only=True,
+            temp_directory=self._duckdb_temp_directory(),
+        )
+        return bool(row and int(row.get("runs_count") or 0) > 0)
+
+    def _export_columns_with_dedup(self, *, table_name: str, project_name: str) -> list[str]:
+        columns = self.table_columns(table_name)
+        if self._project_has_successful_dedup(project_name=project_name):
+            return [*columns, *(column for column in DEDUP_EXPORT_COLUMNS if column not in columns)]
+        return columns
+
+    def _dedup_article_expr(self, columns: list[str], *, table_alias: str) -> str:
+        pieces: list[str] = []
+        if "Артикул" in columns:
+            pieces.append(f"NULLIF(TRIM(CAST({table_alias}.{quote_duckdb_name('Артикул')} AS VARCHAR)), '')")
+        if "__business_row_hash" in columns:
+            pieces.append(f"NULLIF(TRIM(CAST({table_alias}.{quote_duckdb_name('__business_row_hash')} AS VARCHAR)), '')")
+        if "__row_hash" in columns:
+            pieces.append(f"NULLIF(TRIM(CAST({table_alias}.{quote_duckdb_name('__row_hash')} AS VARCHAR)), '')")
+        if not pieces:
+            return "NULL"
+        return "COALESCE(" + ", ".join(pieces) + ")"
+
+    def _export_source_sql(self, *, table_name: str, project_name: str, columns: list[str]) -> str:
+        quoted_table = quote_identifier(table_name)
+        if not any(column in DEDUP_EXPORT_COLUMNS for column in columns):
+            return f"SELECT * FROM {quoted_table}"
+
+        article_expr = self._dedup_article_expr(self.table_columns(table_name), table_alias="p")
+        return f"""
+            WITH latest_dedup_runs AS (
+                SELECT run_id, project_name, category_key
+                FROM (
+                    SELECT
+                        run_id,
+                        project_name,
+                        category_key,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY project_name, category_key
+                            ORDER BY COALESCE(finished_at, created_at) DESC, created_at DESC
+                        ) AS rn
+                    FROM dedup_runs
+                    WHERE status = 'success'
+                      AND project_name = {sql_literal(project_name)}
+                )
+                WHERE rn = 1
+            ),
+            dedup_map AS (
+                SELECT
+                    n.project_name,
+                    n.category_key,
+                    n.marketplace_code,
+                    n.article,
+                    g.ml_family_id,
+                    g.ml_pack_id,
+                    g.canonical_sku,
+                    g.ml_dedup_status,
+                    g.run_id
+                FROM latest_dedup_runs AS latest
+                JOIN dedup_sku_nodes AS n
+                  ON n.run_id = latest.run_id
+                JOIN dedup_sku_groups AS g
+                  ON g.run_id = n.run_id AND g.node_id = n.node_id
+            )
+            SELECT
+                p.*,
+                d.ml_family_id AS {quote_duckdb_name('ML-группа товара')},
+                d.ml_pack_id AS {quote_duckdb_name('ML-группа фасовки')},
+                d.canonical_sku AS {quote_duckdb_name('ML-канонический SKU')},
+                d.ml_dedup_status AS {quote_duckdb_name('ML-dedup статус')},
+                d.run_id AS {quote_duckdb_name('ML-dedup run')}
+            FROM {quoted_table} AS p
+            LEFT JOIN dedup_map AS d
+              ON d.project_name = p.{quote_duckdb_name('__project_name')}
+             AND d.category_key = p.{quote_duckdb_name('__category_key')}
+             AND d.marketplace_code = p.{quote_duckdb_name('__marketplace_code')}
+             AND d.article = {article_expr}
+        """
 
     def _require_export_metadata(self, columns: list[str]) -> None:
         missing = [column for column in EXPORT_METADATA_COLUMNS if column not in columns]

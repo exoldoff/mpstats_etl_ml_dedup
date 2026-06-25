@@ -16,6 +16,7 @@ from mpstats_app.services.smart_pipeline_service import SmartPipelineService
 from mpstats_app.services.project_service import ProjectService
 from mpstats_app.services.workflow_service import WorkflowService
 from pipeline.services.data_quality_service import DataQualityService
+from pipeline.services.dedup import DedupService
 
 
 def get_settings(request: Request) -> AppSettings:
@@ -72,3 +73,7 @@ def get_project_service(request: Request) -> ProjectService:
 
 def get_data_quality_service(request: Request) -> DataQualityService:
     return request.app.state.data_quality_service
+
+
+def get_dedup_service(request: Request) -> DedupService:
+    return request.app.state.dedup_service

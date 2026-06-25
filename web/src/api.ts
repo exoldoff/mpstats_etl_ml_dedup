@@ -114,6 +114,54 @@ export type PipelineSettings = {
   max_weight_kg: number;
 };
 
+export type DedupSettings = {
+  model_method: string;
+  model_path: string;
+  hf_model_id: string;
+  embedding_model_name: string;
+  activation: string;
+  threshold_strategy: string;
+  threshold_same: number;
+  faiss_top_k: number;
+  embedding_batch_size: number;
+  cross_encoder_batch_size: number;
+};
+
+export type DedupRun = {
+  run_id: string;
+  project_name: string;
+  category_key: string;
+  category_name?: string | null;
+  status: string;
+  model_method: string;
+  model_path?: string | null;
+  hf_model_id?: string | null;
+  embedding_model_name?: string | null;
+  activation?: string | null;
+  threshold_strategy: string;
+  threshold_same: number;
+  faiss_top_k: number;
+  node_count?: number | null;
+  candidate_count?: number | null;
+  edge_count?: number | null;
+  group_count?: number | null;
+  manifest_path?: string | null;
+  error?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
+export type DedupCategory = {
+  category_key: string;
+  category_name: string;
+  rows_count: number;
+  slices_count: number;
+  latest_saved_at?: string | null;
+  latest_source_at?: string | null;
+  latest_successful_run?: DedupRun | null;
+};
+
 export type PipelineRun = {
   id: string;
   project_name: string;
@@ -665,6 +713,22 @@ export const api = {
   getPipelineSettings: () => request<PipelineSettings>("/api/workflow/pipeline/settings"),
   savePipelineSettings: (payload: PipelineSettings) =>
     request<PipelineSettings>("/api/workflow/pipeline/settings", { method: "PUT", body: JSON.stringify(payload) }),
+  getDedupSettings: () => request<DedupSettings>("/api/dedup/settings"),
+  saveDedupSettings: (payload: Partial<DedupSettings>) =>
+    request<DedupSettings>("/api/dedup/settings", { method: "PUT", body: JSON.stringify(payload) }),
+  getDedupEligibleCategories: (projectName: string) =>
+    request<{ project_name: string; categories: DedupCategory[]; settings: DedupSettings }>(
+      `/api/dedup/eligible-categories?project_name=${encodeURIComponent(projectName)}`
+    ),
+  listDedupRuns: (projectName: string) =>
+    request<{ runs: DedupRun[] }>(`/api/dedup/runs?project_name=${encodeURIComponent(projectName)}`),
+  startDedupRuns: (payload: { project_name: string; category_keys: string[]; wait?: boolean }) =>
+    request<{ runs: DedupRun[] }>("/api/dedup/runs", { method: "POST", body: JSON.stringify(payload) }),
+  getDedupRun: (runId: string) => request<DedupRun>(`/api/dedup/runs/${encodeURIComponent(runId)}`),
+  exportDedupArtifact: (runId: string, artifact: "groups" | "edges") =>
+    request<{ run_id: string; artifact: string; rows: Record<string, unknown>[] }>(
+      `/api/dedup/runs/${encodeURIComponent(runId)}/export?artifact=${encodeURIComponent(artifact)}`
+    ),
   listProjects: () => request<{ projects: ProjectSummary[] }>("/api/projects"),
   createProject: (projectName: string) =>
     request<ProjectSummary>("/api/projects", { method: "POST", body: JSON.stringify({ project_name: projectName }) }),

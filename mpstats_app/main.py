@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from mpstats_app.api.exports import router as exports_router
+from mpstats_app.api.dedup import router as dedup_router
 from mpstats_app.api.health import router as health_router
 from mpstats_app.api.products import router as products_router
 from mpstats_app.api.projects import router as projects_router
@@ -35,6 +36,7 @@ from mpstats_app.services.smart_pipeline_service import SmartPipelineService
 from mpstats_app.services.workflow_service import WorkflowService
 from pipeline.repositories.data_quality_repository import DataQualityRepository
 from pipeline.services.data_quality_service import DataQualityService
+from pipeline.services.dedup import DedupService
 
 
 SPA_INDEX_HEADERS = {
@@ -58,6 +60,7 @@ def create_app(settings: AppSettings | None = None, *, start_workers: bool = Tru
     report_service = ReportService(settings=app_settings, repository=repository)
     job_service = JobService(settings=app_settings, repository=repository)
     scheduler_service = SchedulerService(settings=app_settings, repository=repository, job_service=job_service)
+    dedup_service = DedupService(settings=app_settings, repository=repository)
     data_quality_service = DataQualityService(
         DataQualityRepository(
             project_root=app_settings.project_root,
@@ -92,6 +95,7 @@ def create_app(settings: AppSettings | None = None, *, start_workers: bool = Tru
     app.state.report_service = report_service
     app.state.job_service = job_service
     app.state.scheduler_service = scheduler_service
+    app.state.dedup_service = dedup_service
     app.state.data_quality_service = data_quality_service
 
     app.add_middleware(
@@ -106,6 +110,7 @@ def create_app(settings: AppSettings | None = None, *, start_workers: bool = Tru
     app.include_router(runs_router)
     app.include_router(products_router)
     app.include_router(projects_router)
+    app.include_router(dedup_router)
     app.include_router(exports_router)
     app.include_router(reports_router)
     app.include_router(settings_router)

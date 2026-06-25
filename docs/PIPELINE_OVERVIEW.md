@@ -14,6 +14,7 @@ MPStats API
   -> processed CSV
   -> classified CSV
   -> mpstats.duckdb: mpstats_products + cube_registry
+  -> optional ML-dedup identity tables
   -> отчеты, выгрузки, качество данных
 ```
 
@@ -67,9 +68,13 @@ MPStats API
 
    После успешного импорта обновляется `cube_registry`: сколько строк в срезе, откуда пришел classified-файл, хэш файла, период покрытия и флаги крупных категорий. Именно `cube_registry` показывает, какие месяцы и категории уже лежат в кубе.
 
-7. **Отчеты, экспорт и качество**
+7. **ML-дедуп identity layer**
 
-   После сохранения основной источник для аналитики - DuckDB. Отчеты, плоские выгрузки, фильтры по категориям/периодам и проверки качества строятся SQL-запросами по `mpstats_products` и `cube_registry`.
+   Для категорий `Соус/Соусы`, `Кокосовое масло` и `Мыло` web-app может запустить отдельный dedup-run после сохранения данных в DuckDB. Сервис собирает SKU-node catalog из `mpstats_products`, строит FAISS retrieval с `top_k=30`, оценивает пары только fine-tuned BGE cross-encoder `ft_bge_reranker_v2_m3`, применяет `threshold_weighted_cost` с `threshold_same=0.872321`, затем пишет nodes/edges/groups в `dedup_*` таблицы. `mpstats_products` не схлопывается и не мутируется.
+
+8. **Отчеты, экспорт и качество**
+
+   После сохранения основной источник для аналитики - DuckDB. Отчеты, плоские выгрузки, фильтры по категориям/периодам и проверки качества строятся SQL-запросами по `mpstats_products` и `cube_registry`. Если для проекта и категории есть успешный dedup-run, export/report слой делает left join к последним `dedup_sku_groups` и добавляет ML identity-поля без изменения числа фактовых строк.
 
 ## Где сейчас pandas, а где SQL
 
@@ -84,7 +89,7 @@ DuckDB/SQL используется там, где данные уже стан�
 
 - хранение статусов запусков и задач;
 - импорт classified-файлов в `mpstats_products`;
-- дедупликация срезов;
+- защита от дублей срезов и ML-dedup identity tables;
 - `cube_registry`;
 - отчеты, экспорт CSV/XLSX и проверки качества.
 
