@@ -1989,13 +1989,15 @@ run. Если нужно вернуться к старому per-category ре�
 `04` также показывает основную graph-quality диагностику, false links / missed
 links, примеры "same family, different pack" и 3D-карту components.
 
-`06_grouped_sku_demo.ipynb` показывает результат уже как таблицу товаров:
-берёт реальные строки `mpstats_products` из `mpstats.duckdb`, накладывает
-`fusion_family_id` / `fusion_pack_id` из `fusion_components_<suffix>.csv` и
-показывает склеенные SKU-группы. При чтении старого куба notebook применяет
-тот же sales-фильтр: нули и строки ниже общего минимума `15` продаж не
-попадают в витрину. Дополнительно сохраняет витрину в
-reports-папку текущего run.
+`05_grouped_sku_demo.ipynb` показывает demo-flow дедупликатора уже на
+реальных товарах: берёт небольшой срез похожих SKU из `mpstats_products`,
+показывает дешёвые candidate pairs, строит bi-encoder embeddings, ищет
+соседей через FAISS, пересчитывает пары cross-encoder и собирает группы.
+Результат показывается как дерево: Level 1 — каноничный SKU с агрегатами
+продаж/выручки всей группы, Level 2 — реальные SKU, входящие в эту группу.
+При чтении старого куба notebook применяет тот же sales-фильтр: нули и строки
+ниже общего минимума `15` продаж не попадают в demo-срез. Дополнительно
+сохраняет дерево в reports-папку текущего run.
 Research CSV-артефакты лежат в `research/dedup/data/` или
 `research/dedup/data/<slug>/`, demo-export лежит в `artifacts/reports/` или
 `artifacts/reports/<slug>/`; эти рабочие файлы не коммитятся.

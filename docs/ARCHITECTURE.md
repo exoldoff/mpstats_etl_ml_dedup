@@ -249,8 +249,10 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
 - `04_fusion_pack_grouping.ipynb` — выбор fusion-run по `dev`, multi-category
   family/pack grouping, compact CSV `fusion_*`, graph-quality diagnostics,
   примеры ошибок и 3D-визуализация components.
-- `06_grouped_sku_demo.ipynb` — демонстрационная витрина: реальные SKU из
-  DuckDB, на которые наложены текущие `fusion_family_id` / `fusion_pack_id`.
+- `05_grouped_sku_demo.ipynb` — демонстрационный end-to-end flow: небольшой
+  DuckDB-срез похожих SKU -> bi-encoder embeddings -> FAISS retrieval ->
+  cross-encoder rerank -> graph grouping -> дерево `каноничный SKU ->
+  входящие SKU` с агрегатами куба.
 
 ## 8. Оценка и тестирование (методология)
 

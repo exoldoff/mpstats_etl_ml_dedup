@@ -77,9 +77,39 @@
   по категориям и показывает graph-quality диагностику плюс 3D components.
   Старый connected-components результат сохраняется рядом как audit-baseline
   `connected_family_id` / `connected_pack_id`.
-- Для просмотра результата на реальных строках DuckDB добавлен
-  `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
-  `mpstats_products` и показывает склеенные SKU-группы.
+- Для демонстрации результата на реальных строках DuckDB теперь используется
+  `notebooks/05_grouped_sku_demo.ipynb`: он сам берёт маленький срез похожих
+  SKU из `mpstats_products`, прогоняет bi-encoder embeddings + FAISS +
+  cross-encoder, собирает группы и показывает дерево `каноничный SKU ->
+  входящие SKU` с агрегатами куба.
+
+## 2026-06-30 — Dedup demo notebook as active notebook 05
+
+### Зачем
+
+Старая `06_grouped_sku_demo.ipynb` была только витриной уже готового
+`fusion_components_<suffix>.csv`. Для защиты и объяснения дедупликатора нужен
+живой demo-flow: от похожих SKU из DuckDB до модельных score, групп и
+каноничного SKU.
+
+### Что сделано
+
+- `notebooks/06_grouped_sku_demo.ipynb` переименован в
+  `notebooks/05_grouped_sku_demo.ipynb`.
+- Notebook больше не требует готовых `fusion_*` артефактов: он подключается к
+  DuckDB, берёт небольшой category-run срез, дешёвым лексическим поиском
+  выбирает похожие candidate pairs и показывает их.
+- Demo-pool прогоняется через bi-encoder embeddings, FAISS top-k retrieval и
+  cross-encoder rerank; если cross-encoder недоступен, notebook явно
+  показывает fallback на bi-encoder score.
+- Positive pair edges собираются в graph groups, затем строится структура:
+  Level 1 — каноничный SKU с агрегированными продажами/выручкой группы,
+  Level 2 — реальные SKU, входящие в эту группу.
+- Demo-export остаётся ignored CSV в reports-папке текущего category-run.
+
+### Проверки
+
+См. финальный ответ текущего изменения.
 
 ## 2026-06-30 — Community detection in fusion graph
 
@@ -121,7 +151,7 @@ components в `04_fusion_pack_grouping.ipynb` отдельный
 
 - `notebooks/05_evaluation_report.ipynb` удалён из активного workflow.
 - Актуальный downstream теперь: `03_matching_comparison.ipynb` ->
-  `04_fusion_pack_grouping.ipynb` -> `06_grouped_sku_demo.ipynb`.
+  `04_fusion_pack_grouping.ipynb` -> `05_grouped_sku_demo.ipynb`.
 - Документация обновлена так, чтобы `04` был единственным notebook для
   fusion/grouping/report diagnostics.
 
@@ -435,7 +465,7 @@ exact-title дублями с cosine около `1.0`.
 ### Проверки
 
 - `ast.parse` code cells в `notebooks/00_eda.ipynb` -
-  `notebooks/06_grouped_sku_demo.ipynb` — ok.
+  `notebooks/05_grouped_sku_demo.ipynb` — ok.
 - Узкие pytest/compile проверки см. в commit/финальном ответе текущего
   изменения.
 
@@ -449,7 +479,7 @@ exact-title дублями с cosine около `1.0`.
 
 ### Что сделано
 
-- Добавлен `notebooks/06_grouped_sku_demo.ipynb`.
+- Добавлен `notebooks/05_grouped_sku_demo.ipynb`.
 - Notebook автоматически находит `mpstats.duckdb` через
   `MPSTATS_DUCKDB_PATH`, локальный `mpstats.duckdb` или desktop-путь.
 - Читает `mpstats_products` по категории `Соус` / `Соусы`, агрегирует строки
@@ -462,8 +492,8 @@ exact-title дублями с cosine около `1.0`.
 
 ### Проверки
 
-- `ast.parse` code cells в `notebooks/06_grouped_sku_demo.ipynb` — ok.
-- `nbclient` на `notebooks/06_grouped_sku_demo.ipynb` — ok.
+- `ast.parse` code cells в `notebooks/05_grouped_sku_demo.ipynb` — ok.
+- `nbclient` на `notebooks/05_grouped_sku_demo.ipynb` — ok.
 
 ## 2026-06-27 — Единый downstream evaluation notebook
 
