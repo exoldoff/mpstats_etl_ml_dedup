@@ -180,7 +180,7 @@ binary benchmark с `pair_weight = 1`.
 ## 6. Кластеризация
 - Level 1: graph grouping по positive binary-рёбрам выбранной стратегии
   → товарная семья / базовый продукт. Research default теперь —
-  Louvain community detection по weighted-рёбрам (`score`) с фиксированным
+  Leiden community detection по weighted-рёбрам (`score`) с фиксированным
   seed, чтобы слабый bridge-edge не обязательно склеивал всю connected
   component. Старый режим connected components остаётся доступен как baseline
   и сохраняется в audit-колонках.
@@ -193,9 +193,9 @@ binary benchmark с `pair_weight = 1`.
   frozen/fine-tuning benchmark notebook может запускаться один раз на
   `sauces,coconut_oil,soap`: он восстанавливает `category_run` из frozen
   split и строит отдельные family/pack графы внутри каждой категории.
-  `fusion_family_id` / `fusion_pack_id` остаются финальным contract для
-  downstream, а `connected_family_id` / `connected_pack_id` нужны для сравнения
-  с прежним connected-components поведением.
+  `fusion_family_id` / `fusion_pack_id` остаются финальным результатом
+  graph grouping, а `connected_family_id` / `connected_pack_id` нужны для
+  сравнения с прежним connected-components поведением.
 - Текущий threshold benchmark не создаёт `manual_review` / triage-зону.
 
 ## 6.1 Организация кода на research-этапе (пересмотрено по запросу)

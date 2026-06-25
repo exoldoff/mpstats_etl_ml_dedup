@@ -67,7 +67,7 @@
   Manual review, LLM-review и triage на текущем benchmark-этапе не нужны.
 - Downstream теперь идёт через `notebooks/04_fusion_pack_grouping.ipynb`:
   notebook выбирает fusion-run только по `dev`, строит `family` через
-  Louvain community detection по weighted positive-рёбрам, строит `pack`
+  Leiden community detection по weighted positive-рёбрам, строит `pack`
   группы только внутри выбранной `family` и сохраняет
   `fusion_components_<suffix>.csv` /
   `fusion_pair_eval_<suffix>.csv` в data-папку category-run. Для нового
@@ -94,16 +94,16 @@ components без изменения pairwise scorer.
 
 - `research/dedup/clustering.py` получил `GraphGroupingConfig` и
   `build_graph_groups(...)`: старый `connected_components` режим сохранён,
-  новый `louvain` режим использует weighted-рёбра из `score`.
+  новый `leiden` режим использует weighted-рёбра из `score`.
 - `notebooks/04_fusion_pack_grouping.ipynb` по умолчанию строит финальные
-  `fusion_family_id` через Louvain, сохраняет connected-components baseline в
+  `fusion_family_id` через Leiden, сохраняет connected-components baseline в
   `connected_family_id` / `connected_pack_id` и добавляет metadata
   `fusion_grouping_algorithm`, `fusion_community_resolution`,
   `fusion_community_seed`.
 - Финальные `fusion_pack_id` строятся только внутри выбранной
   `fusion_family_id`, чтобы pack-группы не пересекали family после
   community detection.
-- `networkx` добавлен только в research-зависимости.
+- `igraph` и `leidenalg` добавлены только в research-зависимости.
 
 ### Проверки
 

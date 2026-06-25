@@ -185,7 +185,7 @@ def _weighted_edges(
     return edges
 
 
-def _louvain_components(
+def _leiden_components(
     pairs: pd.DataFrame,
     *,
     edge_labels: Iterable[str],
@@ -194,13 +194,14 @@ def _louvain_components(
     edge_mask: pd.Series | None,
 ) -> pd.DataFrame:
     if not math.isfinite(grouping_config.resolution) or grouping_config.resolution <= 0:
-        raise ValueError("Louvain resolution must be a positive finite number")
+        raise ValueError("Leiden resolution must be a positive finite number")
 
     try:
-        import networkx as nx
+        import igraph as ig
+        import leidenalg
     except ImportError as exc:
         raise RuntimeError(
-            "NetworkX is required for graph grouping algorithm='louvain'. "
+            "python-igraph and leidenalg are required for graph grouping algorithm='leiden'. "
             "Install research dependencies from requirements-research.txt."
         ) from exc
 
@@ -211,20 +212,22 @@ def _louvain_components(
     edge_rows = _edge_rows(pairs, labels=labels, cfg=config, edge_mask=edge_mask)
     weighted_edges = _weighted_edges(edge_rows, cfg=config, grouping_cfg=grouping_config)
 
-    graph = nx.Graph()
-    graph.add_nodes_from(nodes)
-    for (left_node, right_node), weight in weighted_edges.items():
-        graph.add_edge(left_node, right_node, weight=weight)
-
     if not weighted_edges:
         return _component_records_from_groups(({node} for node in nodes), component_col=config.component_col)
 
-    communities = nx.community.louvain_communities(
+    node_to_index = {node: index for index, node in enumerate(nodes)}
+    edge_pairs = [(node_to_index[left_node], node_to_index[right_node]) for left_node, right_node in weighted_edges]
+    weights = [weighted_edges[edge] for edge in weighted_edges]
+    graph = ig.Graph(n=len(nodes), edges=edge_pairs, directed=False)
+    partition = leidenalg.find_partition(
         graph,
-        weight="weight",
-        resolution=grouping_config.resolution,
+        leidenalg.RBConfigurationVertexPartition,
+        weights=weights,
+        resolution_parameter=grouping_config.resolution,
+        n_iterations=-1,
         seed=grouping_config.seed,
     )
+    communities = [{nodes[index] for index in community} for community in partition]
     covered = set().union(*(set(community) for community in communities)) if communities else set()
     missing_nodes = [node for node in nodes if node not in covered]
     groups = list(communities) + [{node} for node in missing_nodes]
@@ -242,7 +245,7 @@ def build_graph_groups(
     """Build graph groups from positive pair edges.
 
     ``connected_components`` preserves the historical union-find behavior.
-    ``louvain`` can split a chained positive component into denser communities.
+    ``leiden`` can split a chained positive component into denser communities.
     """
     cfg = config or ComponentConfig()
     graph_cfg = grouping_config or GraphGroupingConfig()
@@ -254,8 +257,8 @@ def build_graph_groups(
     algorithm = graph_cfg.algorithm.strip().lower()
     if algorithm in {"connected_components", "components"}:
         return build_components(pairs, edge_labels=edge_labels, config=cfg, edge_mask=edge_mask)
-    if algorithm == "louvain":
-        return _louvain_components(
+    if algorithm == "leiden":
+        return _leiden_components(
             pairs,
             edge_labels=edge_labels,
             config=cfg,

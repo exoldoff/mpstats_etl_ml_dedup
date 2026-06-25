@@ -1951,14 +1951,14 @@ run. Если нужно вернуться к старому per-category ре�
 - `MY_REQUIRE_ALL_CATEGORY_RUNS = False` — пропускать категории, которых нет в
   текущем smoke-output из `03`. Для финального полного прогона можно поставить
   `True`.
-- `MY_GRAPH_GROUPING_ALGORITHM = "louvain"` — рекомендуемый финальный способ
-  построить `fusion_family_id`: Louvain community detection по positive-рёбрам
+- `MY_GRAPH_GROUPING_ALGORITHM = "leiden"` — рекомендуемый финальный способ
+  построить `fusion_family_id`: Leiden community detection по positive-рёбрам
   с весом из `score`. Он помогает разрезать большие chained components, где
   одна слабая связь склеивает разные товары. Для старого поведения поставьте
   `"connected_components"`.
-- `MY_COMMUNITY_RESOLUTION = 1.0` — разрешение Louvain: значения выше `1`
+- `MY_COMMUNITY_RESOLUTION = 1.0` — разрешение Leiden: значения выше `1`
   обычно дробят family мельче, ниже `1` делают группы крупнее.
-- `MY_COMMUNITY_RANDOM_SEED = 42` — фиксирует воспроизводимый Louvain-разрез.
+- `MY_COMMUNITY_RANDOM_SEED = 42` — фиксирует воспроизводимый Leiden-разрез.
 - `MY_COMMUNITY_EDGE_WEIGHT_COL = "score"` — колонка веса ребра; если её нет,
   все positive-рёбра считаются с весом `1`.
 - `MY_COMPARE_CONNECTED_COMPONENTS = True` — сохраняет рядом старый
@@ -1973,8 +1973,7 @@ run. Если нужно вернуться к старому per-category ре�
 `04_fusion_pack_grouping.ipynb` сохраняет:
 
 - `fusion_components_<suffix>.csv` — товары и номера `fusion_family_id` /
-  `fusion_pack_id`; эти колонки остаются финальным contract для
-  `06_grouped_sku_demo.ipynb`;
+  `fusion_pack_id`; эти колонки остаются финальным результатом notebook 04;
 - `fusion_pair_eval_<suffix>.csv` — пары с флагами `true/pred_same_family` и
   `true/pred_same_pack`.
 

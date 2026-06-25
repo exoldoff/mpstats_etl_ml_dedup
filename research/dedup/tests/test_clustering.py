@@ -133,7 +133,7 @@ def _weak_bridge_pairs() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_louvain_splits_dense_groups_connected_by_weak_bridge() -> None:
+def test_leiden_splits_dense_groups_connected_by_weak_bridge() -> None:
     config = ComponentConfig(left_id_col="left", right_id_col="right", label_col="label")
     pairs = _weak_bridge_pairs()
 
@@ -143,12 +143,12 @@ def test_louvain_splits_dense_groups_connected_by_weak_bridge() -> None:
         config=config,
         grouping_config=GraphGroupingConfig(algorithm="connected_components"),
     )
-    louvain = build_graph_groups(
+    leiden = build_graph_groups(
         pairs,
         edge_labels=FAMILY_EDGE_LABELS,
         config=config,
         grouping_config=GraphGroupingConfig(
-            algorithm="louvain",
+            algorithm="leiden",
             edge_weight_col="score",
             resolution=1.0,
             seed=42,
@@ -156,12 +156,12 @@ def test_louvain_splits_dense_groups_connected_by_weak_bridge() -> None:
     )
 
     connected_by_node = connected.set_index("node_id")["component_id"].to_dict()
-    louvain_by_node = louvain.set_index("node_id")["component_id"].to_dict()
+    leiden_by_node = leiden.set_index("node_id")["component_id"].to_dict()
 
     assert len(set(connected_by_node.values())) == 1
-    assert louvain_by_node["a"] == louvain_by_node["b"] == louvain_by_node["c"]
-    assert louvain_by_node["d"] == louvain_by_node["e"] == louvain_by_node["f"]
-    assert louvain_by_node["a"] != louvain_by_node["d"]
+    assert leiden_by_node["a"] == leiden_by_node["b"] == leiden_by_node["c"]
+    assert leiden_by_node["d"] == leiden_by_node["e"] == leiden_by_node["f"]
+    assert leiden_by_node["a"] != leiden_by_node["d"]
 
 
 def test_pack_groups_do_not_cross_final_family_groups() -> None:
@@ -172,7 +172,7 @@ def test_pack_groups_do_not_cross_final_family_groups() -> None:
         pairs,
         edge_labels=FAMILY_EDGE_LABELS,
         config=family_config,
-        grouping_config=GraphGroupingConfig(algorithm="louvain", edge_weight_col="score", seed=42),
+        grouping_config=GraphGroupingConfig(algorithm="leiden", edge_weight_col="score", seed=42),
     )
     flagged_pairs = add_component_flags(
         pairs,
