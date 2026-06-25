@@ -15,8 +15,10 @@
 - Scope: category-runs `sauces`, `coconut_oil`, `soap`, research-only.
 - Production v1 для этих категорий перенесён в основной web pipeline как
   identity layer: FAISS `K=30`, fine-tuned BGE
-  `ft_bge_reranker_v2_m3`, `threshold_weighted_cost=0.872321`, без fallback
-  на rule-based/zero-shot.
+  `ft_bge_reranker_v2_m3`, `threshold_weighted_cost`, без fallback на
+  rule-based/zero-shot. Production thresholds теперь category-specific:
+  `sauces=0.917444`, `coconut_oil=0.872321`, `soap=0.930329`; общий
+  `0.872321` остаётся fallback для неизвестного ключа категории.
 - Главная ветка работ: кандидаты -> ручная разметка gold-set -> сравнение
   matching engines -> кластеризация.
 - `sauces` сохраняет legacy-пути `research/dedup/data/*_sauces.csv` и
@@ -102,13 +104,38 @@ Research v1 выбран для переноса в основной MPStats wor
 - Добавлен production service `pipeline/services/dedup/`: node catalog из
   `mpstats_products`, FAISS retrieval `K=30`, scoring только fine-tuned BGE
   cross-encoder `ft_bge_reranker_v2_m3`, binary decision через
-  `threshold_weighted_cost` с `threshold_same=0.872321`.
+  `threshold_weighted_cost`; сначала использовался общий
+  `threshold_same=0.872321`, затем профиль переведён на category-specific
+  thresholds.
 - Результат хранится в identity tables `dedup_runs`, `dedup_sku_nodes`,
   `dedup_sku_edges`, `dedup_sku_groups`; `mpstats_products` не схлопывается.
 - Web-app получила вкладку `Данные` -> `ML-дедуп`, API `/api/dedup/*` и
   export/report join к latest successful dedup-run.
 - Fine-tuned модель обязательна: если веса недоступны, production run падает
   ошибкой и не использует rule-based/zero-shot fallback.
+
+### Проверки
+
+См. финальный ответ текущего изменения.
+
+## 2026-06-30 — Category-specific production thresholds
+
+### Зачем
+
+Production дедуп запускается отдельными category-runs, а dev calibration
+показала разный безопасный operating point для `sauces`, `coconut_oil` и
+`soap`. Один общий `0.872321` был быстрым fallback, но для `Соусов` и `Мыла`
+он мягче, чем category-specific weighted-cost thresholds.
+
+### Что сделано
+
+- Production profile получил `category_thresholds`:
+  `sauces=0.917444`, `coconut_oil=0.872321`, `soap=0.930329`.
+- При создании `dedup_run` сервис выбирает threshold по `category_key` /
+  `category_name`, сохраняет его в `dedup_runs.threshold_same` и затем тем же
+  значением размечает `dedup_sku_edges`.
+- Общий `threshold_same=0.872321` остался fallback для неизвестного ключа
+  категории.
 
 ### Проверки
 

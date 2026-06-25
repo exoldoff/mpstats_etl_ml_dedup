@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 import hashlib
 import json
@@ -23,6 +23,23 @@ DEDUP_MODEL_PATH_ENV = "DEDUP_FINE_TUNED_MODEL_PATH"
 DEDUP_TOP_K = 30
 DEDUP_THRESHOLD_STRATEGY = "threshold_weighted_cost"
 DEDUP_THRESHOLD_SAME = 0.872321
+DEDUP_CATEGORY_THRESHOLDS = {
+    "sauces": 0.917444,
+    "coconut_oil": 0.872321,
+    "soap": 0.930329,
+}
+DEDUP_CATEGORY_THRESHOLD_ALIASES = {
+    "sauce": "sauces",
+    "sauces": "sauces",
+    "соус": "sauces",
+    "соусы": "sauces",
+    "coconut_oil": "coconut_oil",
+    "coconut-oil": "coconut_oil",
+    "coconut oil": "coconut_oil",
+    "кокосовое масло": "coconut_oil",
+    "soap": "soap",
+    "мыло": "soap",
+}
 DEDUP_METHOD = "ft_bge_reranker_v2_m3"
 DEDUP_HF_MODEL_ID = "exoldoff/bge-reranker-v2-m3-cross-encoder-marketplaces-rus"
 DEDUP_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
@@ -48,6 +65,7 @@ class DedupProfile:
     activation: str = DEDUP_ACTIVATION
     threshold_strategy: str = DEDUP_THRESHOLD_STRATEGY
     threshold_same: float = DEDUP_THRESHOLD_SAME
+    category_thresholds: dict[str, float] = field(default_factory=lambda: dict(DEDUP_CATEGORY_THRESHOLDS))
     faiss_top_k: int = DEDUP_TOP_K
     embedding_batch_size: int = 64
     cross_encoder_batch_size: int = 32
@@ -65,6 +83,7 @@ class DedupProfile:
             activation=str(tracked.get("activation") or DEDUP_ACTIVATION).strip(),
             threshold_strategy=str(tracked.get("threshold_strategy") or DEDUP_THRESHOLD_STRATEGY).strip(),
             threshold_same=float(tracked.get("threshold_same") or DEDUP_THRESHOLD_SAME),
+            category_thresholds=_category_thresholds_from_profile(tracked),
             faiss_top_k=int(tracked.get("faiss_top_k") or DEDUP_TOP_K),
             embedding_batch_size=max(1, int(payload.get("embedding_batch_size") or 64)),
             cross_encoder_batch_size=max(1, int(payload.get("cross_encoder_batch_size") or 32)),
@@ -79,10 +98,30 @@ class DedupProfile:
             "activation": self.activation,
             "threshold_strategy": self.threshold_strategy,
             "threshold_same": self.threshold_same,
+            "category_thresholds": dict(self.category_thresholds),
             "faiss_top_k": self.faiss_top_k,
             "embedding_batch_size": self.embedding_batch_size,
             "cross_encoder_batch_size": self.cross_encoder_batch_size,
         }
+
+    def threshold_for_category(self, *, category_key: object, category_name: object | None = None) -> float:
+        for value in (category_key, category_name):
+            normalized = _norm_threshold_key(value)
+            if not normalized:
+                continue
+            direct = self.category_thresholds.get(normalized)
+            if direct is not None:
+                return float(direct)
+            canonical = DEDUP_CATEGORY_THRESHOLD_ALIASES.get(normalized)
+            if canonical and canonical in self.category_thresholds:
+                return float(self.category_thresholds[canonical])
+        return self.threshold_same
+
+    def for_category(self, *, category_key: object, category_name: object | None = None) -> "DedupProfile":
+        return replace(
+            self,
+            threshold_same=self.threshold_for_category(category_key=category_key, category_name=category_name),
+        )
 
 
 def _clean_text(value: object) -> str:
@@ -102,6 +141,29 @@ def _tracked_profile_config() -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         payload = {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _norm_threshold_key(value: object) -> str:
+    return _clean_text(value).casefold().replace("ё", "е").replace("-", "_")
+
+
+def _category_thresholds_from_profile(payload: dict[str, Any]) -> dict[str, float]:
+    raw = payload.get("category_thresholds")
+    if not isinstance(raw, dict):
+        return dict(DEDUP_CATEGORY_THRESHOLDS)
+
+    thresholds: dict[str, float] = {}
+    for key, value in raw.items():
+        normalized = _norm_threshold_key(key)
+        if not normalized:
+            continue
+        try:
+            threshold = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(threshold) and threshold > 0:
+            thresholds[normalized] = threshold
+    return thresholds or dict(DEDUP_CATEGORY_THRESHOLDS)
 
 
 def _norm_text(value: object) -> str:
@@ -256,10 +318,14 @@ class DedupService:
         if unknown:
             raise ValueError("ML-дедуп v1 доступен только для Соус/Соусы, Кокосовое масло и Мыло: " + ", ".join(unknown))
 
-        profile = DedupProfile.from_settings(self.get_settings())
+        base_profile = DedupProfile.from_settings(self.get_settings())
         runs: list[dict[str, Any]] = []
         for category_key in clean_keys:
             category = eligible[category_key]
+            profile = base_profile.for_category(
+                category_key=category_key,
+                category_name=category.get("category_name"),
+            )
             run_id = uuid4().hex
             run = self.repository.create_dedup_run(
                 {
@@ -303,9 +369,15 @@ class DedupService:
         self.repository.update_dedup_run(run_id, {"status": "running", "started_at": started, "error": None})
         try:
             profile = DedupProfile(
+                model_method=str(run.get("model_method") or DEDUP_METHOD),
                 model_path=str(run.get("model_path") or ""),
                 hf_model_id=str(run.get("hf_model_id") or DEDUP_HF_MODEL_ID),
                 embedding_model_name=str(run.get("embedding_model_name") or DEDUP_EMBEDDING_MODEL),
+                activation=str(run.get("activation") or DEDUP_ACTIVATION),
+                threshold_strategy=str(run.get("threshold_strategy") or DEDUP_THRESHOLD_STRATEGY),
+                threshold_same=float(run.get("threshold_same") or DEDUP_THRESHOLD_SAME),
+                category_thresholds=DedupProfile.from_settings({}).category_thresholds,
+                faiss_top_k=int(run.get("faiss_top_k") or DEDUP_TOP_K),
                 embedding_batch_size=64,
                 cross_encoder_batch_size=max(1, int(run.get("cross_encoder_batch_size") or 32)),
             )

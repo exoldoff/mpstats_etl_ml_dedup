@@ -399,7 +399,9 @@ python3 -m pytest tests/test_web_api.py
 - MVP проверок качества данных.
 - Production ML-дедуп v1 для `Соус/Соусы`, `Кокосовое масло`, `Мыло`:
   FAISS `K=30`, fine-tuned BGE `ft_bge_reranker_v2_m3`,
-  `threshold_weighted_cost=0.872321`, identity tables без мутации фактов.
+  `threshold_weighted_cost` с category-specific thresholds
+  (`sauces=0.917444`, `coconut_oil=0.872321`, `soap=0.930329`), identity
+  tables без мутации фактов.
 - Research-песочница `research/dedup/` и notebooks для SKU deduplication.
 - Regression tests для web API, pipeline services, parser/quality и
   research/dedup.

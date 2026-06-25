@@ -153,6 +153,9 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         settings_payload = settings_response.json()
         assert settings_payload["threshold_strategy"] == "threshold_weighted_cost"
         assert settings_payload["threshold_same"] == pytest.approx(0.872321)
+        assert settings_payload["category_thresholds"]["sauces"] == pytest.approx(0.917444)
+        assert settings_payload["category_thresholds"]["coconut_oil"] == pytest.approx(0.872321)
+        assert settings_payload["category_thresholds"]["soap"] == pytest.approx(0.930329)
         assert settings_payload["faiss_top_k"] == 30
 
         saved_response = client.put(
@@ -170,6 +173,7 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         saved_payload = saved_response.json()
         assert saved_payload["threshold_strategy"] == "threshold_weighted_cost"
         assert saved_payload["threshold_same"] == pytest.approx(0.872321)
+        assert saved_payload["category_thresholds"]["sauces"] == pytest.approx(0.917444)
         assert saved_payload["faiss_top_k"] == 30
 
         eligible_response = client.get("/api/dedup/eligible-categories", params={"project_name": "unit"})
@@ -185,6 +189,7 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         run = run_response.json()["runs"][0]
         assert run["status"] == "success"
         assert run["threshold_strategy"] == "threshold_weighted_cost"
+        assert run["threshold_same"] == pytest.approx(0.917444)
 
         groups_response = client.get(f"/api/dedup/runs/{run['run_id']}/export", params={"artifact": "groups"})
         assert groups_response.status_code == 200

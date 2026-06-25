@@ -1018,7 +1018,7 @@ classified-файлов.
 - `HF model id` — `exoldoff/bge-reranker-v2-m3-cross-encoder-marketplaces-rus`;
 - `Embedding model` — модель для FAISS candidate retrieval.
 
-Production-профиль зафиксирован в приложении: `method=ft_bge_reranker_v2_m3`, FAISS `K=30`, `threshold_strategy=threshold_weighted_cost`, `threshold_same=0.872321`, `activation=sigmoid`. Эти поля показываются в интерфейсе как профиль запуска. Если fine-tuned модель недоступна, запуск завершается ошибкой; rule-based или zero-shot fallback не считается успешным результатом.
+Production-профиль зафиксирован в приложении: `method=ft_bge_reranker_v2_m3`, FAISS `K=30`, `threshold_strategy=threshold_weighted_cost`, `activation=sigmoid`. Порог применяется по категории: `Соус/Соусы` -> `0.917444`, `Кокосовое масло` -> `0.872321`, `Мыло` -> `0.930329`; общий `threshold_same=0.872321` остаётся fallback для неизвестного ключа категории. В каждом run и в edge-таблице сохраняется фактически применённый threshold. Если fine-tuned модель недоступна, запуск завершается ошибкой; rule-based или zero-shot fallback не считается успешным результатом.
 
 Порядок работы:
 

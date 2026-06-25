@@ -5,5 +5,10 @@
   "activation": "sigmoid",
   "threshold_strategy": "threshold_weighted_cost",
   "threshold_same": 0.872321,
+  "category_thresholds": {
+    "sauces": 0.917444,
+    "coconut_oil": 0.872321,
+    "soap": 0.930329
+  },
   "faiss_top_k": 30
 }

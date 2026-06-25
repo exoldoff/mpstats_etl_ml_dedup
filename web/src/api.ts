@@ -122,6 +122,7 @@ export type DedupSettings = {
   activation: string;
   threshold_strategy: string;
   threshold_same: number;
+  category_thresholds: Record<string, number>;
   faiss_top_k: number;
   embedding_batch_size: number;
   cross_encoder_batch_size: number;

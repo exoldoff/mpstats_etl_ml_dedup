@@ -70,7 +70,7 @@ MPStats API
 
 7. **ML-дедуп identity layer**
 
-   Для категорий `Соус/Соусы`, `Кокосовое масло` и `Мыло` web-app может запустить отдельный dedup-run после сохранения данных в DuckDB. Сервис собирает SKU-node catalog из `mpstats_products`, строит FAISS retrieval с `top_k=30`, оценивает пары только fine-tuned BGE cross-encoder `ft_bge_reranker_v2_m3`, применяет `threshold_weighted_cost` с `threshold_same=0.872321`, затем пишет nodes/edges/groups в `dedup_*` таблицы. `mpstats_products` не схлопывается и не мутируется.
+   Для категорий `Соус/Соусы`, `Кокосовое масло` и `Мыло` web-app может запустить отдельный dedup-run после сохранения данных в DuckDB. Сервис собирает SKU-node catalog из `mpstats_products`, строит FAISS retrieval с `top_k=30`, оценивает пары только fine-tuned BGE cross-encoder `ft_bge_reranker_v2_m3`, применяет `threshold_weighted_cost` с category-specific thresholds (`sauces=0.917444`, `coconut_oil=0.872321`, `soap=0.930329`), затем пишет nodes/edges/groups в `dedup_*` таблицы. `mpstats_products` не схлопывается и не мутируется.
 
 8. **Отчеты, экспорт и качество**
 

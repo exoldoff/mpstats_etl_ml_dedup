@@ -101,6 +101,11 @@ const defaultDedupSettings: DedupSettings = {
   activation: "sigmoid",
   threshold_strategy: "threshold_weighted_cost",
   threshold_same: 0.872321,
+  category_thresholds: {
+    sauces: 0.917444,
+    coconut_oil: 0.872321,
+    soap: 0.930329
+  },
   faiss_top_k: 30,
   embedding_batch_size: 64,
   cross_encoder_batch_size: 32
@@ -3765,6 +3770,14 @@ function DedupWorkspace(props: {
   const selectedCount = props.categories.filter((category) => props.selectedCategoryKeys.has(category.category_key)).length;
   const latestRun = props.runs[0] ?? null;
   const hasModelPath = Boolean(props.settings.model_path.trim());
+  const categoryThresholdSummary = [
+    ["Соусы", props.settings.category_thresholds.sauces],
+    ["Кокос", props.settings.category_thresholds.coconut_oil],
+    ["Мыло", props.settings.category_thresholds.soap]
+  ]
+    .filter(([, value]) => typeof value === "number")
+    .map(([label, value]) => `${label}=${Number(value).toFixed(6)}`)
+    .join(" · ");
   return (
     <section className="panel stage-panel dedup-panel">
       <SectionTitle
@@ -3779,7 +3792,7 @@ function DedupWorkspace(props: {
         <Metric label="Категорий" value={formatNumber(props.categories.length)} />
         <Metric label="Выбрано" value={formatNumber(selectedCount)} />
         <Metric label="K FAISS" value={formatNumber(props.settings.faiss_top_k)} />
-        <Metric label="Порог" value={String(props.settings.threshold_same)} />
+        <Metric label="Fallback порог" value={String(props.settings.threshold_same)} />
       </div>
 
       <div className="dedup-settings">
@@ -3816,7 +3829,7 @@ function DedupWorkspace(props: {
             <span>{props.settings.model_method}</span>
             <span>{props.settings.activation}</span>
             <span>{props.settings.threshold_strategy}</span>
-            <span>threshold_same={props.settings.threshold_same}</span>
+            <span>{categoryThresholdSummary || `threshold_same=${props.settings.threshold_same}`}</span>
             <span>faiss_top_k={props.settings.faiss_top_k}</span>
           </div>
           {!hasModelPath ? <div className="export-warning">Локальный путь модели не задан. Запуск возможен только если HF модель доступна из окружения.</div> : null}

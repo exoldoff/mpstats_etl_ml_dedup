@@ -154,6 +154,12 @@ def test_profile_locks_weighted_cost_threshold_and_faiss_k() -> None:
     assert profile.model_method == "ft_bge_reranker_v2_m3"
     assert profile.threshold_strategy == "threshold_weighted_cost"
     assert profile.threshold_same == pytest.approx(0.872321)
+    assert profile.category_thresholds["sauces"] == pytest.approx(0.917444)
+    assert profile.category_thresholds["coconut_oil"] == pytest.approx(0.872321)
+    assert profile.category_thresholds["soap"] == pytest.approx(0.930329)
+    assert profile.threshold_for_category(category_key="sauce", category_name="Соус") == pytest.approx(0.917444)
+    assert profile.threshold_for_category(category_key="soap", category_name="Мыло") == pytest.approx(0.930329)
+    assert profile.threshold_for_category(category_key="unknown", category_name="Другая") == pytest.approx(0.872321)
     assert profile.faiss_top_k == 30
 
 
@@ -203,7 +209,7 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
 
     assert run["status"] == "success"
     assert run["threshold_strategy"] == "threshold_weighted_cost"
-    assert run["threshold_same"] == pytest.approx(0.872321)
+    assert run["threshold_same"] == pytest.approx(0.917444)
     assert run["faiss_top_k"] == 30
 
     groups = repository.fetch_dedup_artifact(run_id=run["run_id"], artifact="groups")
@@ -211,6 +217,7 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     assert len(groups) == 3
     assert edges
     assert {edge["threshold_strategy"] for edge in edges} == {"threshold_weighted_cost"}
+    assert {round(float(edge["threshold_same"]), 6) for edge in edges} == {0.917444}
 
     visible_columns = repository.export_visible_columns(table_name=settings.products_table, project_name="unit")
     assert "ML-группа товара" in visible_columns
