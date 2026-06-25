@@ -157,6 +157,8 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         assert settings_payload["category_thresholds"]["coconut_oil"] == pytest.approx(0.872321)
         assert settings_payload["category_thresholds"]["soap"] == pytest.approx(0.930329)
         assert settings_payload["faiss_top_k"] == 30
+        assert settings_payload["retrieval_cache_enabled"] is True
+        assert settings_payload["retrieval_cache_schema_version"] == "dedup_retrieval_cache_v1"
 
         saved_response = client.put(
             "/api/dedup/settings",
@@ -190,6 +192,9 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         assert run["status"] == "success"
         assert run["threshold_strategy"] == "threshold_weighted_cost"
         assert run["threshold_same"] == pytest.approx(0.917444)
+        assert run["manifest_json"]["retrieval_cache_status"] == "rebuilt"
+        assert run["manifest_json"]["retrieval_cache_key"]
+        assert run["manifest_json"]["embedding_shape"] == [2, 2]
 
         groups_response = client.get(f"/api/dedup/runs/{run['run_id']}/export", params={"artifact": "groups"})
         assert groups_response.status_code == 200

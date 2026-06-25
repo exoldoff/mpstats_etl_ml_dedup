@@ -60,6 +60,17 @@ FAISS caveats для будущей реализации:
 - `read_index` не должен читать непроверенные/чужие index files: нужен
   manifest, checksum и контроль того, что файл создан нашим pipeline.
 
+Решение production v1 от 2026-06-30:
+
+- сначала кэшировать embeddings, потому что текущий bottleneck —
+  повторный `model.encode(...)`;
+- сохранять `embeddings.npy` и читать его через `np.load(..., mmap_mode="r")`;
+- `IndexFlatIP` пересобирать на каждом run из cached embeddings;
+- не добавлять `IO_FLAG_MMAP` к текущему flat-index flow;
+- не использовать `faiss.read_index` для production v1;
+- on-disk IVF / mmap FAISS index рассматривать позже отдельным режимом,
+  только после recall@k benchmark.
+
 ### 2. Вынести runtime из notebook cells в сервисный слой
 
 Notebook 03 уже содержит несколько больших code cells: загрузка labels,
@@ -352,7 +363,10 @@ false-merge и component-risk. Cost sorting не должен быть един�
 ## Рекомендуемый порядок работ
 
 1. Добавить manifest + typed schema validation для существующих CSV artifacts.
-2. Добавить embeddings cache и `run_manifest.json` в candidate generation.
+2. Добавить embeddings cache и `run_manifest.json` в candidate generation
+   / production retrieval. Production v1 закрыт через
+   `pipeline/services/dedup/retrieval_cache.py`; research notebooks могут
+   переиспользовать идею позже.
 3. Добавить persisted FAISS index для small/medium runs; отдельно проверить
    mmap/IVF режим на большом synthetic slice.
 4. Добавить score cache для notebook 03.

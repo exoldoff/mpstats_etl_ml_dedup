@@ -126,6 +126,8 @@ export type DedupSettings = {
   faiss_top_k: number;
   embedding_batch_size: number;
   cross_encoder_batch_size: number;
+  retrieval_cache_enabled: boolean;
+  retrieval_cache_schema_version: string;
 };
 
 export type DedupRun = {
@@ -147,6 +149,7 @@ export type DedupRun = {
   edge_count?: number | null;
   group_count?: number | null;
   manifest_path?: string | null;
+  manifest_json?: Record<string, unknown> | null;
   error?: string | null;
   created_at?: string | null;
   started_at?: string | null;

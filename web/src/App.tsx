@@ -108,7 +108,9 @@ const defaultDedupSettings: DedupSettings = {
   },
   faiss_top_k: 30,
   embedding_batch_size: 64,
-  cross_encoder_batch_size: 32
+  cross_encoder_batch_size: 32,
+  retrieval_cache_enabled: true,
+  retrieval_cache_schema_version: "dedup_retrieval_cache_v1"
 };
 
 const smartPlanFilters: Array<{ value: SmartPlanStatus | "all"; label: string }> = [
@@ -315,6 +317,20 @@ function liveSmartPlanStatus(task: SmartPlanTask) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function dedupCacheStatus(run: DedupRun | null | undefined) {
+  const manifest = run?.manifest_json;
+  if (!isRecord(manifest)) return "-";
+  const status = String(manifest.retrieval_cache_status ?? "");
+  if (!status) return "-";
+  if (status === "hit") return "cache hit";
+  if (status === "skipped") return "cache skipped";
+  if (status === "rebuilt") {
+    const reason = String(manifest.cache_rebuild_reason ?? "");
+    return reason.startsWith("corrupt") ? "cache rebuilt (corrupt)" : "cache rebuilt";
+  }
+  return `cache ${status}`;
 }
 
 function emptyCatalogFilter(): CatalogFilterDraft {
@@ -3793,6 +3809,7 @@ function DedupWorkspace(props: {
         <Metric label="Выбрано" value={formatNumber(selectedCount)} />
         <Metric label="K FAISS" value={formatNumber(props.settings.faiss_top_k)} />
         <Metric label="Fallback порог" value={String(props.settings.threshold_same)} />
+        <Metric label="Cache" value={dedupCacheStatus(latestRun)} />
       </div>
 
       <div className="dedup-settings">
@@ -3873,6 +3890,7 @@ function DedupWorkspace(props: {
           emptyText="Запуски ML-дедупа появятся здесь."
           columns={[
             { id: "status", label: "Статус", value: (run) => run.status, render: (run) => <Badge value={run.status} /> },
+            { id: "cache", label: "Cache", value: (run) => dedupCacheStatus(run) },
             { id: "category", label: "Категория", value: (run) => run.category_name ?? run.category_key },
             { id: "nodes", label: "SKU", value: (run) => run.node_count ?? 0, render: (run) => formatNumber(run.node_count), numeric: true },
             { id: "candidates", label: "Кандидаты", value: (run) => run.candidate_count ?? 0, render: (run) => formatNumber(run.candidate_count), numeric: true },

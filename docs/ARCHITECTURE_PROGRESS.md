@@ -19,6 +19,10 @@
   rule-based/zero-shot. Production thresholds теперь category-specific:
   `sauces=0.917444`, `coconut_oil=0.872321`, `soap=0.930329`; общий
   `0.872321` остаётся fallback для неизвестного ключа категории.
+- Production retrieval теперь кэширует embeddings по content-addressed
+  manifest в `data/projects/<project>/dedup_cache/<category>/<cache_key>/`;
+  повторные run читают `embeddings.npy` через `np.load(..., mmap_mode="r")`,
+  а `IndexFlatIP` пересобирается в памяти.
 - Главная ветка работ: кандидаты -> ручная разметка gold-set -> сравнение
   matching engines -> кластеризация.
 - `sauces` сохраняет legacy-пути `research/dedup/data/*_sauces.csv` и
@@ -91,6 +95,36 @@
   fine-tuned cross-encoder `ft_bge_reranker_v2_m3` через отдельный
   notebook-config, потому что этот метод не является alias-ом общего
   `model_registry`.
+
+## 2026-06-30 — Production retrieval embeddings cache
+
+### Зачем
+
+Текущий production v1 тратил время на повторный `model.encode(...)` при
+каждом ML-dedup run, хотя source/model чаще остаются теми же. Для
+`IndexFlatIP` дешевле и безопаснее читать готовые embeddings и пересобрать
+flat index на месте, чем сохранять и читать FAISS index-файлы.
+
+### Что сделано
+
+- Добавлен content-addressed retrieval cache в `pipeline/services/dedup/`:
+  `manifest.json`, `node_ids.json`, `embeddings.npy`.
+- Cache key зависит от source row hashes, embedding model, версии
+  text-builder, normalize flag, embedding dimension и версии схемы
+  `dedup_retrieval_cache_v1`.
+- При cache hit embeddings читаются через `np.load(..., mmap_mode="r")`; при
+  miss/corrupt сервис пересчитывает embeddings и заново пишет cache.
+- Run manifest и `dedup_runs.manifest_json` получили `retrieval_cache_status`,
+  `retrieval_cache_key`, `retrieval_cache_path`, `embedding_shape` и
+  `cache_rebuild_reason`.
+- UI вкладки `Данные` -> `ML-дедуп` показывает короткий cache status последнего
+  run и отдельную колонку cache status в таблице запусков.
+- FAISS policy v1: `IndexFlatIP` пересобирается из cached embeddings; FAISS
+  `read_index`/`write_index` и `IO_FLAG_MMAP` для flat index не используются.
+
+### Проверки
+
+См. финальный ответ текущего изменения.
 
 ## 2026-06-30 — Production ML-dedup identity layer
 

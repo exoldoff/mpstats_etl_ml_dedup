@@ -82,7 +82,11 @@ def seed_dedup_cube(repository: DuckDbAppRepository, settings: AppSettings, root
 
 
 class FakeEmbeddingModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def encode(self, texts: list[str], **_: object) -> np.ndarray:
+        self.calls += 1
         return np.eye(len(texts), dtype="float32")
 
 
@@ -126,7 +130,12 @@ def fake_torch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(nn=fake_nn))
 
 
-def make_service(root: Path, *, cross_encoder_factory=None) -> tuple[DedupService, DuckDbAppRepository, FakeFaissModule, AppSettings]:
+def make_service(
+    root: Path,
+    *,
+    cross_encoder_factory=None,
+    embedding_model: FakeEmbeddingModel | None = None,
+) -> tuple[DedupService, DuckDbAppRepository, FakeFaissModule, AppSettings]:
     settings = make_settings(root)
     repository = DuckDbAppRepository(settings)
     repository.ensure_ready()
@@ -134,7 +143,7 @@ def make_service(root: Path, *, cross_encoder_factory=None) -> tuple[DedupServic
     service = DedupService(
         settings=settings,
         repository=repository,
-        embedding_model_factory=lambda _: FakeEmbeddingModel(),
+        embedding_model_factory=lambda _: embedding_model or FakeEmbeddingModel(),
         cross_encoder_factory=cross_encoder_factory or (lambda _: FakeCrossEncoder()),
         faiss_module=fake_faiss,
     )
@@ -211,6 +220,9 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     assert run["threshold_strategy"] == "threshold_weighted_cost"
     assert run["threshold_same"] == pytest.approx(0.917444)
     assert run["faiss_top_k"] == 30
+    assert run["manifest_json"]["retrieval_cache_status"] == "rebuilt"
+    assert run["manifest_json"]["cache_rebuild_reason"] == "miss"
+    assert run["manifest_json"]["embedding_shape"] == [3, 3]
 
     groups = repository.fetch_dedup_artifact(run_id=run["run_id"], artifact="groups")
     edges = repository.fetch_dedup_artifact(run_id=run["run_id"], artifact="edges")
@@ -234,3 +246,52 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     with connect(settings.db_path) as con:
         after_count = con.execute(f"SELECT COUNT(*) FROM {settings.products_table}").fetchone()[0]
     assert after_count == before_count
+
+
+def test_retrieval_cache_hit_reuses_embeddings_without_model_encode(tmp_path: Path) -> None:
+    embedding_model = FakeEmbeddingModel()
+    service, repository, _, settings = make_service(tmp_path, embedding_model=embedding_model)
+    seed_dedup_cube(repository, settings, tmp_path, rows_count=3)
+
+    first = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    second = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+
+    assert first["status"] == "success"
+    assert first["manifest_json"]["retrieval_cache_status"] == "rebuilt"
+    assert Path(str(first["manifest_json"]["retrieval_cache_path"])).joinpath("embeddings.npy").is_file()
+    assert second["status"] == "success"
+    assert second["manifest_json"]["retrieval_cache_status"] == "hit"
+    assert embedding_model.calls == 1
+
+
+def test_retrieval_cache_model_change_invalidates_embeddings(tmp_path: Path) -> None:
+    embedding_model = FakeEmbeddingModel()
+    service, repository, _, settings = make_service(tmp_path, embedding_model=embedding_model)
+    seed_dedup_cube(repository, settings, tmp_path, rows_count=3)
+
+    first = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    service.save_settings({"embedding_model_name": "unit/other-embedding-model"})
+    second = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+
+    assert first["manifest_json"]["retrieval_cache_status"] == "rebuilt"
+    assert second["status"] == "success"
+    assert second["embedding_model_name"] == "unit/other-embedding-model"
+    assert second["manifest_json"]["retrieval_cache_status"] == "rebuilt"
+    assert second["manifest_json"]["cache_rebuild_reason"] == "miss"
+    assert embedding_model.calls == 2
+
+
+def test_retrieval_cache_corrupt_node_ids_rebuilds_without_fatal_error(tmp_path: Path) -> None:
+    embedding_model = FakeEmbeddingModel()
+    service, repository, _, settings = make_service(tmp_path, embedding_model=embedding_model)
+    seed_dedup_cube(repository, settings, tmp_path, rows_count=3)
+
+    first = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    cache_path = Path(str(first["manifest_json"]["retrieval_cache_path"]))
+    cache_path.joinpath("node_ids.json").write_text("[\"broken-node\"]", encoding="utf-8")
+    second = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+
+    assert second["status"] == "success"
+    assert second["manifest_json"]["retrieval_cache_status"] == "rebuilt"
+    assert str(second["manifest_json"]["cache_rebuild_reason"]).startswith("corrupt:")
+    assert embedding_model.calls == 2

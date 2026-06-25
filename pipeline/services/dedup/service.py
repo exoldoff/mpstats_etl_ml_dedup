@@ -16,6 +16,10 @@ import pandas as pd
 
 from mpstats_app.config import AppSettings
 from mpstats_app.repositories.duckdb_repository import DuckDbAppRepository
+from pipeline.services.dedup.retrieval_cache import (
+    RETRIEVAL_CACHE_SCHEMA_VERSION,
+    RetrievalEmbeddingCache,
+)
 
 
 DEDUP_SETTINGS_KEY = "dedup_settings_json"
@@ -272,6 +276,7 @@ class DedupService:
         self._embedding_model_factory = embedding_model_factory
         self._cross_encoder_factory = cross_encoder_factory
         self._faiss_module = faiss_module
+        self._retrieval_cache = RetrievalEmbeddingCache(project_root=settings.project_root)
         self._lock = RLock()
         self._threads: dict[str, Thread] = {}
 
@@ -285,7 +290,7 @@ class DedupService:
                     payload = parsed
             except json.JSONDecodeError:
                 payload = {}
-        return DedupProfile.from_settings(payload).to_dict()
+        return self._settings_payload(DedupProfile.from_settings(payload))
 
     def save_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
         current = self.get_settings()
@@ -293,7 +298,7 @@ class DedupService:
         profile = DedupProfile.from_settings(merged)
         data = profile.to_dict()
         self.repository.set_setting(DEDUP_SETTINGS_KEY, json.dumps(data, ensure_ascii=False))
-        return data
+        return self._settings_payload(profile)
 
     def eligible_categories(self, *, project_name: str) -> dict[str, Any]:
         rows = self.repository.list_dedup_eligible_categories(project_name=project_name)
@@ -303,7 +308,7 @@ class DedupService:
                 project_name=project_name,
                 category_key=str(row["category_key"]),
             )
-            enriched.append({**row, "latest_successful_run": latest})
+            enriched.append({**row, "latest_successful_run": self._normalize_run(latest)})
         return {"project_name": project_name, "categories": enriched, "settings": self.get_settings()}
 
     def start_runs(self, *, project_name: str, category_keys: list[str], wait: bool = False) -> dict[str, Any]:
@@ -346,16 +351,21 @@ class DedupService:
                 with self._lock:
                     self._threads[run_id] = thread
                 thread.start()
-        return {"runs": [self.repository.get_dedup_run(str(run["run_id"])) or run for run in runs]}
+        return {"runs": [self._normalize_run(self.repository.get_dedup_run(str(run["run_id"])) or run) for run in runs]}
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         run = self.repository.get_dedup_run(run_id)
         if not run:
             raise ValueError("Dedup run не найден.")
-        return run
+        return self._normalize_run(run)
 
     def list_runs(self, *, project_name: str | None = None, category_key: str | None = None) -> dict[str, Any]:
-        return {"runs": self.repository.list_dedup_runs(project_name=project_name, category_key=category_key)}
+        return {
+            "runs": [
+                self._normalize_run(run)
+                for run in self.repository.list_dedup_runs(project_name=project_name, category_key=category_key)
+            ]
+        }
 
     def export_artifact(self, *, run_id: str, artifact: str) -> dict[str, Any]:
         self.get_run(run_id)
@@ -391,12 +401,21 @@ class DedupService:
 
             nodes = self._build_nodes(source, run_id=run_id)
             if len(nodes) < 2:
+                cache_metadata = self._retrieval_cache.skipped("not_enough_nodes").to_manifest()
                 self._load_cross_encoder(profile)
                 groups = self._build_groups(nodes, edges=pd.DataFrame())
                 self.repository.replace_dedup_nodes(run_id, nodes.to_dict(orient="records"))
                 self.repository.replace_dedup_edges(run_id, [])
                 self.repository.replace_dedup_groups(run_id, groups.to_dict(orient="records"))
-                manifest_path = self._write_manifest(run_id, run, profile, nodes, pd.DataFrame(), groups)
+                manifest_path = self._write_manifest(
+                    run_id,
+                    run,
+                    profile,
+                    nodes,
+                    pd.DataFrame(),
+                    groups,
+                    retrieval_cache=cache_metadata,
+                )
                 self.repository.update_dedup_run(
                     run_id,
                     {
@@ -406,12 +425,35 @@ class DedupService:
                         "edge_count": 0,
                         "group_count": len(groups),
                         "manifest_path": str(manifest_path),
+                        "manifest_json": self._run_manifest_json(
+                            manifest_path=manifest_path,
+                            profile=profile,
+                            retrieval_cache=cache_metadata,
+                        ),
                         "finished_at": datetime.now(),
                     },
                 )
                 return
 
-            embeddings = self._encode_nodes(nodes, profile)
+            cache_load = self._retrieval_cache.load(
+                nodes,
+                project_name=str(run["project_name"]),
+                category_key=str(run["category_key"]),
+                embedding_model_name=profile.embedding_model_name,
+            )
+            if cache_load.embeddings is not None:
+                embeddings = cache_load.embeddings
+                cache_metadata = cache_load.metadata.to_manifest()
+            else:
+                embeddings = self._encode_nodes(nodes, profile)
+                cache_metadata = self._retrieval_cache.write(
+                    nodes,
+                    embeddings,
+                    project_name=str(run["project_name"]),
+                    category_key=str(run["category_key"]),
+                    embedding_model_name=profile.embedding_model_name,
+                    rebuild_reason=str(cache_load.metadata.cache_rebuild_reason or "miss"),
+                ).to_manifest()
             candidates = self._generate_candidates(nodes, embeddings, profile)
             if candidates.empty:
                 raise DedupRuntimeError("FAISS не вернул ни одной пары-кандидата.")
@@ -421,7 +463,15 @@ class DedupService:
             self.repository.replace_dedup_nodes(run_id, nodes.to_dict(orient="records"))
             self.repository.replace_dedup_edges(run_id, edges.to_dict(orient="records"))
             self.repository.replace_dedup_groups(run_id, groups.to_dict(orient="records"))
-            manifest_path = self._write_manifest(run_id, run, profile, nodes, edges, groups)
+            manifest_path = self._write_manifest(
+                run_id,
+                run,
+                profile,
+                nodes,
+                edges,
+                groups,
+                retrieval_cache=cache_metadata,
+            )
             self.repository.update_dedup_run(
                 run_id,
                 {
@@ -431,13 +481,11 @@ class DedupService:
                     "edge_count": len(edges),
                     "group_count": len(groups),
                     "manifest_path": str(manifest_path),
-                    "manifest_json": {
-                        "manifest_path": str(manifest_path),
-                        "model_method": profile.model_method,
-                        "threshold_strategy": profile.threshold_strategy,
-                        "threshold_same": profile.threshold_same,
-                        "faiss_top_k": profile.faiss_top_k,
-                    },
+                    "manifest_json": self._run_manifest_json(
+                        manifest_path=manifest_path,
+                        profile=profile,
+                        retrieval_cache=cache_metadata,
+                    ),
                     "finished_at": datetime.now(),
                 },
             )
@@ -756,6 +804,8 @@ class DedupService:
         nodes: pd.DataFrame,
         edges: pd.DataFrame,
         groups: pd.DataFrame,
+        *,
+        retrieval_cache: dict[str, object] | None = None,
     ) -> Path:
         output_dir = self.settings.project_root / "data" / "projects" / str(run["project_name"]) / "dedup" / run_id
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -769,7 +819,55 @@ class DedupService:
             "node_count": int(len(nodes)),
             "edge_count": int(len(edges)),
             "group_count": int(len(groups)),
+            "retrieval_cache": retrieval_cache or {},
             "created_at": datetime.now().isoformat(timespec="seconds"),
         }
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         return manifest_path
+
+    @staticmethod
+    def _settings_payload(profile: DedupProfile) -> dict[str, Any]:
+        payload = profile.to_dict()
+        payload.update(
+            {
+                "retrieval_cache_enabled": True,
+                "retrieval_cache_schema_version": RETRIEVAL_CACHE_SCHEMA_VERSION,
+            }
+        )
+        return payload
+
+    @staticmethod
+    def _normalize_run(run: dict[str, Any] | None) -> dict[str, Any] | None:
+        if run is None:
+            return None
+        output = dict(run)
+        manifest = output.get("manifest_json")
+        if isinstance(manifest, str):
+            try:
+                output["manifest_json"] = json.loads(manifest) if manifest.strip() else {}
+            except json.JSONDecodeError:
+                output["manifest_json"] = {}
+        elif manifest is None:
+            output["manifest_json"] = {}
+        return output
+
+    @staticmethod
+    def _run_manifest_json(
+        *,
+        manifest_path: Path,
+        profile: DedupProfile,
+        retrieval_cache: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            "manifest_path": str(manifest_path),
+            "model_method": profile.model_method,
+            "threshold_strategy": profile.threshold_strategy,
+            "threshold_same": profile.threshold_same,
+            "faiss_top_k": profile.faiss_top_k,
+            "retrieval_cache_status": retrieval_cache.get("status"),
+            "retrieval_cache_key": retrieval_cache.get("cache_key"),
+            "retrieval_cache_path": retrieval_cache.get("cache_path"),
+            "retrieval_cache_schema_version": retrieval_cache.get("schema_version") or RETRIEVAL_CACHE_SCHEMA_VERSION,
+            "embedding_shape": retrieval_cache.get("embedding_shape"),
+            "cache_rebuild_reason": retrieval_cache.get("cache_rebuild_reason"),
+        }
