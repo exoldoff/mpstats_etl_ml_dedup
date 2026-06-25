@@ -66,16 +66,48 @@
   `binary_threshold_by_volume_bucket.csv`.
   Manual review, LLM-review и triage на текущем benchmark-этапе не нужны.
 - Downstream теперь идёт через `notebooks/04_fusion_pack_grouping.ipynb`:
-  notebook выбирает fusion-run только по `dev`, строит `family` и `pack`
-  группы и сохраняет `fusion_components_<suffix>.csv` /
+  notebook выбирает fusion-run только по `dev`, строит `family` через
+  Louvain community detection по weighted positive-рёбрам, строит `pack`
+  группы только внутри выбранной `family` и сохраняет
+  `fusion_components_<suffix>.csv` /
   `fusion_pair_eval_<suffix>.csv` в data-папку category-run. Для нового
   frozen/fine-tuning benchmark `04` запускается один раз на
   `sauces,coconut_oil,soap`: читает общий `artifacts/reports/fine_tuning/`,
   восстанавливает `category_run` через frozen split, строит отдельные графы
   по категориям и показывает graph-quality диагностику плюс 3D components.
+  Старый connected-components результат сохраняется рядом как audit-baseline
+  `connected_family_id` / `connected_pack_id`.
 - Для просмотра результата на реальных строках DuckDB добавлен
   `notebooks/06_grouped_sku_demo.ipynb`: он накладывает `fusion_*` на
   `mpstats_products` и показывает склеенные SKU-группы.
+
+## 2026-06-30 — Community detection in fusion graph
+
+### Зачем
+
+Connected components слишком чувствительны к bridge-edge: одна слабая
+positive-пара может сцепить несколько разных товаров в одну большую family.
+Для research downstream нужен режим, который умеет разрезать такие chained
+components без изменения pairwise scorer.
+
+### Что сделано
+
+- `research/dedup/clustering.py` получил `GraphGroupingConfig` и
+  `build_graph_groups(...)`: старый `connected_components` режим сохранён,
+  новый `louvain` режим использует weighted-рёбра из `score`.
+- `notebooks/04_fusion_pack_grouping.ipynb` по умолчанию строит финальные
+  `fusion_family_id` через Louvain, сохраняет connected-components baseline в
+  `connected_family_id` / `connected_pack_id` и добавляет metadata
+  `fusion_grouping_algorithm`, `fusion_community_resolution`,
+  `fusion_community_seed`.
+- Финальные `fusion_pack_id` строятся только внутри выбранной
+  `fusion_family_id`, чтобы pack-группы не пересекали family после
+  community detection.
+- `networkx` добавлен только в research-зависимости.
+
+### Проверки
+
+См. финальный ответ текущего изменения.
 
 ## 2026-06-30 — Remove obsolete notebook 05
 

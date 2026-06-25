@@ -28,6 +28,15 @@ class PackSignatureConfig:
     pack_abs_tolerance: float = 0.25
 
 
+@dataclass(frozen=True)
+class GraphGroupingConfig:
+    algorithm: str = "connected_components"
+    edge_weight_col: str = "score"
+    resolution: float = 1.0
+    seed: int | None = 42
+    default_edge_weight: float = 1.0
+
+
 class _UnionFind:
     def __init__(self, nodes: Iterable[str]) -> None:
         self.parent = {node: node for node in nodes}
@@ -106,6 +115,154 @@ def _to_number(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) and number > 0 else None
+
+
+def _valid_node(value: object) -> str | None:
+    if pd.isna(value):
+        return None
+    node = str(value)
+    return node if node else None
+
+
+def _component_records_from_groups(
+    groups: Iterable[Iterable[str]],
+    *,
+    component_col: str,
+) -> pd.DataFrame:
+    sorted_groups = sorted(
+        (sorted(set(group)) for group in groups if group),
+        key=lambda group: (group[0], len(group)),
+    )
+    records: list[dict[str, object]] = []
+    for component_id, nodes in enumerate(sorted_groups, start=1):
+        for node in nodes:
+            records.append({"node_id": node, component_col: component_id})
+    if not records:
+        return pd.DataFrame(columns=["node_id", component_col])
+    return pd.DataFrame(records).sort_values("node_id").reset_index(drop=True)
+
+
+def _edge_rows(
+    pairs: pd.DataFrame,
+    *,
+    labels: set[str],
+    cfg: ComponentConfig,
+    edge_mask: pd.Series | None,
+) -> pd.DataFrame:
+    edge_rows = pairs[pairs[cfg.label_col].isin(labels)]
+    if edge_mask is not None:
+        aligned_mask = edge_mask.reindex(pairs.index, fill_value=False).astype(bool)
+        edge_rows = edge_rows[aligned_mask.loc[edge_rows.index]]
+    return edge_rows
+
+
+def _edge_weight(value: object, default: float) -> float:
+    number = _to_number(value)
+    return number if number is not None else default
+
+
+def _weighted_edges(
+    edge_rows: pd.DataFrame,
+    *,
+    cfg: ComponentConfig,
+    grouping_cfg: GraphGroupingConfig,
+) -> dict[tuple[str, str], float]:
+    edges: dict[tuple[str, str], float] = {}
+    has_weight_col = grouping_cfg.edge_weight_col in edge_rows.columns
+    for row in edge_rows.itertuples(index=False):
+        values = row._asdict()
+        left = _valid_node(values[cfg.left_id_col])
+        right = _valid_node(values[cfg.right_id_col])
+        if left is None or right is None or left == right:
+            continue
+        edge = tuple(sorted((left, right)))
+        weight = (
+            _edge_weight(values[grouping_cfg.edge_weight_col], grouping_cfg.default_edge_weight)
+            if has_weight_col
+            else grouping_cfg.default_edge_weight
+        )
+        edges[edge] = max(edges.get(edge, 0.0), weight)
+    return edges
+
+
+def _louvain_components(
+    pairs: pd.DataFrame,
+    *,
+    edge_labels: Iterable[str],
+    config: ComponentConfig,
+    grouping_config: GraphGroupingConfig,
+    edge_mask: pd.Series | None,
+) -> pd.DataFrame:
+    if not math.isfinite(grouping_config.resolution) or grouping_config.resolution <= 0:
+        raise ValueError("Louvain resolution must be a positive finite number")
+
+    try:
+        import networkx as nx
+    except ImportError as exc:
+        raise RuntimeError(
+            "NetworkX is required for graph grouping algorithm='louvain'. "
+            "Install research dependencies from requirements-research.txt."
+        ) from exc
+
+    labels = set(edge_labels)
+    left = pairs[config.left_id_col].astype("string")
+    right = pairs[config.right_id_col].astype("string")
+    nodes = sorted(set(left.dropna()) | set(right.dropna()))
+    edge_rows = _edge_rows(pairs, labels=labels, cfg=config, edge_mask=edge_mask)
+    weighted_edges = _weighted_edges(edge_rows, cfg=config, grouping_cfg=grouping_config)
+
+    graph = nx.Graph()
+    graph.add_nodes_from(nodes)
+    for (left_node, right_node), weight in weighted_edges.items():
+        graph.add_edge(left_node, right_node, weight=weight)
+
+    if not weighted_edges:
+        return _component_records_from_groups(({node} for node in nodes), component_col=config.component_col)
+
+    communities = nx.community.louvain_communities(
+        graph,
+        weight="weight",
+        resolution=grouping_config.resolution,
+        seed=grouping_config.seed,
+    )
+    covered = set().union(*(set(community) for community in communities)) if communities else set()
+    missing_nodes = [node for node in nodes if node not in covered]
+    groups = list(communities) + [{node} for node in missing_nodes]
+    return _component_records_from_groups(groups, component_col=config.component_col)
+
+
+def build_graph_groups(
+    pairs: pd.DataFrame,
+    *,
+    edge_labels: Iterable[str],
+    config: ComponentConfig | None = None,
+    grouping_config: GraphGroupingConfig | None = None,
+    edge_mask: pd.Series | None = None,
+) -> pd.DataFrame:
+    """Build graph groups from positive pair edges.
+
+    ``connected_components`` preserves the historical union-find behavior.
+    ``louvain`` can split a chained positive component into denser communities.
+    """
+    cfg = config or ComponentConfig()
+    graph_cfg = grouping_config or GraphGroupingConfig()
+    required = {cfg.left_id_col, cfg.right_id_col, cfg.label_col}
+    missing = sorted(required - set(pairs.columns))
+    if missing:
+        raise ValueError(f"Missing columns for graph grouping: {missing}")
+
+    algorithm = graph_cfg.algorithm.strip().lower()
+    if algorithm in {"connected_components", "components"}:
+        return build_components(pairs, edge_labels=edge_labels, config=cfg, edge_mask=edge_mask)
+    if algorithm == "louvain":
+        return _louvain_components(
+            pairs,
+            edge_labels=edge_labels,
+            config=cfg,
+            grouping_config=graph_cfg,
+            edge_mask=edge_mask,
+        )
+    raise ValueError(f"Unknown graph grouping algorithm: {graph_cfg.algorithm!r}")
 
 
 def _numbers_close(left: float | None, right: float | None, *, abs_tol: float, rel_tol: float) -> bool:

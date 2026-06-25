@@ -178,9 +178,13 @@ Revenue / turnover / GMV не используются как основной �
 binary benchmark с `pair_weight = 1`.
 
 ## 6. Кластеризация
-- Level 1: connected components по positive binary-рёбрам выбранной стратегии
-  → товарная семья / базовый продукт.
-- Level 2: внутри семьи группировка по deterministic pack signature из
+- Level 1: graph grouping по positive binary-рёбрам выбранной стратегии
+  → товарная семья / базовый продукт. Research default теперь —
+  Louvain community detection по weighted-рёбрам (`score`) с фиксированным
+  seed, чтобы слабый bridge-edge не обязательно склеивал всю connected
+  component. Старый режим connected components остаётся доступен как baseline
+  и сохраняется в audit-колонках.
+- Level 2: внутри выбранной family группировка по deterministic pack signature из
   готовых weight/multipack колонок → финальная pack-группа.
 - Research v1 делает это отдельным шагом после `03_matching_comparison.ipynb`:
   `04_fusion_pack_grouping.ipynb` выбирает `method + threshold_strategy`
@@ -189,6 +193,9 @@ binary benchmark с `pair_weight = 1`.
   frozen/fine-tuning benchmark notebook может запускаться один раз на
   `sauces,coconut_oil,soap`: он восстанавливает `category_run` из frozen
   split и строит отдельные family/pack графы внутри каждой категории.
+  `fusion_family_id` / `fusion_pack_id` остаются финальным contract для
+  downstream, а `connected_family_id` / `connected_pack_id` нужны для сравнения
+  с прежним connected-components поведением.
 - Текущий threshold benchmark не создаёт `manual_review` / triage-зону.
 
 ## 6.1 Организация кода на research-этапе (пересмотрено по запросу)

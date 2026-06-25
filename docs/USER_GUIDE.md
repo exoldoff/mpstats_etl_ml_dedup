@@ -1951,6 +1951,18 @@ run. Если нужно вернуться к старому per-category ре�
 - `MY_REQUIRE_ALL_CATEGORY_RUNS = False` — пропускать категории, которых нет в
   текущем smoke-output из `03`. Для финального полного прогона можно поставить
   `True`.
+- `MY_GRAPH_GROUPING_ALGORITHM = "louvain"` — рекомендуемый финальный способ
+  построить `fusion_family_id`: Louvain community detection по positive-рёбрам
+  с весом из `score`. Он помогает разрезать большие chained components, где
+  одна слабая связь склеивает разные товары. Для старого поведения поставьте
+  `"connected_components"`.
+- `MY_COMMUNITY_RESOLUTION = 1.0` — разрешение Louvain: значения выше `1`
+  обычно дробят family мельче, ниже `1` делают группы крупнее.
+- `MY_COMMUNITY_RANDOM_SEED = 42` — фиксирует воспроизводимый Louvain-разрез.
+- `MY_COMMUNITY_EDGE_WEIGHT_COL = "score"` — колонка веса ребра; если её нет,
+  все positive-рёбра считаются с весом `1`.
+- `MY_COMPARE_CONNECTED_COMPONENTS = True` — сохраняет рядом старый
+  connected-components baseline в audit-колонках.
 - `MY_3D_CATEGORY_RUN = "auto"`, `MY_3D_GRAPH = "family"` — 3D-визуализация
   крупнейших graph components. Если установлен `plotly`, граф интерактивный;
   иначе используется статичный matplotlib fallback.
@@ -1961,9 +1973,18 @@ run. Если нужно вернуться к старому per-category ре�
 `04_fusion_pack_grouping.ipynb` сохраняет:
 
 - `fusion_components_<suffix>.csv` — товары и номера `fusion_family_id` /
-  `fusion_pack_id`;
+  `fusion_pack_id`; эти колонки остаются финальным contract для
+  `06_grouped_sku_demo.ipynb`;
 - `fusion_pair_eval_<suffix>.csv` — пары с флагами `true/pred_same_family` и
   `true/pred_same_pack`.
+
+Если включён `MY_COMPARE_CONNECTED_COMPONENTS`, в CSV дополнительно появляются
+`connected_family_id`, `connected_pack_id`, `connected_same_family` и
+`connected_same_pack`. Это не новый финальный результат, а audit-baseline:
+сравнение community detection с прежним connected-components поведением.
+Также сохраняются metadata-колонки `fusion_grouping_algorithm`,
+`fusion_community_resolution`, `fusion_community_seed` и
+`fusion_community_edge_weight_col`.
 
 `04` также показывает основную graph-quality диагностику, false links / missed
 links, примеры "same family, different pack" и 3D-карту components.
