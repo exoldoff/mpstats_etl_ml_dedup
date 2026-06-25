@@ -425,7 +425,7 @@ class DedupService:
         try:
             from sentence_transformers import SentenceTransformer
         except ModuleNotFoundError as exc:
-            raise DedupRuntimeError("Для ML-дедупа нужен sentence-transformers. Установи requirements-dedup.txt.") from exc
+            raise DedupRuntimeError("Для ML-дедупа нужен sentence-transformers. Установи зависимости из requirements.txt.") from exc
         return SentenceTransformer(profile.embedding_model_name)
 
     def _load_cross_encoder(self, profile: DedupProfile) -> Any:
@@ -439,7 +439,9 @@ class DedupService:
         try:
             from sentence_transformers import CrossEncoder
         except ModuleNotFoundError as exc:
-            raise DedupRuntimeError("Для fine-tuned BGE scoring нужен sentence-transformers. Установи requirements-dedup.txt.") from exc
+            raise DedupRuntimeError(
+                "Для fine-tuned BGE scoring нужен sentence-transformers. Установи зависимости из requirements.txt."
+            ) from exc
         return CrossEncoder(model_name)
 
     def _encode_nodes(self, nodes: pd.DataFrame, profile: DedupProfile) -> np.ndarray:
@@ -462,7 +464,7 @@ class DedupService:
         try:
             import faiss
         except ModuleNotFoundError as exc:
-            raise DedupRuntimeError("Для FAISS retrieval нужен faiss-cpu. Установи requirements-dedup.txt.") from exc
+            raise DedupRuntimeError("Для FAISS retrieval нужен faiss-cpu. Установи зависимости из requirements.txt.") from exc
         return faiss
 
     def _generate_candidates(self, nodes: pd.DataFrame, embeddings: np.ndarray, profile: DedupProfile) -> pd.DataFrame:
