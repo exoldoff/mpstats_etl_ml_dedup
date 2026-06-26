@@ -463,6 +463,11 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     assert canonical["total"] == 1
     assert {row["normalized_sku"] for row in canonical["rows"]} == {row["canonical_sku"] for row in canonical["rows"]}
 
+    second_run = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    rerun_browser = repository.fetch_dedup_products(project_name="unit", category_key="dedupcat_sauces", level="expanded", limit=20)
+    assert rerun_browser["total"] == 4
+    assert {row["run_id"] for row in rerun_browser["rows"]} == {second_run["run_id"]}
+
     export_path = tmp_path / "dedup-products.csv"
     export_result = repository.export_dedup_products_csv(
         project_name="unit",

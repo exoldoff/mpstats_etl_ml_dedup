@@ -1469,15 +1469,18 @@ class DuckDbAppRepository:
             raise ValueError("Dedup run не найден.")
         project_name = str(run["project_name"])
         category_key = str(run["category_key"])
+        source_category_keys = self.resolve_dedup_source_category_keys(project_name=project_name, category_key=category_key)
+        delete_category_keys = sorted({category_key, *source_category_keys})
+        delete_placeholders = ", ".join("?" for _ in delete_category_keys)
         with self._lock, connect(self.settings.db_path, temp_directory=self._duckdb_temp_directory()) as con:
             apply_migrations(con)
             with duckdb_transaction(con):
                 con.execute(
-                    """
+                    f"""
                     DELETE FROM mpstats_products_dedup
-                    WHERE project_name = ? AND category_key = ?
+                    WHERE project_name = ? AND category_key IN ({delete_placeholders})
                     """,
-                    [project_name, category_key],
+                    [project_name, *delete_category_keys],
                 )
                 con.execute(
                     """
