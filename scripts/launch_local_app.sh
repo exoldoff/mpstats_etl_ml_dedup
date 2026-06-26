@@ -81,10 +81,48 @@ need_command "$PYTHON_BIN"
 need_command npm
 
 log "Проверяю Python-зависимости..."
-"$PYTHON_BIN" - <<'PY' || fail "Не хватает Python-зависимостей. Выполни: python3 -m pip install -r requirements.txt"
-import fastapi
-import uvicorn
+if ! "$PYTHON_BIN" - <<'PY'
+import importlib.util
+import sys
+
+modules = [
+    "duckdb",
+    "faiss",
+    "fastapi",
+    "numpy",
+    "pandas",
+    "sentence_transformers",
+    "torch",
+    "uvicorn",
+]
+missing = [module for module in modules if importlib.util.find_spec(module) is None]
+if missing:
+    print("Не найдены Python-модули: " + ", ".join(missing), file=sys.stderr)
+    raise SystemExit(1)
 PY
+then
+  log "Устанавливаю Python-зависимости из requirements.txt..."
+  "$PYTHON_BIN" -m pip install -r requirements.txt || fail "python3 -m pip install -r requirements.txt завершился с ошибкой."
+  "$PYTHON_BIN" - <<'PY' || fail "После установки Python-зависимости всё ещё недоступны."
+import importlib.util
+import sys
+
+modules = [
+    "duckdb",
+    "faiss",
+    "fastapi",
+    "numpy",
+    "pandas",
+    "sentence_transformers",
+    "torch",
+    "uvicorn",
+]
+missing = [module for module in modules if importlib.util.find_spec(module) is None]
+if missing:
+    print("Не найдены Python-модули: " + ", ".join(missing), file=sys.stderr)
+    raise SystemExit(1)
+PY
+fi
 
 if [[ ! -d "$WEB_DIR/node_modules" ]]; then
   log "Устанавливаю frontend-зависимости..."
