@@ -317,100 +317,6 @@ export type ProjectFile = {
   updated_at: string;
 };
 
-export type QualityStatus = "OK" | "WARNING" | "FAIL";
-
-export type QualityProject = {
-  project_name: string;
-  source_kind: "cube" | "classified" | "merged" | string;
-  source_scope: "duckdb" | "legacy" | "project_files" | string;
-  file_count: number;
-  path: string;
-  paths: string[];
-  fallback_used: boolean;
-  table_name?: string | null;
-  row_count?: number;
-  slice_count?: number;
-  updated_at?: string | null;
-};
-
-export type QualityProblem = {
-  type: string;
-  count: number;
-  share: number;
-  comment: string;
-};
-
-export type QualityIssue = {
-  check_id: string;
-  check_name: string;
-  severity: "CRITICAL" | "WARNING" | "INFO";
-  entity_type: "sku" | "brand" | "category" | "period" | "network" | "row" | "dataset" | string;
-  entity_id: string;
-  category?: string | null;
-  period?: string | null;
-  metric_name: string;
-  current_value?: number | string | null;
-  previous_value?: number | string | null;
-  baseline_value?: number | string | null;
-  absolute_delta?: number | null;
-  relative_delta?: number | null;
-  message: string;
-  details: Record<string, unknown>;
-  suggested_action: string;
-};
-
-export type QualitySkippedCheck = {
-  check: string;
-  reason: string;
-};
-
-export type QualityReport = {
-  project_name: string;
-  status: QualityStatus;
-  status_comment: string;
-  source: {
-    kind: "cube" | "classified" | "merged" | string;
-    scope: "duckdb" | "legacy" | "project_files" | string;
-    path: string;
-    paths: string[];
-    file_count: number;
-    fallback_used: boolean;
-    table_name?: string | null;
-    row_count?: number;
-    slice_count?: number;
-  };
-  total_rows: number;
-  metrics: {
-    summary_by_severity?: { CRITICAL: number; WARNING: number; INFO: number; total: number };
-    summary_by_category?: Array<Record<string, unknown>>;
-    summary_by_period?: Array<Record<string, unknown>>;
-    summary_by_check?: Array<Record<string, unknown>>;
-    top_suspicious_skus?: Array<Record<string, unknown>>;
-    top_problem_categories?: Array<Record<string, unknown>>;
-    detected_columns?: Record<string, string>;
-    checks?: Record<string, number>;
-    empty_key_fields: { rows_with_empty: number; share: number; fields: Array<Record<string, unknown>> };
-    weight_volume: { columns: string[]; parsed_count: number; missing_count: number; coverage_share: number; missing_share: number };
-    anomalies: { columns: string[]; count: number; zero_or_negative: number; too_large: number; suspicious: number };
-    classification: { columns: string[]; classified_count: number; unclassified_count: number; coverage_share: number; unclassified_share: number };
-    duplicates: { checked: boolean; identifier_column?: string | null; columns?: string[]; duplicate_rows: number; duplicate_keys: number; share: number };
-  };
-  problems: QualityProblem[];
-  skipped_checks: QualitySkippedCheck[];
-  examples: {
-    unclassified: Record<string, unknown>[];
-    missing_weight_volume: Record<string, unknown>[];
-    anomalies: Record<string, unknown>[];
-    duplicates: Record<string, unknown>[];
-  };
-  issues?: QualityIssue[];
-  critical_issues?: QualityIssue[];
-  warning_issues?: QualityIssue[];
-  business_changes?: QualityIssue[];
-  warnings: string[];
-  summary: string;
-};
-
 export type CubeItem = {
   id: string;
   project_name: string;
@@ -867,8 +773,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ entry_ids: entryIds })
     }),
-  listQualityProjects: () => request<{ projects: QualityProject[] }>("/api/quality/projects"),
-  getQualityReport: (projectName: string) => request<QualityReport>(`/api/quality/report?project_name=${encodeURIComponent(projectName)}`),
   getRules: () => request<{ path: string; content: string }>("/api/rules"),
   saveRules: (content: string) =>
     request<{ path: string; content: string }>("/api/rules", {

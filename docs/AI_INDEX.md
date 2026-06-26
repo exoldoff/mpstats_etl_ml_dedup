@@ -268,7 +268,6 @@ fine-tuning outputs и report paths смотри в `docs/ARCHITECTURE_PROGRESS.
 | Pipeline repositories | `pipeline/repositories/` | CSV/JSON/DuckDB data layer |
 | DuckDB migrations | `pipeline/migrations/` | schema changes |
 | Классификатор | `classifiers/rules.csv`, `classifiers/engine.py`, `mpstats_app/services/classifier_rules_service.py` | правила web-редактора и движок классификации |
-| Качество данных | `pipeline/data_quality/`, `pipeline/services/data_quality_service.py`, `mpstats_app/api/quality.py` | проверки продаж, цен, дублей, периодов и согласованности |
 | Web API tests | `tests/test_web_api.py` | backend route regressions |
 | User docs | `docs/USER_GUIDE.md` | пользовательские сценарии web-app |
 
@@ -396,21 +395,19 @@ python3 -m pytest tests/test_web_api.py
 - Сервисы шагов 1-6 в `pipeline/services/`.
 - Data layer и DuckDB-миграции для production workflow.
 - Web UI для справочника категорий и правил классификатора.
-- MVP проверок качества данных.
 - Production ML-дедуп v1 для `Соус/Соусы`, `Кокосовое масло`, `Мыло`:
   FAISS `K=30`, fine-tuned BGE `ft_bge_reranker_v2_m3`,
   `threshold_weighted_cost` с category-specific thresholds
   (`sauces=0.917444`, `coconut_oil=0.872321`, `soap=0.930329`), identity
   tables без мутации фактов.
 - Research-песочница `research/dedup/` и notebooks для SKU deduplication.
-- Regression tests для web API, pipeline services, parser/quality и
+- Regression tests для web API, pipeline services, parser и
   research/dedup.
 
 ## Чего не хватает
 
 - CI для автоматического запуска тестов.
 - Browser/e2e-регрессий frontend.
-- Полной настройки порогов качества данных через web UI.
 - Полной уборки исторических локальных DB/CSV-артефактов из tracked-части.
 - Дополнительных hard-negative/quality проходов по fine-tuned reranker перед
   расширением production ML-дедупа на новые категории.

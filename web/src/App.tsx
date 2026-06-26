@@ -64,9 +64,6 @@ import {
   ProductSearch,
   ProjectSummary,
   ProjectFile,
-  QualityIssue,
-  QualityProject,
-  QualityReport,
   ReportArtifact,
   ReportBuildResponse,
   ReportOptions,
@@ -79,8 +76,8 @@ import {
 } from "./api";
 
 type Mode = "historical_backfill" | "monthly_sync";
-type Tab = "projects" | "categories" | "catalog" | "plan" | "files" | "cube" | "reports" | "export" | "classifier" | "quality" | "dedup";
-type DataTab = "files" | "cube" | "reports" | "export" | "quality" | "dedup";
+type Tab = "projects" | "categories" | "catalog" | "plan" | "files" | "cube" | "reports" | "export" | "classifier" | "dedup";
+type DataTab = "files" | "cube" | "reports" | "export" | "dedup";
 type FileKindFilter = "all" | "raw" | "processed" | "classified" | "export" | "other";
 
 const defaultPipelineSettings: PipelineSettings = {
@@ -504,7 +501,7 @@ function runTypeLabel(type?: string) {
 }
 
 function isDataTab(tab: Tab): tab is DataTab {
-  return tab === "files" || tab === "cube" || tab === "reports" || tab === "export" || tab === "quality" || tab === "dedup";
+  return tab === "files" || tab === "cube" || tab === "reports" || tab === "export" || tab === "dedup";
 }
 
 export function App() {
@@ -562,12 +559,6 @@ export function App() {
   const [selectedCubeIds, setSelectedCubeIds] = useState<Set<string>>(new Set());
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectQuery, setProjectQuery] = useState("");
-  const [qualityProjects, setQualityProjects] = useState<QualityProject[]>([]);
-  const [qualityProjectName, setQualityProjectName] = useState("");
-  const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
-  const [qualityLoading, setQualityLoading] = useState(false);
-  const [qualityError, setQualityError] = useState<string | null>(null);
-  const [qualityCopied, setQualityCopied] = useState(false);
   const [productSearch, setProductSearch] = useState("");
   const [products, setProducts] = useState<ProductSearch | null>(null);
   const [productResultTitle, setProductResultTitle] = useState("Предпросмотр БД");
@@ -681,17 +672,13 @@ export function App() {
     if (tab !== "export") return;
     void loadExportOptions();
     void loadExportTemplates();
+    void loadDedupExportCategories();
   }, [tab, projectName]);
 
   useEffect(() => {
     if (tab !== "reports") return;
     void loadReportOptions();
   }, [tab, projectName]);
-
-  useEffect(() => {
-    if (tab !== "quality") return;
-    void loadQualityProjects();
-  }, [tab]);
 
   useEffect(() => {
     if (tab !== "dedup") return;
@@ -1009,62 +996,6 @@ export function App() {
       });
     } catch (exc) {
       setError(`Отчёты: ${errorText(exc)}`);
-    }
-  }
-
-  async function loadQualityProjects() {
-    setQualityLoading(true);
-    setQualityError(null);
-    try {
-      const response = await api.listQualityProjects();
-      setQualityProjects(response.projects);
-      const preferred =
-        response.projects.find((project) => project.project_name === qualityProjectName) ??
-        response.projects.find((project) => project.project_name === projectName) ??
-        response.projects[0] ??
-        null;
-      if (preferred) {
-        setQualityProjectName(preferred.project_name);
-      } else {
-        setQualityProjectName("");
-        setQualityReport(null);
-      }
-    } catch (exc) {
-      setQualityError(errorText(exc));
-    } finally {
-      setQualityLoading(false);
-    }
-  }
-
-  async function runQualityReport(targetProject = qualityProjectName) {
-    if (!targetProject) {
-      setQualityError("Нет проекта для проверки.");
-      return null;
-    }
-    setQualityLoading(true);
-    setQualityError(null);
-    setQualityCopied(false);
-    try {
-      const response = await api.getQualityReport(targetProject);
-      setQualityReport(response);
-      return response;
-    } catch (exc) {
-      setQualityReport(null);
-      setQualityError(errorText(exc));
-      return null;
-    } finally {
-      setQualityLoading(false);
-    }
-  }
-
-  async function copyQualitySummary() {
-    if (!qualityReport) return;
-    try {
-      await navigator.clipboard.writeText(qualityReport.summary);
-      setQualityCopied(true);
-      window.setTimeout(() => setQualityCopied(false), 1600);
-    } catch (exc) {
-      setQualityError(`Не удалось скопировать сводку: ${errorText(exc)}`);
     }
   }
 
@@ -1684,6 +1615,22 @@ export function App() {
     return { categories: eligibleResponse.categories.length, runs: runsResponse.runs.length };
   }
 
+  async function loadDedupExportCategories() {
+    try {
+      const response = await api.getDedupEligibleCategories(projectName || "mpstats");
+      setDedupCategories(response.categories);
+      setDedupProductCategoryKey((prev) => {
+        const available = new Set(response.categories.map((item) => item.category_key));
+        if (prev && available.has(prev)) return prev;
+        return "";
+      });
+      return response;
+    } catch (exc) {
+      setError(`ML-дедуп для выгрузки: ${errorText(exc)}`);
+      return null;
+    }
+  }
+
   async function loadDedupProducts(
     categoryKey = dedupProductCategoryKey,
     level = dedupProductLevel,
@@ -2192,7 +2139,7 @@ export function App() {
             <button className={tab === "projects" ? "active" : ""} title="Список проектов, выбор и удаление." onClick={() => changeTab("projects", loadProjects)}>Проекты</button>
             <button className={tab === "plan" ? "active" : ""} onClick={() => changeTab("plan")}>Умный план</button>
             <button className={tab === "categories" ? "active" : ""} title="Выбор активных путей для исторической загрузки." onClick={() => changeTab("categories")}>Категории</button>
-            <button className={isDataTab(tab) ? "active" : ""} title="Куб, отчёты, файлы, выгрузка, качество и ML-дедуп." onClick={() => changeTab("cube")}>Данные</button>
+            <button className={isDataTab(tab) ? "active" : ""} title="Куб, отчёты, файлы, выгрузка и ML-дедуп." onClick={() => changeTab("cube")}>Данные</button>
             <button className={tab === "classifier" ? "active" : ""} title="Правила классификатора без ручного JSON." onClick={() => changeTab("classifier")}>Классификатор</button>
           </nav>
 
@@ -2481,6 +2428,8 @@ export function App() {
               templates={exportTemplates}
               templateName={exportTemplateName}
               confirmLarge={exportConfirmLarge}
+              dedupCategories={dedupCategories}
+              dedupCategoryKey={dedupProductCategoryKey}
               busy={Boolean(busy)}
               onTemplateNameChange={setExportTemplateName}
               onSaveTemplate={() => void runAction("Сохранение шаблона выгрузки", saveExportTemplate)}
@@ -2505,6 +2454,10 @@ export function App() {
               onSplitByCategoryChange={setExportSplitByCategory}
               onExportFormatChange={changeExportFormat}
               onConfirmLargeChange={setExportConfirmLarge}
+              onDedupCategoryChange={setDedupProductCategoryKey}
+              onDedupExport={(level) => {
+                window.open(api.dedupProductsExportUrl(projectName || "mpstats", level, dedupProductCategoryKey || undefined), "_blank", "noopener,noreferrer");
+              }}
               onSort={toggleExportSort}
               onClearSort={() => {
                 setExportSortColumn(null);
@@ -2514,25 +2467,6 @@ export function App() {
               onClearExcluded={() => setExportExcludedRows(new Set())}
               onPreview={() => void runAction("Предпросмотр выгрузки", loadExportPreview)}
               onBuild={() => void runAction(`Выгрузка ${exportFormat.toUpperCase()}`, buildExportFiles)}
-            />
-          ) : null}
-
-          {tab === "quality" ? (
-            <DataQualityWorkspace
-              projects={qualityProjects}
-              selectedProject={qualityProjectName}
-              report={qualityReport}
-              loading={qualityLoading}
-              error={qualityError}
-              copied={qualityCopied}
-              onProjectChange={(value) => {
-                setQualityProjectName(value);
-                setQualityReport(null);
-                setQualityError(null);
-              }}
-              onReloadProjects={loadQualityProjects}
-              onRun={() => void runQualityReport()}
-              onCopySummary={() => void copyQualitySummary()}
             />
           ) : null}
 
@@ -2566,9 +2500,6 @@ export function App() {
               }}
               onProductQueryChange={setDedupProductQuery}
               onProductSearch={() => void runAction("Поиск в ML-дедупе", () => loadDedupProducts(dedupProductCategoryKey, dedupProductLevel, dedupProductQuery))}
-              onExportProducts={(level) => {
-                window.open(api.dedupProductsExportUrl(projectName, level, dedupProductCategoryKey || undefined), "_blank", "noopener,noreferrer");
-              }}
               onLoadArtifact={(runId, artifact) => void runAction("Загрузка артефакта ML-дедупа", () => loadDedupArtifact(runId, artifact))}
             />
           ) : null}
@@ -2921,7 +2852,6 @@ function DataSubnav(props: { activeTab: DataTab; onSelect: (tab: DataTab) => voi
     { tab: "reports", label: "Отчёты", icon: <BarChart3 size={16} /> },
     { tab: "files", label: "Файлы", icon: <Archive size={16} /> },
     { tab: "export", label: "Выгрузка", icon: <Download size={16} /> },
-    { tab: "quality", label: "Качество", icon: <CheckCircle2 size={16} /> },
     { tab: "dedup", label: "ML-дедуп", icon: <Brain size={16} /> }
   ];
   return (
@@ -3505,6 +3435,8 @@ function ExportWorkspace(props: {
   templates: ExportTemplate[];
   templateName: string;
   confirmLarge: boolean;
+  dedupCategories: DedupCategory[];
+  dedupCategoryKey: string;
   busy: boolean;
   onTemplateNameChange: (value: string) => void;
   onSaveTemplate: () => void;
@@ -3525,6 +3457,8 @@ function ExportWorkspace(props: {
   onSplitByCategoryChange: (value: boolean) => void;
   onExportFormatChange: (value: ExportFormat) => void;
   onConfirmLargeChange: (value: boolean) => void;
+  onDedupCategoryChange: (categoryKey: string) => void;
+  onDedupExport: (level: "expanded" | "canonical") => void;
   onSort: (column: string, direction?: SortDirection) => void;
   onClearSort: () => void;
   onExcludeRow: (rowHash: string) => void;
@@ -3574,6 +3508,27 @@ function ExportWorkspace(props: {
             ))}
           </div>
         ) : <span className="muted">Шаблонов пока нет. Настрой выгрузку и сохрани её здесь.</span>}
+      </div>
+
+      <div className="dedup-export-panel">
+        <div>
+          <strong>ML-дедуп CSV</strong>
+          <small>Каноны или оба уровня строк после ML-дедупликации.</small>
+        </div>
+        <select value={props.dedupCategoryKey} onChange={(event) => props.onDedupCategoryChange(event.target.value)}>
+          <option value="">Все eligible-категории</option>
+          {props.dedupCategories.map((category) => (
+            <option key={category.category_key} value={category.category_key}>{category.category_name || category.category_key}</option>
+          ))}
+        </select>
+        <button className="ghost-button" disabled={props.busy || !props.dedupCategories.length} onClick={() => props.onDedupExport("expanded")}>
+          <Download size={17} />
+          CSV 2 уровня
+        </button>
+        <button className="ghost-button" disabled={props.busy || !props.dedupCategories.length} onClick={() => props.onDedupExport("canonical")}>
+          <Download size={17} />
+          CSV каноны
+        </button>
       </div>
 
       <div className="export-settings">
@@ -3837,7 +3792,6 @@ function DedupWorkspace(props: {
   onProductCategoryChange: (categoryKey: string) => void;
   onProductQueryChange: (value: string) => void;
   onProductSearch: () => void;
-  onExportProducts: (level: "expanded" | "canonical") => void;
   onLoadArtifact: (runId: string, artifact: "groups" | "edges") => void;
 }) {
   const selectedCount = props.categories.filter((category) => props.selectedCategoryKeys.has(category.category_key)).length;
@@ -3951,7 +3905,6 @@ function DedupWorkspace(props: {
         onCategoryChange={props.onProductCategoryChange}
         onQueryChange={props.onProductQueryChange}
         onSearch={props.onProductSearch}
-        onExport={props.onExportProducts}
       />
 
       <div className="dedup-runs-panel">
@@ -3985,7 +3938,7 @@ function DedupWorkspace(props: {
           ]}
         />
         {props.runs.find((run) => run.error) ? (
-          <div className="quality-warning-list">
+          <div className="warning-list">
             {props.runs.filter((run) => run.error).slice(0, 3).map((run) => (
               <span key={run.run_id}>{run.category_name ?? run.category_key}: {run.error}</span>
             ))}
@@ -4015,7 +3968,6 @@ function DedupProductsBrowser(props: {
   onCategoryChange: (categoryKey: string) => void;
   onQueryChange: (value: string) => void;
   onSearch: () => void;
-  onExport: (level: "expanded" | "canonical") => void;
 }) {
   return (
     <div className="dedup-browser-panel">
@@ -4047,8 +3999,6 @@ function DedupProductsBrowser(props: {
             />
           </div>
           <button className="ghost-button" disabled={props.busy} onClick={props.onSearch}><RefreshCcw size={17} />Обновить</button>
-          <button className="ghost-button" onClick={() => props.onExport("expanded")}><Download size={17} />CSV 2 уровня</button>
-          <button className="ghost-button" onClick={() => props.onExport("canonical")}><Download size={17} />CSV каноны</button>
         </div>
       </div>
       <div className="table-wrap dedup-browser-table">
@@ -4100,223 +4050,6 @@ function DedupProductsBrowser(props: {
       </div>
     </div>
   );
-}
-
-function DataQualityWorkspace(props: {
-  projects: QualityProject[];
-  selectedProject: string;
-  report: QualityReport | null;
-  loading: boolean;
-  error: string | null;
-  copied: boolean;
-  onProjectChange: (value: string) => void;
-  onReloadProjects: () => void;
-  onRun: () => void;
-  onCopySummary: () => void;
-}) {
-  const selected = props.projects.find((project) => project.project_name === props.selectedProject) ?? props.projects[0] ?? null;
-  const report = props.report;
-  return (
-    <section className="panel stage-panel quality-panel">
-      <SectionTitle
-        icon={<CheckCircle2 />}
-        title="Качество"
-        meta={report ? `${formatNumber(report.total_rows)} строк` : "проверка не запускалась"}
-        hint="Проверка отвечает на главный вопрос: можно ли доверять итоговому CSV перед анализом или выгрузкой."
-      />
-
-      <div className="quality-toolbar">
-        <label>
-          Проект
-          <select value={selected?.project_name ?? ""} disabled={!props.projects.length || props.loading} onChange={(event) => props.onProjectChange(event.target.value)}>
-            {props.projects.map((project) => (
-              <option key={project.project_name} value={project.project_name}>
-                {project.project_name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="ghost-button" disabled={props.loading} onClick={props.onReloadProjects}>
-          <RefreshCcw size={17} />
-          Обновить
-        </button>
-        <button className="primary-inline-button" disabled={props.loading || !selected} onClick={props.onRun}>
-          <CheckCircle2 size={17} />
-          Проверить данные
-        </button>
-        <button className="ghost-button" disabled={!report || props.loading} onClick={props.onCopySummary}>
-          <Copy size={17} />
-          {props.copied ? "Скопировано" : "Сводка"}
-        </button>
-      </div>
-
-      {props.error ? <div className="quality-error"><AlertTriangle size={16} />{props.error}</div> : null}
-      {!props.projects.length && !props.loading ? <Empty text="Итоговые CSV пока не найдены." /> : null}
-
-      {selected && !report ? (
-        <div className="quality-source-note">
-          <span>{qualitySourceLabel(selected.source_kind, selected.fallback_used)}</span>
-          <code>{selected.path}</code>
-        </div>
-      ) : null}
-
-      {props.loading ? <div className="quality-loading">Проверяем данные...</div> : null}
-
-      {report ? <QualityReportView report={report} /> : props.projects.length && !props.loading ? <Empty text="Выбери проект и нажми «Проверить данные»." /> : null}
-    </section>
-  );
-}
-
-function QualityReportView(props: { report: QualityReport }) {
-  const report = props.report;
-  const severity = report.metrics.summary_by_severity ?? { CRITICAL: 0, WARNING: 0, INFO: 0, total: report.issues?.length ?? 0 };
-  const issues = report.issues ?? [];
-  const businessChanges = report.business_changes ?? [];
-  return (
-    <div className="quality-report">
-      <div className={`quality-status-card ${report.status.toLowerCase()}`}>
-        <div>
-          <QualityStatusBadge status={report.status} />
-          <h3>{report.status_comment}</h3>
-          <span>{qualitySourceLabel(report.source.kind, report.source.fallback_used)} · {qualitySourceMeta(report.source)}</span>
-        </div>
-        <code title={report.source.path}>{report.source.path}</code>
-      </div>
-
-      {report.warnings.length ? (
-        <div className="quality-warning-list">
-          {report.warnings.map((warning) => <span key={warning}>{warning}</span>)}
-        </div>
-      ) : null}
-
-      <div className="quality-metrics">
-        <QualityMetric label="Строк всего" value={formatNumber(report.total_rows)} />
-        <QualityMetric label="CRITICAL" value={formatNumber(severity.CRITICAL)} detail="опасные артефакты" />
-        <QualityMetric label="WARNING" value={formatNumber(severity.WARNING)} detail="нужно проверить" />
-        <QualityMetric label="INFO" value={formatNumber(severity.INFO)} detail="бизнес-изменения" />
-        <QualityMetric label="Проверки" value={formatNumber(severity.total)} detail="сработавшие правила" />
-        <QualityMetric label="Lifecycle" value={formatNumber(businessChanges.length)} detail="новые/исчезнувшие SKU" />
-      </div>
-
-      {report.skipped_checks.length ? (
-        <div className="quality-skipped">
-          <strong>Не проверялось</strong>
-          {report.skipped_checks.map((item) => (
-            <span key={`${item.check}-${item.reason}`}>{item.check}: {item.reason}</span>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="quality-section">
-        <h3>Сводка</h3>
-        <div className="quality-summary-grid">
-          <QualitySummaryBlock title="Топ SKU" rows={report.metrics.top_suspicious_skus ?? []} />
-          <QualitySummaryBlock title="Категории" rows={report.metrics.top_problem_categories ?? []} />
-        </div>
-      </div>
-
-      <div className="quality-section">
-        <h3>Предупреждения</h3>
-        {issues.length ? <QualityIssuesTable issues={issues} /> : <Empty text="Подозрительные бизнес-аномалии не найдены." />}
-      </div>
-
-      <div className="quality-section">
-        <h3>Бизнес-изменения</h3>
-        {businessChanges.length ? <QualityIssuesTable issues={businessChanges} compact /> : <Empty text="Новых, исчезнувших или вернувшихся значимых SKU не найдено." />}
-      </div>
-    </div>
-  );
-}
-
-function QualityMetric(props: { label: string; value: string; detail?: string }) {
-  return (
-    <div className="quality-metric">
-      <span>{props.label}</span>
-      <strong>{props.value}</strong>
-      {props.detail ? <small>{props.detail}</small> : null}
-    </div>
-  );
-}
-
-function QualityStatusBadge(props: { status: QualityReport["status"] }) {
-  const label = props.status === "OK" ? "OK" : props.status === "WARNING" ? "WARNING" : "FAIL";
-  const icon = props.status === "OK" ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />;
-  return <span className={`quality-status-badge ${props.status.toLowerCase()}`}>{icon}{label}</span>;
-}
-
-function QualityIssuesTable(props: { issues: QualityIssue[]; compact?: boolean }) {
-  return (
-    <FilterableTable
-      rows={props.issues}
-      rowKey={(item, index) => `${item.check_id}-${item.entity_type}-${item.entity_id}-${item.period ?? ""}-${index}`}
-      emptyText="Предупреждения не найдены."
-      columns={[
-        {
-          id: "severity",
-          label: "Важность",
-          value: (item) => item.severity,
-          render: (item) => <span className={`quality-issue-severity ${item.severity.toLowerCase()}`}>{item.severity}</span>
-        },
-        { id: "check", label: "Проверка", value: (item) => item.check_name, title: (item) => item.check_name },
-        { id: "entity", label: "Объект", value: (item) => `${item.entity_type}: ${item.entity_id}`, title: (item) => `${item.entity_type}: ${item.entity_id}` },
-        { id: "category", label: "Категория", value: (item) => item.category ?? "" },
-        { id: "period", label: "Период", value: (item) => item.period ?? "" },
-        ...(props.compact ? [] : [
-          { id: "metric", label: "Метрика", value: (item: QualityIssue) => item.metric_name },
-          { id: "current", label: "Текущее", value: (item: QualityIssue) => item.current_value ?? "", render: (item: QualityIssue) => formatQualityValue(item.current_value), numeric: true },
-          { id: "baseline", label: "База", value: (item: QualityIssue) => item.baseline_value ?? "", render: (item: QualityIssue) => formatQualityValue(item.baseline_value), numeric: true }
-        ]),
-        { id: "message", label: "Почему сработало", value: (item) => item.message, title: (item) => qualityIssueTitle(item) },
-        { id: "action", label: "Что сделать", value: (item) => item.suggested_action, title: (item) => item.suggested_action }
-      ]}
-    />
-  );
-}
-
-function QualitySummaryBlock(props: { title: string; rows: Array<Record<string, unknown>> }) {
-  return (
-    <div className="quality-summary-block">
-      <strong>{props.title}</strong>
-      {props.rows.length ? <SimpleTable columns={qualitySummaryColumns(props.rows)} rows={props.rows} /> : <Empty text="Нет данных." />}
-    </div>
-  );
-}
-
-function qualitySummaryColumns(rows: Array<Record<string, unknown>>) {
-  const priority = ["sku", "key", "category", "issues", "total", "critical", "warning", "info", "max_relative_delta"];
-  const available = new Set(rows.flatMap((row) => Object.keys(row)));
-  return priority.filter((column) => available.has(column)).slice(0, 8);
-}
-
-function qualityIssueTitle(issue: QualityIssue) {
-  const details = Object.keys(issue.details || {}).length ? `\nДетали: ${JSON.stringify(issue.details)}` : "";
-  return `${issue.message}${details}`;
-}
-
-function formatQualityValue(value: number | string | null | undefined) {
-  if (value === null || value === undefined || value === "") return "-";
-  if (typeof value === "number") {
-    const absolute = Math.abs(value);
-    if (absolute > 0 && absolute < 1) return String(Math.round(value * 10000) / 10000);
-    return formatNumber(Math.round(value * 100) / 100);
-  }
-  return String(value);
-}
-
-function qualitySourceLabel(kind: string, fallbackUsed: boolean) {
-  if (kind === "cube") return "использован куб DuckDB";
-  if (kind === "classified") return "legacy fallback: classified CSV";
-  if (fallbackUsed) return "куб не найден, использован legacy CSV";
-  if (kind === "merged") return "использован merged CSV";
-  return kind;
-}
-
-function qualitySourceMeta(source: QualityReport["source"]) {
-  if (source.kind === "cube") {
-    const slices = Number(source.slice_count || 0);
-    return `${formatNumber(source.row_count)} строк${slices ? ` · ${formatNumber(slices)} срезов` : ""}`;
-  }
-  return `${formatNumber(source.file_count)} файл(ов)`;
 }
 
 function formatNumber(value: number | null | undefined) {
