@@ -625,7 +625,7 @@ class DedupService:
                 node_count=len(nodes),
                 candidate_count=len(candidates),
             )
-            edges = self._score_candidates(nodes, candidates, profile, run_id=run_id)
+            edges = self._score_candidates(nodes, candidates, profile, run_id=run_id, run=run)
             self._update_progress(
                 run_id,
                 run,
@@ -884,6 +884,7 @@ class DedupService:
         profile: DedupProfile,
         *,
         run_id: str,
+        run: dict[str, Any] | None = None,
     ) -> pd.DataFrame:
         model = self._load_cross_encoder(profile)
         node_map = nodes.set_index("node_id")
@@ -903,16 +904,38 @@ class DedupService:
                 raise DedupRuntimeError("Для sigmoid activation fine-tuned BGE нужен torch.") from exc
             legacy_activation = torch.nn.Sigmoid()
             predict_kwargs["activation_fn"] = legacy_activation
-        try:
-            raw_scores = model.predict(text_pairs, **predict_kwargs)
-        except TypeError:
-            if legacy_activation is not None:
-                legacy_kwargs = {**predict_kwargs, "activation_fct": legacy_activation}
-                legacy_kwargs.pop("activation_fn", None)
-                raw_scores = model.predict(text_pairs, **legacy_kwargs)
-            else:
-                raw_scores = model.predict(text_pairs)
-        scores = np.asarray(raw_scores, dtype=float).reshape(-1)
+
+        score_chunks: list[np.ndarray] = []
+        total_pairs = len(text_pairs)
+        chunk_size = max(128, int(profile.cross_encoder_batch_size) * 16)
+        for start in range(0, total_pairs, chunk_size):
+            end = min(total_pairs, start + chunk_size)
+            raw_scores = self._predict_cross_encoder_batch(
+                model,
+                text_pairs[start:end],
+                predict_kwargs=predict_kwargs,
+                legacy_activation=legacy_activation,
+            )
+            chunk_scores = np.asarray(raw_scores, dtype=float).reshape(-1)
+            if len(chunk_scores) != end - start:
+                raise DedupRuntimeError("Fine-tuned BGE вернула число scores, не совпадающее с batch candidates.")
+            score_chunks.append(chunk_scores)
+            if run is not None:
+                scored_count = end
+                percent = 60 + round(18 * scored_count / max(1, total_pairs))
+                self._update_progress(
+                    run_id,
+                    run,
+                    percent=percent,
+                    stage="score_pairs",
+                    message=(
+                        f"Cross-encoder: {scored_count:,} / {total_pairs:,} пар"
+                    ).replace(",", " "),
+                    node_count=len(nodes),
+                    candidate_count=len(candidates),
+                    edge_count=scored_count,
+                )
+        scores = np.concatenate(score_chunks) if score_chunks else np.asarray([], dtype=float)
         if len(scores) != len(candidates):
             raise DedupRuntimeError("Fine-tuned BGE вернула число scores, не совпадающее с числом candidates.")
 
@@ -940,6 +963,23 @@ class DedupService:
                 }
             )
         return pd.DataFrame(rows)
+
+    @staticmethod
+    def _predict_cross_encoder_batch(
+        model: Any,
+        text_pairs: list[tuple[str, str]],
+        *,
+        predict_kwargs: dict[str, Any],
+        legacy_activation: Any | None,
+    ) -> Any:
+        try:
+            return model.predict(text_pairs, **predict_kwargs)
+        except TypeError:
+            if legacy_activation is not None:
+                legacy_kwargs = {**predict_kwargs, "activation_fct": legacy_activation}
+                legacy_kwargs.pop("activation_fn", None)
+                return model.predict(text_pairs, **legacy_kwargs)
+            return model.predict(text_pairs)
 
     def _build_groups(self, nodes: pd.DataFrame, edges: pd.DataFrame) -> pd.DataFrame:
         node_ids = [str(item) for item in nodes["node_id"].tolist()]
