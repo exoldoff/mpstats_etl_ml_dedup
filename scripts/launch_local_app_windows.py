@@ -74,7 +74,13 @@ def main() -> int:
     ]
 
     log(f"Starting backend at {url}")
-    process = subprocess.Popen(command, cwd=ROOT_DIR)
+    env = os.environ.copy()
+    env.setdefault("OMP_NUM_THREADS", "1")
+    env.setdefault("OPENBLAS_NUM_THREADS", "1")
+    env.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+    env.setdefault("TOKENIZERS_PARALLELISM", "false")
+    env.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+    process = subprocess.Popen(command, cwd=ROOT_DIR, env=env)
     try:
         for _ in range(40):
             if process.poll() is not None:

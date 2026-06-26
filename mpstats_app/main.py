@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Iterator
+
+# Local ML wheels can bundle separate OpenMP runtimes. Set this before any
+# optional dedup stack import can initialize libomp in the backend process.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import uvicorn
 from fastapi import FastAPI, HTTPException

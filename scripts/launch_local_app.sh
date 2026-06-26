@@ -14,6 +14,9 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
 export VECLIB_MAXIMUM_THREADS="${VECLIB_MAXIMUM_THREADS:-1}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
+# faiss-cpu, scikit-learn and torch wheels can ship separate libomp.dylib copies on macOS.
+# Keep the local app process alive when ML dedup loads more than one of them.
+export KMP_DUPLICATE_LIB_OK="${KMP_DUPLICATE_LIB_OK:-TRUE}"
 
 cd "$ROOT_DIR"
 
