@@ -2260,6 +2260,76 @@ a.ghost-button {
   text-overflow: ellipsis;
 }
 
+.dedup-run-current {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #cbdadd;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.dedup-run-current.running,
+.dedup-run-current.queued {
+  border-color: #b8d4ee;
+  background: #f4f9ff;
+}
+
+.dedup-run-current.failed {
+  border-color: #ecc0ba;
+  background: #fff5f3;
+}
+
+.dedup-run-current-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dedup-run-current-head span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.dedup-run-current-head strong,
+.dedup-run-current-head small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dedup-run-current-head small {
+  color: #64777d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dedup-run-current-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dedup-run-current-metrics span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid #d8e1e4;
+  border-radius: 999px;
+  background: #f7faf9;
+  color: #64777d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dedup-run-current-metrics strong {
+  margin-left: 4px;
+  color: #20363a;
+}
+
 .dedup-progress {
   display: grid;
   gap: 6px;

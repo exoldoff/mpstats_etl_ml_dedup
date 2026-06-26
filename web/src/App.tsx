@@ -3969,6 +3969,24 @@ function DedupWorkspace(props: {
 
       <div className="dedup-runs-panel">
         <h3>Запуски</h3>
+        {latestRun ? (
+          <div className={`dedup-run-current ${latestRun.status}`}>
+            <div className="dedup-run-current-head">
+              <span>
+                <strong>Текущий запуск</strong>
+                <small>{latestRun.category_name ?? latestRun.category_key}</small>
+              </span>
+              <Badge value={latestRun.status} />
+            </div>
+            <DedupProgressCell run={latestRun} />
+            <div className="dedup-run-current-metrics">
+              <span>SKU: <strong>{formatNumber(latestRun.node_count)}</strong></span>
+              <span>Кандидаты: <strong>{formatNumber(latestRun.candidate_count)}</strong></span>
+              <span>Пары: <strong>{formatNumber(latestRun.edge_count)}</strong></span>
+              <span>Группы: <strong>{formatNumber(latestRun.group_count)}</strong></span>
+            </div>
+          </div>
+        ) : null}
         <FilterableTable
           rows={props.runs}
           rowKey={(run) => run.run_id}
