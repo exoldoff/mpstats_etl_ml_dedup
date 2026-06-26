@@ -34,7 +34,7 @@ import {
   Upload,
   X
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FilterableTable, type SortDirection } from "./FilterableTable";
 import {
@@ -4048,12 +4048,63 @@ function DedupProductsBrowser(props: {
   onQueryChange: (value: string) => void;
   onSearch: () => void;
 }) {
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const resizeState = useRef<{ columnId: string; startX: number; startWidth: number } | null>(null);
+  const columns = [
+    { id: "normalized", label: "Нормализованный SKU", defaultWidth: 360 },
+    { id: "source", label: "Исходный SKU", defaultWidth: 360 },
+    { id: "marketplace", label: "Маркетплейс", defaultWidth: 150 },
+    { id: "article", label: "Артикул", defaultWidth: 160 },
+    { id: "brand", label: "Бренд", defaultWidth: 150 },
+    { id: "subcategory", label: "Подкатегория", defaultWidth: 170 },
+    { id: "sales", label: "Продажи", defaultWidth: 120 },
+    { id: "revenue", label: "Выручка", defaultWidth: 130 },
+    { id: "group", label: "Группа", defaultWidth: 170 }
+  ];
+  const visibleRows = useMemo(() => {
+    if (props.level !== "expanded") return props.rows;
+    return props.rows.filter((row) => row.row_level === "canonical" || !collapsedGroups.has(`${row.run_id}-${row.ml_pack_id}`));
+  }, [collapsedGroups, props.level, props.rows]);
+  function toggleGroup(groupKey: string) {
+    setCollapsedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  }
+  function startColumnResize(event: ReactMouseEvent<HTMLButtonElement>, columnId: string) {
+    if (event.button !== 0 || resizeState.current) return;
+    const headerCell = event.currentTarget.closest("th");
+    resizeState.current = {
+      columnId,
+      startX: event.clientX,
+      startWidth: headerCell?.getBoundingClientRect().width ?? columnWidths[columnId] ?? 120
+    };
+    document.body.classList.add("column-resize-active");
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const state = resizeState.current;
+      if (!state) return;
+      const width = Math.min(720, Math.max(90, Math.round(state.startWidth + moveEvent.clientX - state.startX)));
+      setColumnWidths((current) => (current[state.columnId] === width ? current : { ...current, [state.columnId]: width }));
+    };
+    const handleMouseUp = () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      resizeState.current = null;
+      document.body.classList.remove("column-resize-active");
+    };
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp, { once: true });
+    event.preventDefault();
+    event.stopPropagation();
+  }
   return (
     <div className="dedup-browser-panel">
       <div className="dedup-browser-head">
         <div>
           <h3>Браузер SKU</h3>
-          <small>{formatNumber(props.rows.length)} из {formatNumber(props.total)} строк</small>
+          <small>{formatNumber(visibleRows.length)} из {formatNumber(props.total)} строк</small>
         </div>
         <div className="toolbar wrap">
           <select value={props.categoryKey} onChange={(event) => props.onCategoryChange(event.target.value)}>
@@ -4082,30 +4133,57 @@ function DedupProductsBrowser(props: {
       </div>
       <div className="table-wrap dedup-browser-table">
         <table>
+          <colgroup>
+            {columns.map((column) => (
+              <col key={column.id} style={{ width: `${columnWidths[column.id] ?? column.defaultWidth}px` }} />
+            ))}
+          </colgroup>
           <thead>
             <tr>
-              <th>Нормализованный SKU</th>
-              <th>Исходный SKU</th>
-              <th>Маркетплейс</th>
-              <th>Артикул</th>
-              <th>Бренд</th>
-              <th>Подкатегория</th>
-              <th>Продажи</th>
-              <th>Выручка</th>
-              <th>Группа</th>
+              {columns.map((column) => {
+                const width = columnWidths[column.id] ?? column.defaultWidth;
+                return (
+                  <th key={column.id} style={{ width: `${width}px`, minWidth: `${width}px` }}>
+                    <div className="dedup-browser-th">
+                      <span>{column.label}</span>
+                      <button
+                        type="button"
+                        className="column-resize-handle"
+                        title={`Изменить ширину: ${column.label}`}
+                        aria-label={`Изменить ширину: ${column.label}`}
+                        onMouseDown={(event) => startColumnResize(event, column.id)}
+                      />
+                    </div>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
-            {props.rows.map((row, index) => {
+            {visibleRows.map((row, index) => {
               const canonical = row.row_level === "canonical";
+              const groupKey = `${row.run_id}-${row.ml_pack_id}`;
+              const collapsed = collapsedGroups.has(groupKey);
               return (
                 <tr className={canonical ? "dedup-canonical-row" : "dedup-member-row"} key={`${row.run_id}-${row.ml_pack_id}-${row.row_level}-${row.node_id ?? index}`}>
                   <td>
                     <span className="dedup-level-cell">
-                      {canonical ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                      {canonical && props.level === "expanded" ? (
+                        <button
+                          className="dedup-tree-toggle"
+                          type="button"
+                          aria-label={collapsed ? "Развернуть группу SKU" : "Свернуть группу SKU"}
+                          aria-expanded={!collapsed}
+                          onClick={() => toggleGroup(groupKey)}
+                        >
+                          {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                        </button>
+                      ) : (
+                        <span className="dedup-tree-spacer" aria-hidden="true" />
+                      )}
                       <span>
                         <strong>{row.normalized_sku || row.canonical_sku || row.sku || "-"}</strong>
-                        <small>{canonical ? `${formatNumber(row.component_size)} SKU` : row.ml_dedup_status || "member"}</small>
+                        <small>{canonical ? `${formatNumber(row.component_size)} SKU${collapsed ? " · свернуто" : ""}` : row.ml_dedup_status || "member"}</small>
                       </span>
                     </span>
                   </td>

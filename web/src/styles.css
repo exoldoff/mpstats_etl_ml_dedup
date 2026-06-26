@@ -2438,6 +2438,22 @@ a.ghost-button {
   vertical-align: top;
 }
 
+.dedup-browser-th {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 30px;
+  padding-right: 8px;
+}
+
+.dedup-browser-th span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .dedup-canonical-row {
   background: #eef6f0;
 }
@@ -2455,6 +2471,28 @@ a.ghost-button {
   align-items: flex-start;
   gap: 6px;
   min-width: 240px;
+}
+
+.dedup-tree-toggle,
+.dedup-tree-spacer {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 22px;
+}
+
+.dedup-tree-toggle {
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
+  color: #20363a;
+  background: transparent;
+}
+
+.dedup-tree-toggle:hover,
+.dedup-tree-toggle:focus-visible {
+  background: #dcebe2;
 }
 
 .dedup-level-cell span,
