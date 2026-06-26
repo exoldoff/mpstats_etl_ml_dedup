@@ -107,6 +107,7 @@ export type PipelineSettings = {
   overwrite_raw: boolean;
   overwrite_processed: boolean;
   overwrite_db: boolean;
+  auto_dedup: boolean;
   max_parallel_downloads: number;
   retry_count: number;
   timeout_seconds: number;
@@ -164,6 +165,36 @@ export type DedupCategory = {
   latest_saved_at?: string | null;
   latest_source_at?: string | null;
   latest_successful_run?: DedupRun | null;
+};
+
+export type DedupProductRow = {
+  run_id: string;
+  project_name: string;
+  category_key: string;
+  category_name?: string | null;
+  ml_family_id: string;
+  ml_pack_id: string;
+  row_level: "canonical" | "member" | string;
+  sort_order: number;
+  node_id?: string | null;
+  canonical_node_id?: string | null;
+  canonical_sku?: string | null;
+  normalized_sku?: string | null;
+  marketplace_code?: string | null;
+  marketplace?: string | null;
+  article?: string | null;
+  sku?: string | null;
+  brand?: string | null;
+  subcategory?: string | null;
+  unit_amount?: number | null;
+  total_amount?: number | null;
+  multipack_count?: number | null;
+  sales_volume?: number | null;
+  revenue?: number | null;
+  source_row_count?: number | null;
+  component_size?: number | null;
+  ml_dedup_status?: string | null;
+  confidence_score?: number | null;
 };
 
 export type PipelineRun = {
@@ -711,6 +742,11 @@ export const api = {
   workflowFileUrl: (path: string) => `${API_BASE}/api/workflow/download-file?path=${encodeURIComponent(path)}`,
   exportFileUrl: (path: string) => `${API_BASE}/api/exports/download-file?path=${encodeURIComponent(path)}`,
   reportFileUrl: (path: string) => `${API_BASE}/api/reports/download-file?path=${encodeURIComponent(path)}`,
+  dedupProductsExportUrl: (projectName: string, level: "expanded" | "canonical", categoryKey?: string) => {
+    const params = new URLSearchParams({ project_name: projectName, level });
+    if (categoryKey) params.set("category_key", categoryKey);
+    return `${API_BASE}/api/dedup/products/export?${params.toString()}`;
+  },
   getWorkflowSettings: () => request<WorkflowSettings>("/api/workflow/settings"),
   saveWorkflowSettings: (payload: WorkflowSettings) =>
     request<WorkflowSettings>("/api/workflow/settings", { method: "PUT", body: JSON.stringify(payload) }),
@@ -726,6 +762,16 @@ export const api = {
     ),
   listDedupRuns: (projectName: string) =>
     request<{ runs: DedupRun[] }>(`/api/dedup/runs?project_name=${encodeURIComponent(projectName)}`),
+  getDedupProducts: (payload: { project_name: string; category_key?: string; level?: "expanded" | "canonical"; query?: string; limit?: number }) => {
+    const params = new URLSearchParams({
+      project_name: payload.project_name,
+      level: payload.level ?? "expanded",
+      limit: String(payload.limit ?? 500)
+    });
+    if (payload.category_key) params.set("category_key", payload.category_key);
+    if (payload.query) params.set("query", payload.query);
+    return request<{ columns: string[]; rows: DedupProductRow[]; total: number; level: string }>(`/api/dedup/products?${params.toString()}`);
+  },
   startDedupRuns: (payload: { project_name: string; category_keys: string[]; wait?: boolean }) =>
     request<{ runs: DedupRun[] }>("/api/dedup/runs", { method: "POST", body: JSON.stringify(payload) }),
   getDedupRun: (runId: string) => request<DedupRun>(`/api/dedup/runs/${encodeURIComponent(runId)}`),

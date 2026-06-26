@@ -46,6 +46,7 @@ import {
   ClassifierRule,
   CubeItem,
   DedupCategory,
+  DedupProductRow,
   DedupRun,
   DedupSettings,
   ExportArtifact,
@@ -86,6 +87,7 @@ const defaultPipelineSettings: PipelineSettings = {
   overwrite_raw: false,
   overwrite_processed: false,
   overwrite_db: false,
+  auto_dedup: true,
   max_parallel_downloads: 1,
   retry_count: 1,
   timeout_seconds: 300,
@@ -532,6 +534,11 @@ export function App() {
   const [dedupRuns, setDedupRuns] = useState<DedupRun[]>([]);
   const [dedupArtifactRows, setDedupArtifactRows] = useState<Record<string, unknown>[]>([]);
   const [dedupArtifactTitle, setDedupArtifactTitle] = useState("");
+  const [dedupProductRows, setDedupProductRows] = useState<DedupProductRow[]>([]);
+  const [dedupProductTotal, setDedupProductTotal] = useState(0);
+  const [dedupProductLevel, setDedupProductLevel] = useState<"expanded" | "canonical">("expanded");
+  const [dedupProductCategoryKey, setDedupProductCategoryKey] = useState("");
+  const [dedupProductQuery, setDedupProductQuery] = useState("");
   const [classifierRules, setClassifierRules] = useState<ClassifierRule[]>([]);
   const [rulesPath, setRulesPath] = useState("");
   const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
@@ -853,6 +860,10 @@ export function App() {
     setDedupRuns([]);
     setDedupArtifactRows([]);
     setDedupArtifactTitle("");
+    setDedupProductRows([]);
+    setDedupProductTotal(0);
+    setDedupProductCategoryKey("");
+    setDedupProductQuery("");
     await api.saveWorkflowSettings(workflowSettingsPayload(targetProjectName));
     const [runResponse, cubeResponse, fileResponse] = await Promise.all([
       api.listRuns(targetProjectName),
@@ -1669,7 +1680,25 @@ export function App() {
       if (kept.size) return kept;
       return new Set(eligibleResponse.categories.map((item) => item.category_key));
     });
+    await loadDedupProducts();
     return { categories: eligibleResponse.categories.length, runs: runsResponse.runs.length };
+  }
+
+  async function loadDedupProducts(
+    categoryKey = dedupProductCategoryKey,
+    level = dedupProductLevel,
+    query = dedupProductQuery
+  ) {
+    const response = await api.getDedupProducts({
+      project_name: projectName,
+      category_key: categoryKey || undefined,
+      level,
+      query: query.trim() || undefined,
+      limit: 500
+    });
+    setDedupProductRows(response.rows);
+    setDedupProductTotal(response.total);
+    return response;
   }
 
   async function saveDedupSettings() {
@@ -2516,12 +2545,30 @@ export function App() {
               runs={dedupRuns}
               artifactTitle={dedupArtifactTitle}
               artifactRows={dedupArtifactRows}
+              productRows={dedupProductRows}
+              productTotal={dedupProductTotal}
+              productLevel={dedupProductLevel}
+              productCategoryKey={dedupProductCategoryKey}
+              productQuery={dedupProductQuery}
               busy={Boolean(busy)}
               onSettingChange={setDedupValue}
               onToggleCategory={toggleDedupCategory}
               onReload={() => void runAction("Обновление ML-дедупа", loadDedupWorkspace)}
               onSaveSettings={() => void runAction("Сохранение настроек ML-дедупа", saveDedupSettings)}
               onStart={() => void runAction("Запуск ML-дедупа", startDedupRuns)}
+              onProductLevelChange={(level) => {
+                setDedupProductLevel(level);
+                void runAction("Загрузка браузера ML-дедупа", () => loadDedupProducts(dedupProductCategoryKey, level, dedupProductQuery));
+              }}
+              onProductCategoryChange={(categoryKey) => {
+                setDedupProductCategoryKey(categoryKey);
+                void runAction("Загрузка браузера ML-дедупа", () => loadDedupProducts(categoryKey, dedupProductLevel, dedupProductQuery));
+              }}
+              onProductQueryChange={setDedupProductQuery}
+              onProductSearch={() => void runAction("Поиск в ML-дедупе", () => loadDedupProducts(dedupProductCategoryKey, dedupProductLevel, dedupProductQuery))}
+              onExportProducts={(level) => {
+                window.open(api.dedupProductsExportUrl(projectName, level, dedupProductCategoryKey || undefined), "_blank", "noopener,noreferrer");
+              }}
               onLoadArtifact={(runId, artifact) => void runAction("Загрузка артефакта ML-дедупа", () => loadDedupArtifact(runId, artifact))}
             />
           ) : null}
@@ -3775,12 +3822,22 @@ function DedupWorkspace(props: {
   runs: DedupRun[];
   artifactTitle: string;
   artifactRows: Record<string, unknown>[];
+  productRows: DedupProductRow[];
+  productTotal: number;
+  productLevel: "expanded" | "canonical";
+  productCategoryKey: string;
+  productQuery: string;
   busy: boolean;
   onSettingChange: <K extends keyof DedupSettings>(key: K, value: DedupSettings[K]) => void;
   onToggleCategory: (categoryKey: string) => void;
   onReload: () => void;
   onSaveSettings: () => void;
   onStart: () => void;
+  onProductLevelChange: (level: "expanded" | "canonical") => void;
+  onProductCategoryChange: (categoryKey: string) => void;
+  onProductQueryChange: (value: string) => void;
+  onProductSearch: () => void;
+  onExportProducts: (level: "expanded" | "canonical") => void;
   onLoadArtifact: (runId: string, artifact: "groups" | "edges") => void;
 }) {
   const selectedCount = props.categories.filter((category) => props.selectedCategoryKeys.has(category.category_key)).length;
@@ -3882,6 +3939,21 @@ function DedupWorkspace(props: {
         </div>
       </div>
 
+      <DedupProductsBrowser
+        categories={props.categories}
+        rows={props.productRows}
+        total={props.productTotal}
+        level={props.productLevel}
+        categoryKey={props.productCategoryKey}
+        query={props.productQuery}
+        busy={props.busy}
+        onLevelChange={props.onProductLevelChange}
+        onCategoryChange={props.onProductCategoryChange}
+        onQueryChange={props.onProductQueryChange}
+        onSearch={props.onProductSearch}
+        onExport={props.onExportProducts}
+      />
+
       <div className="dedup-runs-panel">
         <h3>Запуски</h3>
         <FilterableTable
@@ -3928,6 +4000,105 @@ function DedupWorkspace(props: {
         </div>
       ) : null}
     </section>
+  );
+}
+
+function DedupProductsBrowser(props: {
+  categories: DedupCategory[];
+  rows: DedupProductRow[];
+  total: number;
+  level: "expanded" | "canonical";
+  categoryKey: string;
+  query: string;
+  busy: boolean;
+  onLevelChange: (level: "expanded" | "canonical") => void;
+  onCategoryChange: (categoryKey: string) => void;
+  onQueryChange: (value: string) => void;
+  onSearch: () => void;
+  onExport: (level: "expanded" | "canonical") => void;
+}) {
+  return (
+    <div className="dedup-browser-panel">
+      <div className="dedup-browser-head">
+        <div>
+          <h3>Браузер SKU</h3>
+          <small>{formatNumber(props.rows.length)} из {formatNumber(props.total)} строк</small>
+        </div>
+        <div className="toolbar wrap">
+          <select value={props.categoryKey} onChange={(event) => props.onCategoryChange(event.target.value)}>
+            <option value="">Все категории</option>
+            {props.categories.map((category) => (
+              <option key={category.category_key} value={category.category_key}>{category.category_name || category.category_key}</option>
+            ))}
+          </select>
+          <div className="segmented-control">
+            <button className={props.level === "expanded" ? "active" : ""} type="button" onClick={() => props.onLevelChange("expanded")}>2 уровня</button>
+            <button className={props.level === "canonical" ? "active" : ""} type="button" onClick={() => props.onLevelChange("canonical")}>Каноны</button>
+          </div>
+          <div className="search-inline">
+            <Search size={16} />
+            <input
+              value={props.query}
+              placeholder="SKU, бренд, артикул"
+              onChange={(event) => props.onQueryChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") props.onSearch();
+              }}
+            />
+          </div>
+          <button className="ghost-button" disabled={props.busy} onClick={props.onSearch}><RefreshCcw size={17} />Обновить</button>
+          <button className="ghost-button" onClick={() => props.onExport("expanded")}><Download size={17} />CSV 2 уровня</button>
+          <button className="ghost-button" onClick={() => props.onExport("canonical")}><Download size={17} />CSV каноны</button>
+        </div>
+      </div>
+      <div className="table-wrap dedup-browser-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Нормализованный SKU</th>
+              <th>Исходный SKU</th>
+              <th>Маркетплейс</th>
+              <th>Артикул</th>
+              <th>Бренд</th>
+              <th>Подкатегория</th>
+              <th>Продажи</th>
+              <th>Выручка</th>
+              <th>Группа</th>
+            </tr>
+          </thead>
+          <tbody>
+            {props.rows.map((row, index) => {
+              const canonical = row.row_level === "canonical";
+              return (
+                <tr className={canonical ? "dedup-canonical-row" : "dedup-member-row"} key={`${row.run_id}-${row.ml_pack_id}-${row.row_level}-${row.node_id ?? index}`}>
+                  <td>
+                    <span className="dedup-level-cell">
+                      {canonical ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                      <span>
+                        <strong>{row.normalized_sku || row.canonical_sku || row.sku || "-"}</strong>
+                        <small>{canonical ? `${formatNumber(row.component_size)} SKU` : row.ml_dedup_status || "member"}</small>
+                      </span>
+                    </span>
+                  </td>
+                  <td>{canonical ? row.canonical_sku || row.sku || "-" : row.sku || "-"}</td>
+                  <td>{row.marketplace || row.marketplace_code || "-"}</td>
+                  <td>{row.article || "-"}</td>
+                  <td>{row.brand || "-"}</td>
+                  <td>{row.subcategory || "-"}</td>
+                  <td>{formatNumber(row.sales_volume)}</td>
+                  <td>{formatNumber(row.revenue)}</td>
+                  <td>
+                    <span className="mono-small">{row.ml_family_id}</span>
+                    <small>{row.ml_pack_id}</small>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {!props.rows.length ? <Empty text="После успешного ML-дедупа здесь появятся канонические SKU и входящие строки." /> : null}
+      </div>
+    </div>
   );
 }
 

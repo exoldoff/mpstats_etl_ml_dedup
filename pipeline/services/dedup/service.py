@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 from threading import RLock, Thread
 from typing import Any, Callable, Sequence
 from uuid import uuid4
@@ -201,6 +202,11 @@ def _pair_key(left: str, right: str) -> tuple[str, str]:
     return tuple(sorted((left, right)))
 
 
+def _safe_segment(value: object) -> str:
+    text = re.sub(r"[^\w_.-]+", "_", _clean_text(value), flags=re.UNICODE)
+    return text.strip("._") or "all"
+
+
 def _numbers_close(left: object, right: object, *, abs_tol: float, rel_tol: float) -> bool:
     left_num = _to_float(left)
     right_num = _to_float(right)
@@ -371,6 +377,41 @@ class DedupService:
         self.get_run(run_id)
         return {"run_id": run_id, "artifact": artifact, "rows": self.repository.fetch_dedup_artifact(run_id=run_id, artifact=artifact)}
 
+    def products_browser(
+        self,
+        *,
+        project_name: str,
+        category_key: str | None = None,
+        level: str = "expanded",
+        query_text: str | None = None,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        payload = self.repository.fetch_dedup_products(
+            project_name=project_name,
+            category_key=category_key,
+            level=level,
+            query_text=query_text,
+            limit=limit,
+        )
+        payload["project_name"] = project_name
+        payload["category_key"] = category_key
+        payload["level"] = "canonical" if str(level or "").strip().casefold() == "canonical" else "expanded"
+        return payload
+
+    def export_products(self, *, project_name: str, category_key: str | None = None, level: str = "expanded") -> Path:
+        clean_level = "canonical" if str(level or "").strip().casefold() == "canonical" else "expanded"
+        project_dir = self.settings.project_root / "data" / "projects" / _safe_segment(project_name) / "exports"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        category_part = _safe_segment(category_key or "all")
+        target = project_dir / f"dedup_products_{category_part}_{clean_level}_{timestamp}.csv"
+        result = self.repository.export_dedup_products_csv(
+            project_name=project_name,
+            category_key=category_key,
+            level=clean_level,
+            target=target,
+        )
+        return result.output_path
+
     def _execute_run(self, run_id: str) -> None:
         run = self.repository.get_dedup_run(run_id)
         if not run:
@@ -407,6 +448,7 @@ class DedupService:
                 self.repository.replace_dedup_nodes(run_id, nodes.to_dict(orient="records"))
                 self.repository.replace_dedup_edges(run_id, [])
                 self.repository.replace_dedup_groups(run_id, groups.to_dict(orient="records"))
+                materialized_rows = self.repository.refresh_dedup_products_table(run_id=run_id)
                 manifest_path = self._write_manifest(
                     run_id,
                     run,
@@ -415,6 +457,7 @@ class DedupService:
                     pd.DataFrame(),
                     groups,
                     retrieval_cache=cache_metadata,
+                    materialized_rows=materialized_rows,
                 )
                 self.repository.update_dedup_run(
                     run_id,
@@ -429,6 +472,7 @@ class DedupService:
                             manifest_path=manifest_path,
                             profile=profile,
                             retrieval_cache=cache_metadata,
+                            materialized_rows=materialized_rows,
                         ),
                         "finished_at": datetime.now(),
                     },
@@ -463,6 +507,7 @@ class DedupService:
             self.repository.replace_dedup_nodes(run_id, nodes.to_dict(orient="records"))
             self.repository.replace_dedup_edges(run_id, edges.to_dict(orient="records"))
             self.repository.replace_dedup_groups(run_id, groups.to_dict(orient="records"))
+            materialized_rows = self.repository.refresh_dedup_products_table(run_id=run_id)
             manifest_path = self._write_manifest(
                 run_id,
                 run,
@@ -471,6 +516,7 @@ class DedupService:
                 edges,
                 groups,
                 retrieval_cache=cache_metadata,
+                materialized_rows=materialized_rows,
             )
             self.repository.update_dedup_run(
                 run_id,
@@ -485,6 +531,7 @@ class DedupService:
                         manifest_path=manifest_path,
                         profile=profile,
                         retrieval_cache=cache_metadata,
+                        materialized_rows=materialized_rows,
                     ),
                     "finished_at": datetime.now(),
                 },
@@ -753,16 +800,23 @@ class DedupService:
             family_members.setdefault(root_to_family[root], []).append(node_id)
 
         pack_ids: dict[tuple[str, str], str] = {}
+        pack_members: dict[tuple[str, str], list[str]] = {}
+        pack_signatures = {node_id: _pack_signature(node_map.loc[node_id]) for node_id in node_ids}
+        for node_id in node_ids:
+            family_id = root_to_family[roots[node_id]]
+            pack_key = (family_id, pack_signatures[node_id])
+            pack_members.setdefault(pack_key, []).append(node_id)
         rows: list[dict[str, Any]] = []
         for node_id in node_ids:
             row = node_map.loc[node_id]
             family_id = root_to_family[roots[node_id]]
-            pack_key = (family_id, _pack_signature(row))
+            pack_key = (family_id, pack_signatures[node_id])
             if pack_key not in pack_ids:
                 pack_ids[pack_key] = f"mlpack_{len(pack_ids) + 1:06d}"
             members = family_members[family_id]
+            pack_group_members = pack_members[pack_key]
             canonical_node = max(
-                members,
+                pack_group_members,
                 key=lambda item: (
                     float(node_map.loc[item].get("sales_volume") or 0),
                     float(node_map.loc[item].get("revenue") or 0),
@@ -806,6 +860,7 @@ class DedupService:
         groups: pd.DataFrame,
         *,
         retrieval_cache: dict[str, object] | None = None,
+        materialized_rows: int = 0,
     ) -> Path:
         output_dir = self.settings.project_root / "data" / "projects" / str(run["project_name"]) / "dedup" / run_id
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -819,6 +874,7 @@ class DedupService:
             "node_count": int(len(nodes)),
             "edge_count": int(len(edges)),
             "group_count": int(len(groups)),
+            "materialized_row_count": int(materialized_rows),
             "retrieval_cache": retrieval_cache or {},
             "created_at": datetime.now().isoformat(timespec="seconds"),
         }
@@ -857,6 +913,7 @@ class DedupService:
         manifest_path: Path,
         profile: DedupProfile,
         retrieval_cache: dict[str, object],
+        materialized_rows: int = 0,
     ) -> dict[str, object]:
         return {
             "manifest_path": str(manifest_path),
@@ -864,6 +921,7 @@ class DedupService:
             "threshold_strategy": profile.threshold_strategy,
             "threshold_same": profile.threshold_same,
             "faiss_top_k": profile.faiss_top_k,
+            "materialized_row_count": int(materialized_rows),
             "retrieval_cache_status": retrieval_cache.get("status"),
             "retrieval_cache_key": retrieval_cache.get("cache_key"),
             "retrieval_cache_path": retrieval_cache.get("cache_path"),

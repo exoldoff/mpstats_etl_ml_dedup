@@ -25,6 +25,7 @@ from pipeline.services.export_service import (
 )
 from pipeline.services.standardize_service import standardize_dataframe
 from pipeline.services.weight_parser_service import parse_weights_dataframe
+from pipeline.services.dedup import DedupService
 
 from mpstats_app.config import AppSettings
 from mpstats_app.repositories.duckdb_repository import DuckDbAppRepository
@@ -39,6 +40,7 @@ DEFAULT_PIPELINE_SETTINGS: dict[str, Any] = {
     "overwrite_raw": False,
     "overwrite_processed": False,
     "overwrite_db": False,
+    "auto_dedup": True,
     "max_parallel_downloads": 1,
     "retry_count": 1,
     "timeout_seconds": 300,
@@ -145,10 +147,12 @@ class SmartPipelineService:
         settings: AppSettings,
         repository: DuckDbAppRepository,
         catalog_service: CategoryCatalogService,
+        dedup_service: DedupService | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
         self.catalog_service = catalog_service
+        self.dedup_service = dedup_service
         self._lock = RLock()
         self._threads: dict[str, Thread] = {}
         self._operation_progress: dict[str, dict[str, Any]] = {}
@@ -168,6 +172,7 @@ class SmartPipelineService:
         settings["overwrite_raw"] = bool(settings.get("overwrite_raw"))
         settings["overwrite_processed"] = bool(settings.get("overwrite_processed"))
         settings["overwrite_db"] = bool(settings.get("overwrite_db"))
+        settings["auto_dedup"] = bool(settings.get("auto_dedup"))
         settings["max_parallel_downloads"] = max(1, int(settings.get("max_parallel_downloads") or 1))
         settings["retry_count"] = max(0, int(settings.get("retry_count") or 0))
         settings["timeout_seconds"] = max(30, int(settings.get("timeout_seconds") or 300))
@@ -583,6 +588,7 @@ class SmartPipelineService:
             tasks = self._operation_tasks(run_id=run_id, task_filter=task_filter, task_ids=task_ids)
             if operation_kind:
                 self._begin_operation_progress(run_id, kind=operation_kind, tasks=tasks)
+            dedup_category_keys: set[str] = set()
             for task in tasks:
                 self._check_control(run_id)
                 if str(task["status"]) in FINAL_STATUSES and not settings.get("overwrite_db"):
@@ -596,8 +602,18 @@ class SmartPipelineService:
                     force_reprocess=force_reprocess,
                 )
                 self._mark_operation_file(run_id, success=success)
+                if success:
+                    latest_task = self.repository.get_download_task(str(task["id"])) or task
+                    if str(latest_task.get("save_status") or "") == "saved_to_db":
+                        dedup_category_keys.add(str(latest_task.get("category_key") or ""))
                 self._check_control(run_id)
-            self._finish_run(run_id)
+            dedup_failed = self._run_auto_dedup(
+                run_id=run_id,
+                project_name=str(run["project_name"]),
+                category_keys=sorted(key for key in dedup_category_keys if key),
+                settings=settings,
+            )
+            self._finish_run(run_id, dedup_failed=dedup_failed)
         except _PipelinePaused:
             self.repository.update_pipeline_run(run_id, {"status": "paused", "current_step": "Пауза"})
             self._finish_operation_progress(run_id, status="paused")
@@ -614,13 +630,13 @@ class SmartPipelineService:
             )
             self._finish_operation_progress(run_id, status="failed")
 
-    def _finish_run(self, run_id: str) -> None:
+    def _finish_run(self, run_id: str, *, dedup_failed: bool = False) -> None:
         run = self.repository.refresh_pipeline_run_counts(run_id)
         total = int(run.get("total_tasks") or 0) if run else 0
         completed = int(run.get("completed_tasks") or 0) if run else 0
         failed = int(run.get("failed_tasks") or 0) if run else 0
         remaining = max(0, total - completed - failed)
-        if failed:
+        if failed or dedup_failed:
             status = "completed_with_errors"
         elif remaining:
             status = "paused"
@@ -628,9 +644,49 @@ class SmartPipelineService:
             status = "succeeded"
         self.repository.update_pipeline_run(
             run_id,
-            {"status": status, "current_step": "Готово", "finished_at": datetime.now()},
+            {
+                "status": status,
+                "current_step": "Готово, ML-дедуп с ошибкой" if dedup_failed else "Готово",
+                "finished_at": datetime.now(),
+            },
         )
         self._finish_operation_progress(run_id, status=status)
+
+    def _run_auto_dedup(
+        self,
+        *,
+        run_id: str,
+        project_name: str,
+        category_keys: list[str],
+        settings: dict[str, Any],
+    ) -> bool:
+        if not settings.get("auto_dedup", True) or not category_keys or self.dedup_service is None:
+            return False
+        eligible = {
+            str(row["category_key"])
+            for row in self.repository.list_dedup_eligible_categories(project_name=project_name)
+        }
+        selected = [key for key in category_keys if key in eligible]
+        if not selected:
+            return False
+        self.repository.update_pipeline_run(
+            run_id,
+            {"current_step": "ML-дедуп " + ", ".join(selected)},
+        )
+        result = self.dedup_service.start_runs(project_name=project_name, category_keys=selected, wait=True)
+        failed = [
+            run
+            for run in result.get("runs", [])
+            if str(run.get("status") or "") != "success"
+        ]
+        if failed:
+            message = "; ".join(
+                f"{run.get('category_name') or run.get('category_key')}: {run.get('error') or run.get('status')}"
+                for run in failed
+            )
+            LOGGER.warning("ML-dedup post-stage failed for pipeline run %s: %s", run_id, message)
+            return True
+        return False
 
     def _log_task_timing(
         self,

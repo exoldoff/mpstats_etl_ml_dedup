@@ -264,7 +264,7 @@ fine-tuning outputs и report paths смотри в `docs/ARCHITECTURE_PROGRESS.
 | Web-app backend | `mpstats_app/` | API, настройки, DuckDB repository, сервисы локального приложения |
 | Web frontend | `web/` | React UI локальной web-app |
 | Pipeline services | `pipeline/services/` | шаги 1-6 основного workflow |
-| Production ML-дедуп | `pipeline/services/dedup/`, `pipeline/services/dedup/model_profile.json`, `mpstats_app/api/dedup.py`, `pipeline/migrations/012_dedup_identity.sql`, `tests/test_dedup_service.py`, `tests/test_dedup_api.py` | запуск dedup после куба, FAISS K=30, fine-tuned BGE scoring, identity tables |
+| Production ML-дедуп | `pipeline/services/dedup/`, `pipeline/services/dedup/model_profile.json`, `mpstats_app/api/dedup.py`, `pipeline/migrations/012_dedup_identity.sql`, `pipeline/migrations/013_dedup_products_table.sql`, `tests/test_dedup_service.py`, `tests/test_dedup_api.py` | авто-run dedup после куба, FAISS K=30, fine-tuned BGE scoring, identity tables, `mpstats_products_dedup` browser/export |
 | Pipeline repositories | `pipeline/repositories/` | CSV/JSON/DuckDB data layer |
 | DuckDB migrations | `pipeline/migrations/` | schema changes |
 | Классификатор | `classifiers/rules.csv`, `classifiers/engine.py`, `mpstats_app/services/classifier_rules_service.py` | правила web-редактора и движок классификации |
@@ -279,7 +279,7 @@ MPStats API
   -> data/projects/{project}/raw
   -> data/projects/{project}/processed
   -> mpstats.duckdb / mpstats_products
-  -> optional dedup_* identity tables
+  -> dedup_* identity tables / mpstats_products_dedup for supported categories
   -> data/projects/{project}/reports|exports
 Справочник категорий MP STATS.csv
   -> план задач marketplace + category + year + month

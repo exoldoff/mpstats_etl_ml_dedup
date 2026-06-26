@@ -165,6 +165,7 @@ class PipelineSettingsPayload(BaseModel):
     overwrite_raw: bool = False
     overwrite_processed: bool = False
     overwrite_db: bool = False
+    auto_dedup: bool = True
     max_parallel_downloads: int = Field(default=1, ge=1, le=8)
     retry_count: int = Field(default=1, ge=0, le=10)
     timeout_seconds: int = Field(default=300, ge=30, le=3600)

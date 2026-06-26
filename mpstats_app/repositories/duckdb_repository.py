@@ -70,6 +70,35 @@ DEDUP_EXPORT_COLUMNS = (
     "ML-dedup статус",
     "ML-dedup run",
 )
+DEDUP_PRODUCTS_COLUMNS = (
+    "run_id",
+    "project_name",
+    "category_key",
+    "category_name",
+    "ml_family_id",
+    "ml_pack_id",
+    "row_level",
+    "sort_order",
+    "node_id",
+    "canonical_node_id",
+    "canonical_sku",
+    "normalized_sku",
+    "marketplace_code",
+    "marketplace",
+    "article",
+    "sku",
+    "brand",
+    "subcategory",
+    "unit_amount",
+    "total_amount",
+    "multipack_count",
+    "sales_volume",
+    "revenue",
+    "source_row_count",
+    "component_size",
+    "ml_dedup_status",
+    "confidence_score",
+)
 XLSX_MAX_DATA_ROWS_WITH_HEADER = 1_048_575
 CSV_DECIMAL_COMMA_PROTECTED_COLUMNS = {
     "дата",
@@ -705,6 +734,11 @@ def _validate_sheet_name(sheet_name: str) -> str:
     return clean[:31] or "Data"
 
 
+def _clean_dedup_level(level: str) -> str:
+    clean = str(level or "expanded").strip().casefold()
+    return "canonical" if clean == "canonical" else "expanded"
+
+
 def _query_params_with_limit(
     params: dict[str, Any] | list[Any],
     *,
@@ -1206,6 +1240,284 @@ class DuckDbAppRepository:
                 temp_directory=self._duckdb_temp_directory(),
             )
         raise ValueError("artifact должен быть groups или edges.")
+
+    def refresh_dedup_products_table(self, *, run_id: str) -> int:
+        run = self.get_dedup_run(run_id)
+        if not run:
+            raise ValueError("Dedup run не найден.")
+        project_name = str(run["project_name"])
+        category_key = str(run["category_key"])
+        with self._lock, connect(self.settings.db_path, temp_directory=self._duckdb_temp_directory()) as con:
+            apply_migrations(con)
+            with duckdb_transaction(con):
+                con.execute(
+                    """
+                    DELETE FROM mpstats_products_dedup
+                    WHERE project_name = ? AND category_key = ?
+                    """,
+                    [project_name, category_key],
+                )
+                con.execute(
+                    """
+                    INSERT INTO mpstats_products_dedup (
+                        run_id, project_name, category_key, category_name,
+                        ml_family_id, ml_pack_id, row_level, sort_order,
+                        node_id, canonical_node_id, canonical_sku, normalized_sku,
+                        marketplace_code, marketplace, article, sku, brand, subcategory,
+                        unit_amount, total_amount, multipack_count,
+                        sales_volume, revenue, source_row_count, component_size,
+                        ml_dedup_status, confidence_score
+                    )
+                    SELECT
+                        g.run_id,
+                        n.project_name,
+                        n.category_key,
+                        MIN(n.category_name) AS category_name,
+                        g.ml_family_id,
+                        g.ml_pack_id,
+                        'canonical' AS row_level,
+                        0 AS sort_order,
+                        g.canonical_node_id AS node_id,
+                        g.canonical_node_id,
+                        MAX(g.canonical_sku) AS canonical_sku,
+                        MAX(g.canonical_sku) AS normalized_sku,
+                        MIN(cn.marketplace_code) AS marketplace_code,
+                        MIN(cn.marketplace) AS marketplace,
+                        MIN(cn.article) AS article,
+                        MIN(cn.sku) AS sku,
+                        MIN(cn.brand) AS brand,
+                        MIN(cn.subcategory) AS subcategory,
+                        MIN(cn.unit_amount) AS unit_amount,
+                        MIN(cn.total_amount) AS total_amount,
+                        MIN(cn.multipack_count) AS multipack_count,
+                        COALESCE(SUM(n.sales_volume), 0) AS sales_volume,
+                        COALESCE(SUM(n.revenue), 0) AS revenue,
+                        COALESCE(SUM(n.row_count), 0) AS source_row_count,
+                        COUNT(*) AS component_size,
+                        CASE WHEN COUNT(*) > 1 THEN 'canonical_group' ELSE 'canonical_singleton' END AS ml_dedup_status,
+                        MAX(g.confidence_score) AS confidence_score
+                    FROM dedup_sku_groups AS g
+                    JOIN dedup_sku_nodes AS n
+                      ON n.run_id = g.run_id AND n.node_id = g.node_id
+                    LEFT JOIN dedup_sku_nodes AS cn
+                      ON cn.run_id = g.run_id AND cn.node_id = g.canonical_node_id
+                    WHERE g.run_id = ?
+                    GROUP BY
+                        g.run_id,
+                        n.project_name,
+                        n.category_key,
+                        g.ml_family_id,
+                        g.ml_pack_id,
+                        g.canonical_node_id
+                    """,
+                    [run_id],
+                )
+                con.execute(
+                    """
+                    INSERT INTO mpstats_products_dedup (
+                        run_id, project_name, category_key, category_name,
+                        ml_family_id, ml_pack_id, row_level, sort_order,
+                        node_id, canonical_node_id, canonical_sku, normalized_sku,
+                        marketplace_code, marketplace, article, sku, brand, subcategory,
+                        unit_amount, total_amount, multipack_count,
+                        sales_volume, revenue, source_row_count, component_size,
+                        ml_dedup_status, confidence_score
+                    )
+                    SELECT
+                        g.run_id,
+                        n.project_name,
+                        n.category_key,
+                        n.category_name,
+                        g.ml_family_id,
+                        g.ml_pack_id,
+                        'member' AS row_level,
+                        1 AS sort_order,
+                        n.node_id,
+                        g.canonical_node_id,
+                        g.canonical_sku,
+                        g.canonical_sku AS normalized_sku,
+                        n.marketplace_code,
+                        n.marketplace,
+                        n.article,
+                        n.sku,
+                        n.brand,
+                        n.subcategory,
+                        n.unit_amount,
+                        n.total_amount,
+                        n.multipack_count,
+                        n.sales_volume,
+                        n.revenue,
+                        n.row_count AS source_row_count,
+                        g.component_size,
+                        g.ml_dedup_status,
+                        g.confidence_score
+                    FROM dedup_sku_groups AS g
+                    JOIN dedup_sku_nodes AS n
+                      ON n.run_id = g.run_id AND n.node_id = g.node_id
+                    WHERE g.run_id = ?
+                    """,
+                    [run_id],
+                )
+                row = con.execute(
+                    """
+                    SELECT COUNT(*) AS rows_count
+                    FROM mpstats_products_dedup
+                    WHERE run_id = ?
+                    """,
+                    [run_id],
+                ).fetchone()
+        return int(row[0]) if row else 0
+
+    def fetch_dedup_products(
+        self,
+        *,
+        project_name: str,
+        category_key: str | None = None,
+        level: str = "expanded",
+        query_text: str | None = None,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        if not self.table_exists("mpstats_products_dedup"):
+            return {"columns": list(DEDUP_PRODUCTS_COLUMNS), "rows": [], "total": 0}
+        where_sql, params = self._dedup_products_where(
+            project_name=project_name,
+            category_key=category_key,
+            level=level,
+            query_text=query_text,
+        )
+        safe_limit = max(1, min(int(limit), 5000))
+        count = self._fetch_one(
+            f"SELECT COUNT(*) AS total FROM mpstats_products_dedup {where_sql}",
+            params,
+            read_only=True,
+            temp_directory=self._duckdb_temp_directory(),
+        )
+        rows = self._fetch_records(
+            f"""
+            SELECT {", ".join(quote_duckdb_name(column) for column in DEDUP_PRODUCTS_COLUMNS)}
+            FROM mpstats_products_dedup
+            {where_sql}
+            ORDER BY
+                category_name NULLS LAST,
+                ml_family_id,
+                ml_pack_id,
+                sort_order,
+                revenue DESC NULLS LAST,
+                sku NULLS LAST
+            LIMIT ?
+            """,
+            [*params, safe_limit],
+            read_only=True,
+            temp_directory=self._duckdb_temp_directory(),
+        )
+        return {
+            "columns": list(DEDUP_PRODUCTS_COLUMNS),
+            "rows": rows,
+            "total": int(count["total"]) if count else 0,
+        }
+
+    def export_dedup_products_csv(
+        self,
+        *,
+        project_name: str,
+        target: str | Path,
+        category_key: str | None = None,
+        level: str = "expanded",
+    ) -> ExportResult:
+        if not self.table_exists("mpstats_products_dedup"):
+            raise ValueError("Таблица mpstats_products_dedup ещё не создана. Сначала запусти ML-дедуп.")
+        where_sql, params = self._dedup_products_where(
+            project_name=project_name,
+            category_key=category_key,
+            level=level,
+            query_text=None,
+        )
+        if _clean_dedup_level(level) == "canonical":
+            columns = [
+                "project_name",
+                "category_key",
+                "category_name",
+                "ml_family_id",
+                "ml_pack_id",
+                "normalized_sku",
+                "canonical_sku",
+                "brand",
+                "subcategory",
+                "unit_amount",
+                "total_amount",
+                "multipack_count",
+                "sales_volume",
+                "revenue",
+                "source_row_count",
+                "component_size",
+                "run_id",
+            ]
+        else:
+            columns = [
+                "project_name",
+                "category_key",
+                "category_name",
+                "row_level",
+                "ml_family_id",
+                "ml_pack_id",
+                "normalized_sku",
+                "canonical_sku",
+                "marketplace",
+                "marketplace_code",
+                "article",
+                "sku",
+                "brand",
+                "subcategory",
+                "unit_amount",
+                "total_amount",
+                "multipack_count",
+                "sales_volume",
+                "revenue",
+                "source_row_count",
+                "component_size",
+                "ml_dedup_status",
+                "confidence_score",
+                "run_id",
+            ]
+        query = f"""
+            SELECT {", ".join(quote_duckdb_name(column) for column in columns)}
+            FROM mpstats_products_dedup
+            {where_sql}
+            ORDER BY
+                category_name NULLS LAST,
+                ml_family_id,
+                ml_pack_id,
+                sort_order,
+                revenue DESC NULLS LAST,
+                sku NULLS LAST
+        """
+        return self.export_flat_query(query, Path(target), "csv", params=params, delimiter=";", header=True)
+
+    @staticmethod
+    def _dedup_products_where(
+        *,
+        project_name: str,
+        category_key: str | None,
+        level: str,
+        query_text: str | None,
+    ) -> tuple[str, list[Any]]:
+        where = ["project_name = ?"]
+        params: list[Any] = [project_name]
+        if category_key:
+            where.append("category_key = ?")
+            params.append(category_key)
+        if _clean_dedup_level(level) == "canonical":
+            where.append("row_level = 'canonical'")
+        if query_text and query_text.strip():
+            needle = f"%{query_text.strip().casefold()}%"
+            searchable = ["normalized_sku", "canonical_sku", "sku", "brand", "article", "category_name", "marketplace"]
+            where.append(
+                "("
+                + " OR ".join(f"lower(CAST({quote_duckdb_name(column)} AS VARCHAR)) LIKE ?" for column in searchable)
+                + ")"
+            )
+            params.extend([needle] * len(searchable))
+        return "WHERE " + " AND ".join(where), params
 
     def list_project_database_summaries(self, *, table_name: str) -> list[dict[str, Any]]:
         names: set[str] = set()

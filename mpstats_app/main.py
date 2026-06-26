@@ -52,15 +52,20 @@ def create_app(settings: AppSettings | None = None, *, start_workers: bool = Tru
     catalog_service = CategoryCatalogService(settings=app_settings, repository=repository)
     classifier_rules_service = ClassifierRulesService(settings=app_settings)
     manual_overrides_service = ManualOverridesService(settings=app_settings)
+    dedup_service = DedupService(settings=app_settings, repository=repository)
     workflow_service = WorkflowService(settings=app_settings, repository=repository, catalog_service=catalog_service)
-    smart_pipeline_service = SmartPipelineService(settings=app_settings, repository=repository, catalog_service=catalog_service)
+    smart_pipeline_service = SmartPipelineService(
+        settings=app_settings,
+        repository=repository,
+        catalog_service=catalog_service,
+        dedup_service=dedup_service,
+    )
     smart_plan_service = SmartPlanService(settings=app_settings, repository=repository)
     project_service = ProjectService(settings=app_settings, repository=repository)
     export_service = ExportService(settings=app_settings, repository=repository)
     report_service = ReportService(settings=app_settings, repository=repository)
     job_service = JobService(settings=app_settings, repository=repository)
     scheduler_service = SchedulerService(settings=app_settings, repository=repository, job_service=job_service)
-    dedup_service = DedupService(settings=app_settings, repository=repository)
     data_quality_service = DataQualityService(
         DataQualityRepository(
             project_root=app_settings.project_root,

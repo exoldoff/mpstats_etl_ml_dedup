@@ -108,7 +108,7 @@ class FakeEmbeddingModel:
 
 class FakeCrossEncoder:
     def predict(self, pairs: list[tuple[str, str]], **_: object) -> np.ndarray:
-        return np.full(len(pairs), 0.91, dtype=float)
+        return np.full(len(pairs), 0.99, dtype=float)
 
 
 class FakeFaissModule:
@@ -200,6 +200,22 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         assert groups_response.status_code == 200
         assert len(groups_response.json()["rows"]) == 2
 
+        products_response = client.get(
+            "/api/dedup/products",
+            params={"project_name": "unit", "category_key": "sauce", "level": "expanded"},
+        )
+        assert products_response.status_code == 200
+        product_rows = products_response.json()["rows"]
+        assert [row["row_level"] for row in product_rows].count("canonical") == 1
+        assert [row["row_level"] for row in product_rows].count("member") == 2
+
+        products_export = client.get(
+            "/api/dedup/products/export",
+            params={"project_name": "unit", "category_key": "sauce", "level": "canonical"},
+        )
+        assert products_export.status_code == 200
+        assert products_export.text.startswith("\ufeffproject_name;category_key;category_name;")
+
         with connect(settings.db_path) as con:
             tables = {
                 row[0]
@@ -208,7 +224,8 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
                     SELECT table_name
                     FROM information_schema.tables
                     WHERE table_name LIKE 'dedup_%'
+                       OR table_name = 'mpstats_products_dedup'
                     """
                 ).fetchall()
             }
-        assert {"dedup_runs", "dedup_sku_nodes", "dedup_sku_edges", "dedup_sku_groups"}.issubset(tables)
+        assert {"dedup_runs", "dedup_sku_nodes", "dedup_sku_edges", "dedup_sku_groups", "mpstats_products_dedup"}.issubset(tables)

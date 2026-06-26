@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from mpstats_app.api.dependencies import get_dedup_service
 from mpstats_app.schemas import DedupRunPayload, DedupSettingsPayload
@@ -45,6 +46,37 @@ def list_runs(
     service: DedupService = Depends(get_dedup_service),
 ) -> dict[str, object]:
     return _handle(lambda: service.list_runs(project_name=project_name, category_key=category_key))
+
+
+@router.get("/products")
+def products_browser(
+    project_name: str,
+    category_key: str | None = None,
+    level: str = "expanded",
+    query: str | None = None,
+    limit: int = 500,
+    service: DedupService = Depends(get_dedup_service),
+) -> dict[str, object]:
+    return _handle(
+        lambda: service.products_browser(
+            project_name=project_name,
+            category_key=category_key,
+            level=level,
+            query_text=query,
+            limit=limit,
+        )
+    )
+
+
+@router.get("/products/export")
+def export_products(
+    project_name: str,
+    category_key: str | None = None,
+    level: str = "expanded",
+    service: DedupService = Depends(get_dedup_service),
+) -> FileResponse:
+    target = _handle(lambda: service.export_products(project_name=project_name, category_key=category_key, level=level))
+    return FileResponse(target, filename=target.name)
 
 
 @router.post("/runs")

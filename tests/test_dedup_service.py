@@ -91,7 +91,7 @@ class FakeEmbeddingModel:
 
 
 class FakeCrossEncoder:
-    def __init__(self, score: float = 0.9) -> None:
+    def __init__(self, score: float = 0.99) -> None:
         self.score = score
 
     def predict(self, pairs: list[tuple[str, str]], **_: object) -> np.ndarray:
@@ -242,6 +242,24 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     )
     assert len(exported) == before_count
     assert exported["ML-группа товара"].notna().all()
+
+    browser = repository.fetch_dedup_products(project_name="unit", category_key="sauce", level="expanded", limit=20)
+    assert browser["total"] == 4
+    assert [row["row_level"] for row in browser["rows"]].count("canonical") == 1
+    assert [row["row_level"] for row in browser["rows"]].count("member") == 3
+    canonical = repository.fetch_dedup_products(project_name="unit", category_key="sauce", level="canonical", limit=20)
+    assert canonical["total"] == 1
+    assert {row["normalized_sku"] for row in canonical["rows"]} == {row["canonical_sku"] for row in canonical["rows"]}
+
+    export_path = tmp_path / "dedup-products.csv"
+    export_result = repository.export_dedup_products_csv(
+        project_name="unit",
+        category_key="sauce",
+        level="canonical",
+        target=export_path,
+    )
+    assert export_result.output_path == export_path
+    assert export_path.read_text(encoding="utf-8").startswith("\ufeffproject_name;category_key;category_name;")
 
     with connect(settings.db_path) as con:
         after_count = con.execute(f"SELECT COUNT(*) FROM {settings.products_table}").fetchone()[0]

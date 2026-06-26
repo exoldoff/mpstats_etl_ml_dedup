@@ -2231,6 +2231,99 @@ a.ghost-button {
   max-height: 314px;
 }
 
+.dedup-browser-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d8e1e4;
+  border-radius: 8px;
+  background: #fbfcfc;
+}
+
+.dedup-browser-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dedup-browser-head h3 {
+  margin: 0 0 4px;
+}
+
+.dedup-browser-head small {
+  color: #64777d;
+  font-weight: 700;
+}
+
+.search-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #cbd6d9;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.search-inline input {
+  width: 180px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.dedup-browser-table {
+  margin-top: 0;
+}
+
+.dedup-browser-table table {
+  min-width: 1120px;
+}
+
+.dedup-browser-table td {
+  vertical-align: top;
+}
+
+.dedup-canonical-row {
+  background: #eef6f0;
+}
+
+.dedup-canonical-row strong {
+  color: #163f2a;
+}
+
+.dedup-member-row .dedup-level-cell {
+  padding-left: 18px;
+}
+
+.dedup-level-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 240px;
+}
+
+.dedup-level-cell span,
+.dedup-browser-table td:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.dedup-level-cell small,
+.dedup-browser-table td:last-child small {
+  color: #64777d;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mono-small {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
 .dedup-artifact {
   margin-top: 0;
 }

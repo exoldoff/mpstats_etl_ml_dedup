@@ -198,12 +198,13 @@ binary benchmark с `pair_weight = 1`.
   сравнения с прежним connected-components поведением.
 - Текущий threshold benchmark не создаёт `manual_review` / triage-зону.
 
-## 6.1 Организация кода на research-этапе (пересмотрено по запросу)
-Предыдущая версия предлагала сразу встраивать matching-код в
-`pipeline/services/dedup/`. **Пересмотрено**: сейчас research-этап —
-сравнение технологий (rule-based / embeddings zero-shot / fine-tuned /
-cross-encoder / LLM-judge), а не финальная интеграция. `pipeline/` и
-`mpstats_app/` не трогаем вообще до тех пор, пока технология не выбрана.
+## 6.1 Организация кода: research и production v1
+Research-этап остаётся местом сравнения технологий (rule-based / embeddings
+zero-shot / fine-tuned / cross-encoder / LLM-judge), а не единственным
+runtime. Выбранный production v1 перенесён в основной web workflow:
+`pipeline/services/dedup/` запускает FAISS `top_k=30` + fine-tuned BGE
+cross-encoder после сохранения куба, пишет `dedup_*` identity tables и
+материализует `mpstats_products_dedup` для браузера и CSV-выгрузок.
 
 Текущая организация:
 - `notebooks/` — сами ноутбуки-деливераблы конкурса (план — раздел 7).
@@ -212,11 +213,8 @@ cross-encoder / LLM-judge), а не финальная интеграция. `pi
   функции, чтобы не копипастить код между ноутбуками (генерация кандидатов,
   метрики, обёртки над моделями). Импортируется из ноутбуков как обычный
   локальный пакет (`from research.dedup import ...`).
-
-Когда технология выбрана по результатам сравнения (раздел 8) — тогда, и
-только тогда, финальный выбранный вариант переносится в
-`pipeline/services/...` под реальную структуру репозитория. До этого
-момента это намеренно не «production-код».
+- `pipeline/services/dedup/` — production v1, который не импортирует notebook
+  cells и не мутирует `mpstats_products`.
 
 ## 7. Деливераблы конкурса — план ноутбуков (обновлено по итогам EDA)
 - `00_eda.ipynb` — готово (раздел 1.2).
