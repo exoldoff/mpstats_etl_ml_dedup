@@ -115,6 +115,12 @@ CSV_DECIMAL_DOT_PATTERN = r"([0-9])\.([0-9])"
 CSV_DECIMAL_COMMA_REPLACEMENT = r"\1,\2"
 CUBE_SALES_MIN_QUANTILE = DEFAULT_SALES_MIN_QUANTILE
 CUBE_SALES_MIN_UNITS = DEFAULT_SALES_MIN_UNITS
+DEDUP_ELIGIBLE_CATEGORY_GROUPS = {
+    "соус": ("sauces", "Соусы"),
+    "соусы": ("sauces", "Соусы"),
+    "кокосовое масло": ("coconut_oil", "Кокосовое масло"),
+    "мыло": ("soap", "Мыло"),
+}
 
 
 class DuplicateCubeSliceError(ValueError):
@@ -739,6 +745,26 @@ def _clean_dedup_level(level: str) -> str:
     return "canonical" if clean == "canonical" else "expanded"
 
 
+def _dedup_category_group(category_name: object) -> tuple[str, str] | None:
+    clean = " ".join(str(category_name or "").strip().split()).casefold().replace("ё", "е")
+    return DEDUP_ELIGIBLE_CATEGORY_GROUPS.get(clean)
+
+
+def _dedup_group_category_key(group_key: str) -> str:
+    return f"dedupcat_{group_key}"
+
+
+def _max_optional(left: object, right: object) -> object:
+    if left in (None, ""):
+        return right
+    if right in (None, ""):
+        return left
+    try:
+        return max(left, right)
+    except TypeError:
+        return max(str(left), str(right))
+
+
 def _query_params_with_limit(
     params: dict[str, Any] | list[Any],
     *,
@@ -1018,6 +1044,35 @@ class DuckDbAppRepository:
             params,
         )
 
+    def fail_stale_dedup_runs(self, *, project_name: str | None = None) -> int:
+        where = ["status IN ('queued', 'running')"]
+        params: list[Any] = []
+        if project_name:
+            where.append("project_name = ?")
+            params.append(project_name)
+        where_sql = " AND ".join(where)
+        with self._lock, connect(self.settings.db_path) as con:
+            apply_migrations(con)
+            count_row = con.execute(
+                f"SELECT COUNT(*) AS runs_count FROM dedup_runs WHERE {where_sql}",
+                params,
+            ).fetchone()
+            runs_count = int(count_row[0] or 0) if count_row else 0
+            if runs_count <= 0:
+                return 0
+            con.execute(
+                f"""
+                UPDATE dedup_runs
+                SET
+                    status = 'failed',
+                    error = COALESCE(error, 'Dedup run interrupted: backend restarted before completion.'),
+                    finished_at = COALESCE(finished_at, now())
+                WHERE {where_sql}
+                """,
+                params,
+            )
+        return runs_count
+
     def latest_successful_dedup_run(self, *, project_name: str, category_key: str) -> dict[str, Any] | None:
         return self._fetch_one(
             """
@@ -1031,11 +1086,13 @@ class DuckDbAppRepository:
         )
 
     def list_dedup_eligible_categories(self, *, project_name: str) -> list[dict[str, Any]]:
-        return self._fetch_records(
+        rows = self._fetch_records(
             """
             SELECT
                 category_key,
                 MIN(category_name) AS category_name,
+                MIN(marketplace_code) AS marketplace_code,
+                MIN(marketplace) AS marketplace,
                 SUM(rows_count) AS rows_count,
                 COUNT(*) AS slices_count,
                 MAX(saved_to_db_at) AS latest_saved_at,
@@ -1050,17 +1107,86 @@ class DuckDbAppRepository:
             """,
             [project_name],
         )
+        grouped: dict[str, dict[str, Any]] = {}
+        source_sets: dict[str, set[str]] = {}
+        marketplace_sets: dict[str, set[str]] = {}
+        marketplace_code_sets: dict[str, set[str]] = {}
+        for row in rows:
+            group = _dedup_category_group(row.get("category_name"))
+            if group is None:
+                continue
+            group_key, group_name = group
+            item = grouped.setdefault(
+                group_key,
+                {
+                    "category_key": _dedup_group_category_key(group_key),
+                    "category_name": group_name,
+                    "rows_count": 0,
+                    "slices_count": 0,
+                    "latest_saved_at": None,
+                    "latest_source_at": None,
+                },
+            )
+            item["rows_count"] = int(item["rows_count"] or 0) + int(row.get("rows_count") or 0)
+            item["slices_count"] = int(item["slices_count"] or 0) + int(row.get("slices_count") or 0)
+            item["latest_saved_at"] = _max_optional(item.get("latest_saved_at"), row.get("latest_saved_at"))
+            item["latest_source_at"] = _max_optional(item.get("latest_source_at"), row.get("latest_source_at"))
+
+            source_key = str(row.get("category_key") or "").strip()
+            if source_key:
+                source_sets.setdefault(group_key, set()).add(source_key)
+            marketplace = str(row.get("marketplace") or "").strip()
+            if marketplace:
+                marketplace_sets.setdefault(group_key, set()).add(marketplace)
+            marketplace_code = str(row.get("marketplace_code") or "").strip()
+            if marketplace_code:
+                marketplace_code_sets.setdefault(group_key, set()).add(marketplace_code)
+
+        result: list[dict[str, Any]] = []
+        for group_key, item in grouped.items():
+            source_category_keys = sorted(source_sets.get(group_key, set()))
+            marketplaces = sorted(marketplace_sets.get(group_key, set()))
+            marketplace_codes = sorted(marketplace_code_sets.get(group_key, set()))
+            result.append(
+                {
+                    **item,
+                    "source_category_keys": source_category_keys,
+                    "source_categories_count": len(source_category_keys),
+                    "marketplaces": marketplaces,
+                    "marketplace_codes": marketplace_codes,
+                }
+            )
+        return sorted(result, key=lambda item: (str(item.get("category_name") or ""), str(item.get("category_key") or "")))
+
+    def resolve_dedup_source_category_keys(self, *, project_name: str, category_key: str) -> list[str]:
+        clean_key = str(category_key or "").strip()
+        if not clean_key:
+            return []
+        for category in self.list_dedup_eligible_categories(project_name=project_name):
+            if str(category.get("category_key") or "") == clean_key:
+                source_keys = [str(key).strip() for key in category.get("source_category_keys") or []]
+                return [key for key in source_keys if key]
+        return [clean_key]
 
     def fetch_dedup_source_dataframe(
         self,
         *,
         table_name: str,
         project_name: str,
-        category_key: str,
+        category_key: str | None = None,
+        category_keys: list[str] | None = None,
     ) -> pd.DataFrame:
         columns = self.table_columns(table_name)
         self._require_export_metadata(columns)
         quoted_table = quote_identifier(table_name)
+        clean_category_keys = [
+            str(key).strip()
+            for key in (category_keys if category_keys is not None else [category_key])
+            if str(key or "").strip()
+        ]
+        if not clean_category_keys:
+            return pd.DataFrame()
+        category_placeholders = ", ".join("?" for _ in clean_category_keys)
 
         def text_expr(column: str, fallback: str = "NULL") -> str:
             if column in columns:
@@ -1104,9 +1230,9 @@ class DuckDbAppRepository:
                     {text_expr('__business_row_hash')} AS business_row_hash
                 FROM {quoted_table}
                 WHERE {quote_duckdb_name('__project_name')} = ?
-                  AND {quote_duckdb_name('__category_key')} = ?
+                  AND {quote_duckdb_name('__category_key')} IN ({category_placeholders})
                 """,
-                [project_name, category_key],
+                [project_name, *clean_category_keys],
             ).fetchdf()
 
     def replace_dedup_nodes(self, run_id: str, rows: list[dict[str, Any]]) -> None:
@@ -1493,8 +1619,8 @@ class DuckDbAppRepository:
         """
         return self.export_flat_query(query, Path(target), "csv", params=params, delimiter=";", header=True)
 
-    @staticmethod
     def _dedup_products_where(
+        self,
         *,
         project_name: str,
         category_key: str | None,
@@ -1504,8 +1630,16 @@ class DuckDbAppRepository:
         where = ["project_name = ?"]
         params: list[Any] = [project_name]
         if category_key:
-            where.append("category_key = ?")
-            params.append(category_key)
+            source_category_keys = self.resolve_dedup_source_category_keys(
+                project_name=project_name,
+                category_key=category_key,
+            )
+            if len(source_category_keys) == 1:
+                where.append("category_key = ?")
+                params.append(source_category_keys[0])
+            elif source_category_keys:
+                where.append(f"category_key IN ({', '.join('?' for _ in source_category_keys)})")
+                params.extend(source_category_keys)
         if _clean_dedup_level(level) == "canonical":
             where.append("row_level = 'canonical'")
         if query_text and query_text.strip():

@@ -332,6 +332,27 @@ function dedupCacheStatus(run: DedupRun | null | undefined) {
   return `cache ${status}`;
 }
 
+function pluralRu(value: number, one: string, few: string, many: string) {
+  const abs = Math.abs(value);
+  const mod10 = abs % 10;
+  const mod100 = abs % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
+
+function dedupCategoryMeta(category: DedupCategory) {
+  const sourceCount = category.source_categories_count ?? category.source_category_keys?.length ?? 1;
+  const sourceText = `${formatNumber(sourceCount)} ${pluralRu(sourceCount, "источник", "источника", "источников")}`;
+  const marketplaces = category.marketplaces?.filter(Boolean).join(", ");
+  return [
+    sourceText,
+    marketplaces,
+    `${formatNumber(category.rows_count)} строк`,
+    `${formatNumber(category.slices_count)} срезов`
+  ].filter(Boolean).join(" · ");
+}
+
 function emptyCatalogFilter(): CatalogFilterDraft {
   return { operator: "AND", conditions: [] };
 }
@@ -3883,7 +3904,7 @@ function DedupWorkspace(props: {
                 />
                 <span>
                   <strong>{category.category_name || category.category_key}</strong>
-                  <small>{category.category_key} · {formatNumber(category.rows_count)} строк · {formatNumber(category.slices_count)} срезов</small>
+                  <small>{dedupCategoryMeta(category)}</small>
                   {category.latest_successful_run ? <small>latest: {formatDateTime(category.latest_successful_run.finished_at)}</small> : null}
                 </span>
               </label>

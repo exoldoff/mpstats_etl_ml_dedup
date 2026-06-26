@@ -662,16 +662,20 @@ class SmartPipelineService:
     ) -> bool:
         if not settings.get("auto_dedup", True) or not category_keys or self.dedup_service is None:
             return False
-        eligible = {
-            str(row["category_key"])
-            for row in self.repository.list_dedup_eligible_categories(project_name=project_name)
-        }
-        selected = [key for key in category_keys if key in eligible]
+        requested = {str(key) for key in category_keys if str(key).strip()}
+        selected: list[str] = []
+        selected_names: list[str] = []
+        for row in self.repository.list_dedup_eligible_categories(project_name=project_name):
+            category_key = str(row["category_key"])
+            source_category_keys = {str(key) for key in row.get("source_category_keys") or [] if str(key).strip()}
+            if category_key in requested or requested.intersection(source_category_keys):
+                selected.append(category_key)
+                selected_names.append(str(row.get("category_name") or category_key))
         if not selected:
             return False
         self.repository.update_pipeline_run(
             run_id,
-            {"current_step": "ML-дедуп " + ", ".join(selected)},
+            {"current_step": "ML-дедуп " + ", ".join(selected_names or selected)},
         )
         result = self.dedup_service.start_runs(project_name=project_name, category_keys=selected, wait=True)
         failed = [

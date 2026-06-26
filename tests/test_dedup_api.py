@@ -181,11 +181,12 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         eligible_response = client.get("/api/dedup/eligible-categories", params={"project_name": "unit"})
         assert eligible_response.status_code == 200
         categories = eligible_response.json()["categories"]
-        assert [category["category_key"] for category in categories] == ["sauce"]
+        assert [category["category_key"] for category in categories] == ["dedupcat_sauces"]
+        assert categories[0]["source_category_keys"] == ["sauce"]
 
         run_response = client.post(
             "/api/dedup/runs",
-            json={"project_name": "unit", "category_keys": ["sauce"], "wait": True},
+            json={"project_name": "unit", "category_keys": ["dedupcat_sauces"], "wait": True},
         )
         assert run_response.status_code == 200
         run = run_response.json()["runs"][0]
@@ -202,7 +203,7 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
 
         products_response = client.get(
             "/api/dedup/products",
-            params={"project_name": "unit", "category_key": "sauce", "level": "expanded"},
+            params={"project_name": "unit", "category_key": "dedupcat_sauces", "level": "expanded"},
         )
         assert products_response.status_code == 200
         product_rows = products_response.json()["rows"]
@@ -211,7 +212,7 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
 
         products_export = client.get(
             "/api/dedup/products/export",
-            params={"project_name": "unit", "category_key": "sauce", "level": "canonical"},
+            params={"project_name": "unit", "category_key": "dedupcat_sauces", "level": "canonical"},
         )
         assert products_export.status_code == 200
         assert products_export.text.startswith("\ufeffproject_name;category_key;category_name;")

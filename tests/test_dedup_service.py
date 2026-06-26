@@ -35,13 +35,23 @@ def make_settings(root: Path) -> AppSettings:
     )
 
 
-def seed_dedup_cube(repository: DuckDbAppRepository, settings: AppSettings, root: Path, *, rows_count: int = 3) -> None:
+def seed_dedup_cube(
+    repository: DuckDbAppRepository,
+    settings: AppSettings,
+    root: Path,
+    *,
+    rows_count: int = 3,
+    category_key: str = "sauce",
+    category_name: str = "Соус",
+    marketplace_code: str = "oz",
+    marketplace: str = "Ozon",
+) -> None:
     rows = []
     for index in range(rows_count):
         rows.append(
             {
-                "Маркетплейс": "Ozon" if index % 2 == 0 else "WB",
-                "Категория": "Соус",
+                "Маркетплейс": marketplace,
+                "Категория": category_name,
                 "Артикул": f"SKU-{index + 1}",
                 "SKU": f"Томатный соус {index + 1} 500 г",
                 "Бренд": "DedupBrand",
@@ -52,31 +62,31 @@ def seed_dedup_cube(repository: DuckDbAppRepository, settings: AppSettings, root
                 "Вес, кг (ед.)": "0.5",
             }
         )
-    source_file = root / f"dedup-source-{rows_count}.csv"
+    source_file = root / f"dedup-source-{category_key}-{rows_count}.csv"
     write_semicolon_csv(pd.DataFrame(rows), source_file)
     inserted = repository.import_products_file_idempotent(
-        run_id=f"run-dedup-source-{rows_count}",
+        run_id=f"run-dedup-source-{category_key}-{rows_count}",
         csv_path=source_file,
         table_name=settings.products_table,
         project_name="unit",
         year=2026,
         month=5,
-        marketplace_code="oz",
-        category_key="sauce",
-        category_name="Соус",
+        marketplace_code=marketplace_code,
+        category_key=category_key,
+        category_name=category_name,
     )
     repository.upsert_cube_entry(
         {
             "project_name": "unit",
             "year": 2026,
             "month": 5,
-            "marketplace": "Ozon",
-            "marketplace_code": "oz",
-            "category_key": "sauce",
-            "category_name": "Соус",
+            "marketplace": marketplace,
+            "marketplace_code": marketplace_code,
+            "category_key": category_key,
+            "category_name": category_name,
             "rows_count": inserted,
             "source_processed_file_path": str(source_file),
-            "file_hash": f"dedup-source-{rows_count}",
+            "file_hash": f"dedup-source-{category_key}-{rows_count}",
         }
     )
 
@@ -172,6 +182,73 @@ def test_profile_locks_weighted_cost_threshold_and_faiss_k() -> None:
     assert profile.faiss_top_k == 30
 
 
+def test_eligible_categories_collapse_source_keys_by_business_category(tmp_path: Path) -> None:
+    _, repository, _, settings = make_service(tmp_path)
+    seed_dedup_cube(
+        repository,
+        settings,
+        tmp_path,
+        rows_count=2,
+        category_key="sauce_oz",
+        category_name="Соус",
+        marketplace_code="oz",
+        marketplace="Ozon",
+    )
+    seed_dedup_cube(
+        repository,
+        settings,
+        tmp_path,
+        rows_count=3,
+        category_key="sauce_wb",
+        category_name="Соусы",
+        marketplace_code="wb",
+        marketplace="WB",
+    )
+
+    categories = repository.list_dedup_eligible_categories(project_name="unit")
+
+    assert len(categories) == 1
+    category = categories[0]
+    assert category["category_key"] == "dedupcat_sauces"
+    assert category["category_name"] == "Соусы"
+    assert category["rows_count"] == 5
+    assert category["slices_count"] == 2
+    assert category["source_categories_count"] == 2
+    assert set(category["source_category_keys"]) == {"sauce_oz", "sauce_wb"}
+    assert set(category["marketplaces"]) == {"Ozon", "WB"}
+
+
+def test_service_marks_stale_dedup_runs_failed_on_start(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    repository = DuckDbAppRepository(settings)
+    repository.ensure_ready()
+    repository.create_dedup_run(
+        {
+            "run_id": "stale-run",
+            "project_name": "unit",
+            "category_key": "dedupcat_sauces",
+            "category_name": "Соусы",
+            "status": "running",
+            **DedupProfile().to_dict(),
+            "manifest": {},
+        }
+    )
+
+    DedupService(
+        settings=settings,
+        repository=repository,
+        embedding_model_factory=lambda _: FakeEmbeddingModel(),
+        cross_encoder_factory=lambda _: FakeCrossEncoder(),
+        faiss_module=FakeFaissModule(),
+    )
+
+    run = repository.get_dedup_run("stale-run")
+    assert run
+    assert run["status"] == "failed"
+    assert "backend restarted" in str(run["error"])
+    assert run["finished_at"] is not None
+
+
 def test_faiss_candidate_retrieval_uses_k_30(tmp_path: Path) -> None:
     service, _, fake_faiss, _ = make_service(tmp_path)
     nodes = pd.DataFrame(
@@ -191,6 +268,32 @@ def test_faiss_candidate_retrieval_uses_k_30(tmp_path: Path) -> None:
 
     assert not candidates.empty
     assert fake_faiss.search_ks == [31]
+
+
+def test_faiss_candidate_retrieval_crosses_source_category_keys(tmp_path: Path) -> None:
+    service, _, _, _ = make_service(tmp_path)
+    nodes = pd.DataFrame(
+        [
+            {
+                "node_id": "sku_oz",
+                "category_key": "source_oz",
+                "subcategory": "Томатные соусы",
+                "sku": "Соус томатный 500 г",
+            },
+            {
+                "node_id": "sku_wb",
+                "category_key": "source_wb",
+                "subcategory": "Томатные соусы",
+                "sku": "Томатный соус 0.5 кг",
+            },
+        ]
+    )
+    embeddings = np.asarray([[1.0, 0.0], [1.0, 0.0]], dtype="float32")
+
+    candidates = service._generate_candidates(nodes, embeddings, DedupProfile())
+
+    assert len(candidates) == 1
+    assert {candidates.iloc[0]["node_id_a"], candidates.iloc[0]["node_id_b"]} == {"sku_oz", "sku_wb"}
 
 
 def test_run_fails_if_fine_tuned_model_unavailable(tmp_path: Path) -> None:
@@ -217,9 +320,11 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     run = result["runs"][0]
 
     assert run["status"] == "success"
+    assert run["category_key"] == "dedupcat_sauces"
     assert run["threshold_strategy"] == "threshold_weighted_cost"
     assert run["threshold_same"] == pytest.approx(0.917444)
     assert run["faiss_top_k"] == 30
+    assert run["manifest_json"]["source_category_keys"] == ["sauce"]
     assert run["manifest_json"]["retrieval_cache_status"] == "rebuilt"
     assert run["manifest_json"]["cache_rebuild_reason"] == "miss"
     assert run["manifest_json"]["embedding_shape"] == [3, 3]
@@ -247,6 +352,8 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     assert browser["total"] == 4
     assert [row["row_level"] for row in browser["rows"]].count("canonical") == 1
     assert [row["row_level"] for row in browser["rows"]].count("member") == 3
+    grouped_browser = repository.fetch_dedup_products(project_name="unit", category_key="dedupcat_sauces", level="expanded", limit=20)
+    assert grouped_browser["total"] == 4
     canonical = repository.fetch_dedup_products(project_name="unit", category_key="sauce", level="canonical", limit=20)
     assert canonical["total"] == 1
     assert {row["normalized_sku"] for row in canonical["rows"]} == {row["canonical_sku"] for row in canonical["rows"]}

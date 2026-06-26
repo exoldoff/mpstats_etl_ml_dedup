@@ -162,6 +162,10 @@ export type DedupCategory = {
   category_name: string;
   rows_count: number;
   slices_count: number;
+  source_category_keys?: string[];
+  source_categories_count?: number;
+  marketplaces?: string[];
+  marketplace_codes?: string[];
   latest_saved_at?: string | null;
   latest_source_at?: string | null;
   latest_successful_run?: DedupRun | null;

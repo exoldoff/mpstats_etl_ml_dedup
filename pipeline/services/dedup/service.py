@@ -285,6 +285,7 @@ class DedupService:
         self._retrieval_cache = RetrievalEmbeddingCache(project_root=settings.project_root)
         self._lock = RLock()
         self._threads: dict[str, Thread] = {}
+        self.repository.fail_stale_dedup_runs()
 
     def get_settings(self) -> dict[str, Any]:
         raw = self.repository.get_setting(DEDUP_SETTINGS_KEY)
@@ -318,10 +319,15 @@ class DedupService:
         return {"project_name": project_name, "categories": enriched, "settings": self.get_settings()}
 
     def start_runs(self, *, project_name: str, category_keys: list[str], wait: bool = False) -> dict[str, Any]:
-        eligible = {
-            str(row["category_key"]): row
-            for row in self.repository.list_dedup_eligible_categories(project_name=project_name)
-        }
+        eligible_rows = self.repository.list_dedup_eligible_categories(project_name=project_name)
+        eligible: dict[str, dict[str, Any]] = {}
+        for row in eligible_rows:
+            category_key = str(row["category_key"])
+            eligible[category_key] = row
+            for source_category_key in row.get("source_category_keys") or []:
+                clean_source_key = str(source_category_key).strip()
+                if clean_source_key:
+                    eligible[clean_source_key] = row
         clean_keys = [str(key) for key in category_keys if str(key).strip()]
         if not clean_keys:
             raise ValueError("Выбери хотя бы одну категорию для ML-дедупа.")
@@ -331,8 +337,23 @@ class DedupService:
 
         base_profile = DedupProfile.from_settings(self.get_settings())
         runs: list[dict[str, Any]] = []
-        for category_key in clean_keys:
-            category = eligible[category_key]
+        selected_categories: list[dict[str, Any]] = []
+        seen_category_keys: set[str] = set()
+        for requested_key in clean_keys:
+            category = eligible[requested_key]
+            category_key = str(category["category_key"])
+            if category_key in seen_category_keys:
+                continue
+            seen_category_keys.add(category_key)
+            selected_categories.append(category)
+
+        for category in selected_categories:
+            category_key = str(category["category_key"])
+            source_category_keys = [
+                str(key).strip()
+                for key in category.get("source_category_keys") or [category_key]
+                if str(key or "").strip()
+            ]
             profile = base_profile.for_category(
                 category_key=category_key,
                 category_name=category.get("category_name"),
@@ -346,7 +367,11 @@ class DedupService:
                     "category_name": category.get("category_name"),
                     "status": "queued",
                     **profile.to_dict(),
-                    "manifest": {"requested_at": datetime.now().isoformat(timespec="seconds")},
+                    "manifest": {
+                        "requested_at": datetime.now().isoformat(timespec="seconds"),
+                        "source_category_keys": source_category_keys,
+                        "source_marketplaces": list(category.get("marketplaces") or []),
+                    },
                 }
             )
             runs.append(run)
@@ -435,7 +460,7 @@ class DedupService:
             source = self.repository.fetch_dedup_source_dataframe(
                 table_name=self.settings.products_table,
                 project_name=str(run["project_name"]),
-                category_key=str(run["category_key"]),
+                category_keys=self._source_category_keys_from_run(run),
             )
             if source.empty:
                 raise DedupRuntimeError("Нет строк куба для выбранной категории.")
@@ -473,6 +498,7 @@ class DedupService:
                             profile=profile,
                             retrieval_cache=cache_metadata,
                             materialized_rows=materialized_rows,
+                            source_category_keys=self._source_category_keys_from_run(run),
                         ),
                         "finished_at": datetime.now(),
                     },
@@ -532,6 +558,7 @@ class DedupService:
                         profile=profile,
                         retrieval_cache=cache_metadata,
                         materialized_rows=materialized_rows,
+                        source_category_keys=self._source_category_keys_from_run(run),
                     ),
                     "finished_at": datetime.now(),
                 },
@@ -641,34 +668,33 @@ class DedupService:
         nodes_with_idx["_row_idx"] = nodes_with_idx.index
         nodes_with_idx["_subcategory_norm"] = nodes_with_idx["subcategory"].map(_norm_text)
 
-        for _, category_nodes in nodes_with_idx.groupby("category_key", dropna=False):
-            known_groups = [
-                group
-                for _, group in category_nodes[category_nodes["_subcategory_norm"].ne("")].groupby("_subcategory_norm", dropna=False)
-                if len(group) > 1
-            ]
-            known_indexes = {int(idx) for group in known_groups for idx in group["_row_idx"].tolist()}
-            for group in known_groups:
-                self._search_group(
-                    faiss,
-                    nodes,
-                    embeddings,
-                    group["_row_idx"].tolist(),
-                    pair_rows,
-                    top_k=profile.faiss_top_k,
-                    blocking_scope="same_subcategory",
-                )
-            fallback_group = category_nodes[~category_nodes["_row_idx"].isin(known_indexes)]
-            if len(fallback_group) > 1:
-                self._search_group(
-                    faiss,
-                    nodes,
-                    embeddings,
-                    fallback_group["_row_idx"].tolist(),
-                    pair_rows,
-                    top_k=profile.faiss_top_k,
-                    blocking_scope="global",
-                )
+        known_groups = [
+            group
+            for _, group in nodes_with_idx[nodes_with_idx["_subcategory_norm"].ne("")].groupby("_subcategory_norm", dropna=False)
+            if len(group) > 1
+        ]
+        known_indexes = {int(idx) for group in known_groups for idx in group["_row_idx"].tolist()}
+        for group in known_groups:
+            self._search_group(
+                faiss,
+                nodes,
+                embeddings,
+                group["_row_idx"].tolist(),
+                pair_rows,
+                top_k=profile.faiss_top_k,
+                blocking_scope="same_subcategory",
+            )
+        fallback_group = nodes_with_idx[~nodes_with_idx["_row_idx"].isin(known_indexes)]
+        if len(fallback_group) > 1:
+            self._search_group(
+                faiss,
+                nodes,
+                embeddings,
+                fallback_group["_row_idx"].tolist(),
+                pair_rows,
+                top_k=profile.faiss_top_k,
+                blocking_scope="global",
+            )
         if not pair_rows:
             return pd.DataFrame()
         return pd.DataFrame(pair_rows.values()).sort_values(["candidate_rank", "embedding_similarity_score"], ascending=[True, False]).reset_index(drop=True)
@@ -870,6 +896,7 @@ class DedupService:
             "project_name": run["project_name"],
             "category_key": run["category_key"],
             "category_name": run.get("category_name"),
+            "source_category_keys": self._source_category_keys_from_run(run),
             "profile": profile.to_dict(),
             "node_count": int(len(nodes)),
             "edge_count": int(len(edges)),
@@ -908,12 +935,30 @@ class DedupService:
         return output
 
     @staticmethod
+    def _source_category_keys_from_run(run: dict[str, Any]) -> list[str]:
+        manifest = run.get("manifest_json")
+        if isinstance(manifest, str):
+            try:
+                manifest = json.loads(manifest) if manifest.strip() else {}
+            except json.JSONDecodeError:
+                manifest = {}
+        if not isinstance(manifest, dict):
+            manifest = {}
+        raw_keys = manifest.get("source_category_keys")
+        if isinstance(raw_keys, list):
+            source_keys = [str(key).strip() for key in raw_keys if str(key or "").strip()]
+            if source_keys:
+                return source_keys
+        return [str(run["category_key"])]
+
+    @staticmethod
     def _run_manifest_json(
         *,
         manifest_path: Path,
         profile: DedupProfile,
         retrieval_cache: dict[str, object],
         materialized_rows: int = 0,
+        source_category_keys: list[str] | None = None,
     ) -> dict[str, object]:
         return {
             "manifest_path": str(manifest_path),
@@ -921,6 +966,7 @@ class DedupService:
             "threshold_strategy": profile.threshold_strategy,
             "threshold_same": profile.threshold_same,
             "faiss_top_k": profile.faiss_top_k,
+            "source_category_keys": list(source_category_keys or []),
             "materialized_row_count": int(materialized_rows),
             "retrieval_cache_status": retrieval_cache.get("status"),
             "retrieval_cache_key": retrieval_cache.get("cache_key"),
