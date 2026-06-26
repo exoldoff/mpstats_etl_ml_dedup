@@ -1291,9 +1291,20 @@ class DuckDbAppRepository:
         unit_expr = _number_expr("Вес, кг (ед.)") if "Вес, кг (ед.)" in columns else "CAST(NULL AS DOUBLE)"
         total_expr = _number_expr("Вес, кг") if "Вес, кг" in columns else "CAST(NULL AS DOUBLE)"
         sales_col = _first_existing_column(columns, CUBE_SALES_FILTER_COLUMNS)
+        volume_col = _first_existing_column(columns, CUBE_VOLUME_FILTER_COLUMNS)
         revenue_col = _first_existing_column(columns, REPORT_REVENUE_COLUMNS)
         sales_expr = _number_expr(sales_col) if sales_col else "CAST(0 AS DOUBLE)"
+        volume_expr = _number_expr(volume_col) if volume_col else None
         revenue_expr = _number_expr(revenue_col) if revenue_col else "CAST(0 AS DOUBLE)"
+        source_filters = [
+            f"{quote_duckdb_name('__project_name')} = ?",
+            f"{quote_duckdb_name('__category_key')} IN ({category_placeholders})",
+        ]
+        if sales_col:
+            source_filters.append(f"{sales_expr} >= {float(CUBE_SALES_MIN_UNITS)}")
+        if volume_expr:
+            source_filters.append(f"{volume_expr} > 0")
+        source_where_sql = " AND ".join(source_filters)
 
         with self._lock, connect(self.settings.db_path, read_only=True, temp_directory=self._duckdb_temp_directory()) as con:
             return con.execute(
@@ -1315,8 +1326,7 @@ class DuckDbAppRepository:
                     {text_expr('__row_hash')} AS row_hash,
                     {text_expr('__business_row_hash')} AS business_row_hash
                 FROM {quoted_table}
-                WHERE {quote_duckdb_name('__project_name')} = ?
-                  AND {quote_duckdb_name('__category_key')} IN ({category_placeholders})
+                WHERE {source_where_sql}
                 """,
                 [project_name, *clean_category_keys],
             ).fetchdf()

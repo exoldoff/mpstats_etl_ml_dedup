@@ -218,6 +218,35 @@ def test_eligible_categories_collapse_source_keys_by_business_category(tmp_path:
     assert set(category["marketplaces"]) == {"Ozon", "WB"}
 
 
+def test_dedup_source_skips_low_sales_rows_from_dirty_cube(tmp_path: Path) -> None:
+    _, repository, _, settings = make_service(tmp_path)
+    seed_dedup_cube(repository, settings, tmp_path, rows_count=2)
+    with connect(settings.db_path) as con:
+        con.execute(
+            """
+            INSERT INTO mpstats_products BY NAME
+            SELECT * REPLACE (
+                'LOW-SALES' AS "Артикул",
+                'Низкие продажи не должны идти в ML-дедуп' AS "SKU",
+                '1' AS "Продажи, шт",
+                'low-sales-row' AS "__row_hash",
+                'low-sales-business-row' AS "__business_row_hash"
+            )
+            FROM mpstats_products
+            LIMIT 1
+            """
+        )
+
+    source = repository.fetch_dedup_source_dataframe(
+        table_name=settings.products_table,
+        project_name="unit",
+        category_key="sauce",
+    )
+
+    assert set(source["article"]) == {"SKU-1", "SKU-2"}
+    assert source["sales_volume"].min() >= 15
+
+
 def test_service_marks_stale_dedup_runs_failed_on_start(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     repository = DuckDbAppRepository(settings)
