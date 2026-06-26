@@ -3,10 +3,17 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEB_DIR="$ROOT_DIR/web"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+SYSTEM_PYTHON_BIN="${PYTHON_BIN:-python3}"
+VENV_DIR="${MPSTATS_VENV_DIR:-$ROOT_DIR/.venv}"
+PYTHON_BIN="$VENV_DIR/bin/python"
 HOST="${MPSTATS_APP_HOST:-127.0.0.1}"
 PORT_START="${MPSTATS_APP_PORT:-8000}"
 PORT_END="${MPSTATS_APP_PORT_END:-8010}"
+
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export VECLIB_MAXIMUM_THREADS="${VECLIB_MAXIMUM_THREADS:-1}"
+export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 cd "$ROOT_DIR"
 
@@ -23,6 +30,48 @@ fail() {
 
 need_command() {
   command -v "$1" >/dev/null 2>&1 || fail "Не найдена команда '$1'."
+}
+
+ensure_venv() {
+  if [[ -x "$PYTHON_BIN" ]]; then
+    return 0
+  fi
+  need_command "$SYSTEM_PYTHON_BIN"
+  log "Создаю локальное Python-окружение .venv..."
+  "$SYSTEM_PYTHON_BIN" -m venv "$VENV_DIR" || fail "Не удалось создать .venv через $SYSTEM_PYTHON_BIN."
+}
+
+dependencies_missing() {
+  "$PYTHON_BIN" - <<'PY'
+import importlib.util
+import sys
+
+modules = [
+    "duckdb",
+    "faiss",
+    "fastapi",
+    "numpy",
+    "pandas",
+    "sentence_transformers",
+    "torch",
+    "uvicorn",
+]
+missing = [module for module in modules if importlib.util.find_spec(module) is None]
+if missing:
+    print("Не найдены Python-модули: " + ", ".join(missing), file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+ensure_python_dependencies() {
+  local marker="$VENV_DIR/.requirements-installed"
+  if dependencies_missing && [[ -f "$marker" && "$marker" -nt "$ROOT_DIR/requirements.txt" ]]; then
+    return 0
+  fi
+  log "Устанавливаю Python-зависимости в .venv из requirements.txt..."
+  "$PYTHON_BIN" -m pip install -r requirements.txt || fail "python -m pip install -r requirements.txt завершился с ошибкой."
+  dependencies_missing || fail "После установки Python-зависимости всё ещё недоступны."
+  touch "$marker"
 }
 
 port_is_free() {
@@ -77,52 +126,10 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-need_command "$PYTHON_BIN"
 need_command npm
-
-log "Проверяю Python-зависимости..."
-if ! "$PYTHON_BIN" - <<'PY'
-import importlib.util
-import sys
-
-modules = [
-    "duckdb",
-    "faiss",
-    "fastapi",
-    "numpy",
-    "pandas",
-    "sentence_transformers",
-    "torch",
-    "uvicorn",
-]
-missing = [module for module in modules if importlib.util.find_spec(module) is None]
-if missing:
-    print("Не найдены Python-модули: " + ", ".join(missing), file=sys.stderr)
-    raise SystemExit(1)
-PY
-then
-  log "Устанавливаю Python-зависимости из requirements.txt..."
-  "$PYTHON_BIN" -m pip install -r requirements.txt || fail "python3 -m pip install -r requirements.txt завершился с ошибкой."
-  "$PYTHON_BIN" - <<'PY' || fail "После установки Python-зависимости всё ещё недоступны."
-import importlib.util
-import sys
-
-modules = [
-    "duckdb",
-    "faiss",
-    "fastapi",
-    "numpy",
-    "pandas",
-    "sentence_transformers",
-    "torch",
-    "uvicorn",
-]
-missing = [module for module in modules if importlib.util.find_spec(module) is None]
-if missing:
-    print("Не найдены Python-модули: " + ", ".join(missing), file=sys.stderr)
-    raise SystemExit(1)
-PY
-fi
+ensure_venv
+log "Проверяю Python-зависимости в .venv..."
+ensure_python_dependencies
 
 if [[ ! -d "$WEB_DIR/node_modules" ]]; then
   log "Устанавливаю frontend-зависимости..."
@@ -165,8 +172,10 @@ if [[ "$READY" != "1" ]]; then
   fail "Backend не ответил на /api/health."
 fi
 
-log "Открываю приложение..."
-open "$URL"
+if [[ "${MPSTATS_APP_NO_BROWSER:-0}" != "1" ]]; then
+  log "Открываю приложение..."
+  open "$URL"
+fi
 
 printf "\nMPStats Local App работает: %s\n" "$URL"
 printf "Закрой это окно или нажми Ctrl+C, чтобы остановить backend.\n\n"
