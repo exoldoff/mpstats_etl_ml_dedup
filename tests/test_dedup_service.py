@@ -249,6 +249,37 @@ def test_service_marks_stale_dedup_runs_failed_on_start(tmp_path: Path) -> None:
     assert run["finished_at"] is not None
 
 
+def test_service_prunes_repeated_failed_dedup_runs_on_start(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    repository = DuckDbAppRepository(settings)
+    repository.ensure_ready()
+    for index, category_key in enumerate(("source_a", "source_b", "source_c"), start=1):
+        repository.create_dedup_run(
+            {
+                "run_id": f"failed-run-{index}",
+                "project_name": "unit",
+                "category_key": category_key,
+                "category_name": "Кокосовое масло",
+                "status": "failed",
+                **DedupProfile().to_dict(),
+                "manifest": {},
+            }
+        )
+
+    DedupService(
+        settings=settings,
+        repository=repository,
+        embedding_model_factory=lambda _: FakeEmbeddingModel(),
+        cross_encoder_factory=lambda _: FakeCrossEncoder(),
+        faiss_module=FakeFaissModule(),
+    )
+
+    runs = repository.list_dedup_runs(project_name="unit", limit=10)
+    assert len(runs) == 1
+    assert runs[0]["status"] == "failed"
+    assert runs[0]["category_name"] == "Кокосовое масло"
+
+
 def test_faiss_candidate_retrieval_uses_k_30(tmp_path: Path) -> None:
     service, _, fake_faiss, _ = make_service(tmp_path)
     nodes = pd.DataFrame(
@@ -308,6 +339,48 @@ def test_run_fails_if_fine_tuned_model_unavailable(tmp_path: Path) -> None:
     run = result["runs"][0]
     assert run["status"] == "failed"
     assert "fine-tuned model unavailable" in str(run["error"])
+    assert run["manifest_json"]["progress_percent"] == 100
+    assert run["manifest_json"]["progress_stage"] == "failed"
+    assert "DedupRuntimeError" in run["manifest_json"]["progress_message"]
+
+
+def test_failed_dedup_runs_are_replaced_by_next_attempt(tmp_path: Path) -> None:
+    def missing_model(_: str) -> FakeCrossEncoder:
+        raise DedupRuntimeError("fine-tuned model unavailable")
+
+    service, repository, _, settings = make_service(tmp_path, cross_encoder_factory=missing_model)
+    seed_dedup_cube(repository, settings, tmp_path, rows_count=2)
+
+    first = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    second = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+
+    runs = repository.list_dedup_runs(project_name="unit", category_key="dedupcat_sauces", limit=10)
+    assert first["status"] == "failed"
+    assert second["status"] == "failed"
+    assert first["run_id"] != second["run_id"]
+    assert [run["run_id"] for run in runs] == [second["run_id"]]
+
+
+def test_active_dedup_run_is_reused_instead_of_duplicated(tmp_path: Path) -> None:
+    service, repository, _, settings = make_service(tmp_path)
+    seed_dedup_cube(repository, settings, tmp_path, rows_count=2)
+    active = repository.create_dedup_run(
+        {
+            "run_id": "active-run",
+            "project_name": "unit",
+            "category_key": "dedupcat_sauces",
+            "category_name": "Соусы",
+            "status": "running",
+            **DedupProfile().to_dict(),
+            "manifest": {"progress_percent": 30, "progress_message": "Уже работает"},
+        }
+    )
+
+    result = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)
+
+    assert result["runs"][0]["run_id"] == active["run_id"]
+    runs = repository.list_dedup_runs(project_name="unit", category_key="dedupcat_sauces", limit=10)
+    assert [run["run_id"] for run in runs] == ["active-run"]
 
 
 def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_path: Path) -> None:
@@ -325,6 +398,9 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     assert run["threshold_same"] == pytest.approx(0.917444)
     assert run["faiss_top_k"] == 30
     assert run["manifest_json"]["source_category_keys"] == ["sauce"]
+    assert run["manifest_json"]["progress_percent"] == 100
+    assert run["manifest_json"]["progress_stage"] == "success"
+    assert "mpstats_products_dedup" in run["manifest_json"]["progress_message"]
     assert run["manifest_json"]["retrieval_cache_status"] == "rebuilt"
     assert run["manifest_json"]["cache_rebuild_reason"] == "miss"
     assert run["manifest_json"]["embedding_shape"] == [3, 3]

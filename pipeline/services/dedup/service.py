@@ -52,6 +52,8 @@ DEDUP_ACTIVATION = "sigmoid"
 DEDUP_PROFILE_PATH = Path(__file__).with_name("model_profile.json")
 E5_TEXT_PREFIX = "query: "
 ELIGIBLE_CATEGORY_NAMES = {"соус", "соусы", "кокосовое масло", "мыло"}
+DEDUP_ACTIVE_STATUSES = {"queued", "running"}
+DEDUP_REPLACED_STATUSES = ["failed"]
 
 EmbeddingFactory = Callable[[str], Any]
 CrossEncoderFactory = Callable[[str], Any]
@@ -286,6 +288,7 @@ class DedupService:
         self._lock = RLock()
         self._threads: dict[str, Thread] = {}
         self.repository.fail_stale_dedup_runs()
+        self.repository.prune_failed_dedup_runs()
 
     def get_settings(self) -> dict[str, Any]:
         raw = self.repository.get_setting(DEDUP_SETTINGS_KEY)
@@ -354,6 +357,28 @@ class DedupService:
                 for key in category.get("source_category_keys") or [category_key]
                 if str(key or "").strip()
             ]
+            lookup_category_keys = list(dict.fromkeys([category_key, *source_category_keys]))
+            existing_runs = [
+                self._normalize_run(run) or run
+                for lookup_category_key in lookup_category_keys
+                for run in self.repository.list_dedup_runs(
+                    project_name=project_name,
+                    category_key=lookup_category_key,
+                    limit=10,
+                )
+            ]
+            active_run = next(
+                (run for run in existing_runs if str(run.get("status") or "") in DEDUP_ACTIVE_STATUSES),
+                None,
+            )
+            if active_run is not None:
+                runs.append(active_run)
+                continue
+            self.repository.delete_dedup_runs(
+                project_name=project_name,
+                category_keys=lookup_category_keys,
+                statuses=DEDUP_REPLACED_STATUSES,
+            )
             profile = base_profile.for_category(
                 category_key=category_key,
                 category_name=category.get("category_name"),
@@ -371,6 +396,9 @@ class DedupService:
                         "requested_at": datetime.now().isoformat(timespec="seconds"),
                         "source_category_keys": source_category_keys,
                         "source_marketplaces": list(category.get("marketplaces") or []),
+                        "progress_percent": 0,
+                        "progress_stage": "queued",
+                        "progress_message": "Ожидает запуска",
                     },
                 }
             )
@@ -443,6 +471,13 @@ class DedupService:
             return
         started = datetime.now()
         self.repository.update_dedup_run(run_id, {"status": "running", "started_at": started, "error": None})
+        self._update_progress(
+            run_id,
+            run,
+            percent=5,
+            stage="read_source",
+            message="Читаю строки куба",
+        )
         try:
             profile = DedupProfile(
                 model_method=str(run.get("model_method") or DEDUP_METHOD),
@@ -464,12 +499,47 @@ class DedupService:
             )
             if source.empty:
                 raise DedupRuntimeError("Нет строк куба для выбранной категории.")
+            self._update_progress(
+                run_id,
+                run,
+                percent=15,
+                stage="build_nodes",
+                message=f"Прочитано строк куба: {len(source):,}".replace(",", " "),
+            )
 
             nodes = self._build_nodes(source, run_id=run_id)
+            self._update_progress(
+                run_id,
+                run,
+                percent=25,
+                stage="load_embeddings",
+                message=f"Собрано SKU-node: {len(nodes):,}".replace(",", " "),
+                node_count=len(nodes),
+            )
             if len(nodes) < 2:
                 cache_metadata = self._retrieval_cache.skipped("not_enough_nodes").to_manifest()
+                self._update_progress(
+                    run_id,
+                    run,
+                    percent=55,
+                    stage="score_pairs",
+                    message="SKU-node меньше двух, проверяю модель",
+                    node_count=len(nodes),
+                    candidate_count=0,
+                )
                 self._load_cross_encoder(profile)
                 groups = self._build_groups(nodes, edges=pd.DataFrame())
+                self._update_progress(
+                    run_id,
+                    run,
+                    percent=85,
+                    stage="materialize",
+                    message="Записываю каноническую таблицу",
+                    node_count=len(nodes),
+                    candidate_count=0,
+                    edge_count=0,
+                    group_count=len(groups),
+                )
                 self.repository.replace_dedup_nodes(run_id, nodes.to_dict(orient="records"))
                 self.repository.replace_dedup_edges(run_id, [])
                 self.repository.replace_dedup_groups(run_id, groups.to_dict(orient="records"))
@@ -499,6 +569,9 @@ class DedupService:
                             retrieval_cache=cache_metadata,
                             materialized_rows=materialized_rows,
                             source_category_keys=self._source_category_keys_from_run(run),
+                            progress_percent=100,
+                            progress_stage="success",
+                            progress_message=f"Готово: {materialized_rows:,} строк в mpstats_products_dedup".replace(",", " "),
                         ),
                         "finished_at": datetime.now(),
                     },
@@ -514,6 +587,14 @@ class DedupService:
             if cache_load.embeddings is not None:
                 embeddings = cache_load.embeddings
                 cache_metadata = cache_load.metadata.to_manifest()
+                self._update_progress(
+                    run_id,
+                    run,
+                    percent=45,
+                    stage="build_candidates",
+                    message="Embeddings взяты из cache, собираю FAISS-кандидаты",
+                    node_count=len(nodes),
+                )
             else:
                 embeddings = self._encode_nodes(nodes, profile)
                 cache_metadata = self._retrieval_cache.write(
@@ -524,11 +605,49 @@ class DedupService:
                     embedding_model_name=profile.embedding_model_name,
                     rebuild_reason=str(cache_load.metadata.cache_rebuild_reason or "miss"),
                 ).to_manifest()
+                self._update_progress(
+                    run_id,
+                    run,
+                    percent=45,
+                    stage="build_candidates",
+                    message="Embeddings посчитаны, собираю FAISS-кандидаты",
+                    node_count=len(nodes),
+                )
             candidates = self._generate_candidates(nodes, embeddings, profile)
             if candidates.empty:
                 raise DedupRuntimeError("FAISS не вернул ни одной пары-кандидата.")
+            self._update_progress(
+                run_id,
+                run,
+                percent=60,
+                stage="score_pairs",
+                message=f"FAISS-кандидатов: {len(candidates):,}, запускаю cross-encoder".replace(",", " "),
+                node_count=len(nodes),
+                candidate_count=len(candidates),
+            )
             edges = self._score_candidates(nodes, candidates, profile, run_id=run_id)
+            self._update_progress(
+                run_id,
+                run,
+                percent=78,
+                stage="build_groups",
+                message=f"Модельных пар: {len(edges):,}, собираю группы".replace(",", " "),
+                node_count=len(nodes),
+                candidate_count=len(candidates),
+                edge_count=len(edges),
+            )
             groups = self._build_groups(nodes, edges)
+            self._update_progress(
+                run_id,
+                run,
+                percent=88,
+                stage="materialize",
+                message=f"Групп: {len(groups):,}, записываю таблицу".replace(",", " "),
+                node_count=len(nodes),
+                candidate_count=len(candidates),
+                edge_count=len(edges),
+                group_count=len(groups),
+            )
 
             self.repository.replace_dedup_nodes(run_id, nodes.to_dict(orient="records"))
             self.repository.replace_dedup_edges(run_id, edges.to_dict(orient="records"))
@@ -559,11 +678,24 @@ class DedupService:
                         retrieval_cache=cache_metadata,
                         materialized_rows=materialized_rows,
                         source_category_keys=self._source_category_keys_from_run(run),
+                        progress_percent=100,
+                        progress_stage="success",
+                        progress_message=f"Готово: {materialized_rows:,} строк в mpstats_products_dedup".replace(",", " "),
                     ),
                     "finished_at": datetime.now(),
                 },
             )
         except Exception as exc:
+            try:
+                self._update_progress(
+                    run_id,
+                    run,
+                    percent=100,
+                    stage="failed",
+                    message=f"Ошибка: {type(exc).__name__}",
+                )
+            except Exception:
+                pass
             self.repository.update_dedup_run(
                 run_id,
                 {
@@ -934,16 +1066,55 @@ class DedupService:
             output["manifest_json"] = {}
         return output
 
+    def _update_progress(
+        self,
+        run_id: str,
+        run: dict[str, Any],
+        *,
+        percent: int,
+        stage: str,
+        message: str,
+        node_count: int | None = None,
+        candidate_count: int | None = None,
+        edge_count: int | None = None,
+        group_count: int | None = None,
+    ) -> None:
+        manifest = self._manifest_from_run(run)
+        manifest.update(
+            {
+                "progress_percent": max(0, min(100, int(percent))),
+                "progress_stage": stage,
+                "progress_message": message,
+                "progress_updated_at": datetime.now().isoformat(timespec="seconds"),
+            }
+        )
+        values: dict[str, Any] = {"manifest_json": manifest}
+        if node_count is not None:
+            values["node_count"] = int(node_count)
+        if candidate_count is not None:
+            values["candidate_count"] = int(candidate_count)
+        if edge_count is not None:
+            values["edge_count"] = int(edge_count)
+        if group_count is not None:
+            values["group_count"] = int(group_count)
+        self.repository.update_dedup_run(run_id, values)
+
     @staticmethod
-    def _source_category_keys_from_run(run: dict[str, Any]) -> list[str]:
+    def _manifest_from_run(run: dict[str, Any]) -> dict[str, Any]:
         manifest = run.get("manifest_json")
         if isinstance(manifest, str):
             try:
-                manifest = json.loads(manifest) if manifest.strip() else {}
+                parsed = json.loads(manifest) if manifest.strip() else {}
             except json.JSONDecodeError:
-                manifest = {}
-        if not isinstance(manifest, dict):
-            manifest = {}
+                parsed = {}
+            return parsed if isinstance(parsed, dict) else {}
+        if isinstance(manifest, dict):
+            return dict(manifest)
+        return {}
+
+    @staticmethod
+    def _source_category_keys_from_run(run: dict[str, Any]) -> list[str]:
+        manifest = DedupService._manifest_from_run(run)
         raw_keys = manifest.get("source_category_keys")
         if isinstance(raw_keys, list):
             source_keys = [str(key).strip() for key in raw_keys if str(key or "").strip()]
@@ -959,6 +1130,9 @@ class DedupService:
         retrieval_cache: dict[str, object],
         materialized_rows: int = 0,
         source_category_keys: list[str] | None = None,
+        progress_percent: int = 100,
+        progress_stage: str = "success",
+        progress_message: str = "Готово",
     ) -> dict[str, object]:
         return {
             "manifest_path": str(manifest_path),
@@ -967,6 +1141,10 @@ class DedupService:
             "threshold_same": profile.threshold_same,
             "faiss_top_k": profile.faiss_top_k,
             "source_category_keys": list(source_category_keys or []),
+            "progress_percent": max(0, min(100, int(progress_percent))),
+            "progress_stage": progress_stage,
+            "progress_message": progress_message,
+            "progress_updated_at": datetime.now().isoformat(timespec="seconds"),
             "materialized_row_count": int(materialized_rows),
             "retrieval_cache_status": retrieval_cache.get("status"),
             "retrieval_cache_key": retrieval_cache.get("cache_key"),

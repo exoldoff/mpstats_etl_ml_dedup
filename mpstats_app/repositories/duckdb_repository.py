@@ -1044,6 +1044,92 @@ class DuckDbAppRepository:
             params,
         )
 
+    def delete_dedup_runs(
+        self,
+        *,
+        project_name: str,
+        category_key: str | None = None,
+        category_keys: list[str] | None = None,
+        statuses: list[str],
+    ) -> int:
+        clean_statuses = [str(status).strip() for status in statuses if str(status).strip()]
+        clean_category_keys = [
+            str(key).strip()
+            for key in (category_keys if category_keys is not None else [category_key])
+            if str(key or "").strip()
+        ]
+        if not clean_statuses:
+            return 0
+        if not clean_category_keys:
+            return 0
+        status_placeholders = ", ".join("?" for _ in clean_statuses)
+        category_placeholders = ", ".join("?" for _ in clean_category_keys)
+        params: list[Any] = [project_name, *clean_category_keys, *clean_statuses]
+        with self._lock, connect(self.settings.db_path) as con:
+            apply_migrations(con)
+            run_rows = con.execute(
+                f"""
+                SELECT run_id
+                FROM dedup_runs
+                WHERE project_name = ?
+                  AND category_key IN ({category_placeholders})
+                  AND status IN ({status_placeholders})
+                """,
+                params,
+            ).fetchall()
+            run_ids = [str(row[0]) for row in run_rows if row and row[0]]
+            if not run_ids:
+                return 0
+            run_placeholders = ", ".join("?" for _ in run_ids)
+            for table_name in (
+                "mpstats_products_dedup",
+                "dedup_sku_groups",
+                "dedup_sku_edges",
+                "dedup_sku_nodes",
+                "dedup_runs",
+            ):
+                con.execute(
+                    f"DELETE FROM {table_name} WHERE run_id IN ({run_placeholders})",
+                    run_ids,
+                )
+        return len(run_ids)
+
+    def prune_failed_dedup_runs(self) -> int:
+        with self._lock, connect(self.settings.db_path) as con:
+            apply_migrations(con)
+            run_rows = con.execute(
+                """
+                SELECT run_id
+                FROM (
+                    SELECT
+                        run_id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY project_name, COALESCE(category_name, category_key)
+                            ORDER BY COALESCE(finished_at, created_at) DESC, created_at DESC
+                        ) AS rn
+                    FROM dedup_runs
+                    WHERE status = 'failed'
+                )
+                WHERE rn > 1
+                """
+            ).fetchall()
+            run_ids = [str(row[0]) for row in run_rows if row and row[0]]
+            if not run_ids:
+                return 0
+            run_placeholders = ", ".join("?" for _ in run_ids)
+            for table_name in (
+                "mpstats_products_dedup",
+                "dedup_sku_groups",
+                "dedup_sku_edges",
+                "dedup_sku_nodes",
+                "dedup_runs",
+            ):
+                con.execute(
+                    f"DELETE FROM {table_name} WHERE run_id IN ({run_placeholders})",
+                    run_ids,
+                )
+        return len(run_ids)
+
     def fail_stale_dedup_runs(self, *, project_name: str | None = None) -> int:
         where = ["status IN ('queued', 'running')"]
         params: list[Any] = []

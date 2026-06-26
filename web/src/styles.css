@@ -2260,6 +2260,54 @@ a.ghost-button {
   text-overflow: ellipsis;
 }
 
+.dedup-progress {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.dedup-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dedup-progress-head small {
+  min-width: 0;
+  color: #64777d;
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dedup-progress-track {
+  display: block;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e4ebed;
+}
+
+.dedup-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #1f7a5a;
+  transition: width 180ms ease;
+}
+
+.dedup-progress.running .dedup-progress-track span,
+.dedup-progress.queued .dedup-progress-track span {
+  background: #1874d2;
+}
+
+.dedup-progress.failed .dedup-progress-track span {
+  background: #c24135;
+}
+
 .dedup-category-selector .selector-list {
   max-height: 314px;
 }

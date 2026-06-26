@@ -332,6 +332,31 @@ function dedupCacheStatus(run: DedupRun | null | undefined) {
   return `cache ${status}`;
 }
 
+function dedupRunProgress(run: DedupRun) {
+  const manifest = run.manifest_json;
+  const rawPercent = isRecord(manifest) ? Number(manifest.progress_percent ?? 0) : 0;
+  const percent = Number.isFinite(rawPercent) ? Math.max(0, Math.min(100, rawPercent)) : 0;
+  const message = isRecord(manifest) ? String(manifest.progress_message ?? "") : "";
+  if (run.status === "success") return { percent: 100, message: message || "Готово" };
+  if (run.status === "failed") return { percent: 100, message: message || "Ошибка" };
+  return { percent, message: message || (run.status === "queued" ? "Ожидает запуска" : "В работе") };
+}
+
+function DedupProgressCell({ run }: { run: DedupRun }) {
+  const progress = dedupRunProgress(run);
+  return (
+    <span className={`dedup-progress ${run.status}`}>
+      <span className="dedup-progress-head">
+        <strong>{formatNumber(Math.round(progress.percent))}%</strong>
+        <small>{progress.message}</small>
+      </span>
+      <span className="dedup-progress-track" aria-hidden="true">
+        <span style={{ width: `${progress.percent}%` }} />
+      </span>
+    </span>
+  );
+}
+
 function pluralRu(value: number, one: string, few: string, many: string) {
   const abs = Math.abs(value);
   const mod10 = abs % 10;
@@ -705,6 +730,20 @@ export function App() {
     if (tab !== "dedup") return;
     void loadDedupWorkspace();
   }, [tab, projectName]);
+
+  useEffect(() => {
+    if (tab !== "dedup") return;
+    if (!dedupRuns.some((run) => run.status === "queued" || run.status === "running")) return;
+    const id = window.setInterval(() => {
+      void api.listDedupRuns(projectName).then((response) => {
+        setDedupRuns(response.runs);
+        if (!response.runs.some((run) => run.status === "queued" || run.status === "running")) {
+          void loadDedupProducts().catch((exc) => setError(`Браузер ML-дедупа: ${errorText(exc)}`));
+        }
+      }).catch((exc) => setError(`Прогресс ML-дедупа: ${errorText(exc)}`));
+    }, 1500);
+    return () => window.clearInterval(id);
+  }, [tab, projectName, dedupRuns]);
 
   useEffect(() => {
     if (tab !== "projects") return;
@@ -3936,6 +3975,7 @@ function DedupWorkspace(props: {
           emptyText="Запуски ML-дедупа появятся здесь."
           columns={[
             { id: "status", label: "Статус", value: (run) => run.status, render: (run) => <Badge value={run.status} /> },
+            { id: "progress", label: "Прогресс", value: (run) => dedupRunProgress(run).percent, render: (run) => <DedupProgressCell run={run} />, numeric: true },
             { id: "cache", label: "Cache", value: (run) => dedupCacheStatus(run) },
             { id: "category", label: "Категория", value: (run) => run.category_name ?? run.category_key },
             { id: "nodes", label: "SKU", value: (run) => run.node_count ?? 0, render: (run) => formatNumber(run.node_count), numeric: true },

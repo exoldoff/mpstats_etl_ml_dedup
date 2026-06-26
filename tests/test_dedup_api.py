@@ -196,6 +196,8 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         assert run["manifest_json"]["retrieval_cache_status"] == "rebuilt"
         assert run["manifest_json"]["retrieval_cache_key"]
         assert run["manifest_json"]["embedding_shape"] == [2, 2]
+        assert run["manifest_json"]["progress_percent"] == 100
+        assert run["manifest_json"]["progress_stage"] == "success"
 
         groups_response = client.get(f"/api/dedup/runs/{run['run_id']}/export", params={"artifact": "groups"})
         assert groups_response.status_code == 200
