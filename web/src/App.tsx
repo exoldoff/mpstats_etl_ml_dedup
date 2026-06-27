@@ -324,6 +324,8 @@ function dedupCacheStatus(run: DedupRun | null | undefined) {
   const status = String(manifest.retrieval_cache_status ?? "");
   if (!status) return "-";
   if (status === "hit") return "cache hit";
+  if (status === "identity_hit") return "identity hit";
+  if (status === "partial_hit") return "cache partial";
   if (status === "skipped") return "cache skipped";
   if (status === "rebuilt") {
     const reason = String(manifest.cache_rebuild_reason ?? "");

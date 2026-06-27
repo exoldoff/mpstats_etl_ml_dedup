@@ -19,6 +19,8 @@ from mpstats_app.config import AppSettings
 from mpstats_app.repositories.duckdb_repository import DuckDbAppRepository
 from pipeline.services.dedup.retrieval_cache import (
     RETRIEVAL_CACHE_SCHEMA_VERSION,
+    RETRIEVAL_NORMALIZE_EMBEDDINGS,
+    RETRIEVAL_TEXT_BUILDER_VERSION,
     RetrievalEmbeddingCache,
 )
 
@@ -131,6 +133,22 @@ class DedupProfile:
         )
 
 
+@dataclass(frozen=True)
+class _EmbeddingCacheResult:
+    embeddings: np.ndarray
+    hits: int
+    misses: int
+    status: str
+    dimension: int
+
+
+@dataclass(frozen=True)
+class _ScoreCacheResult:
+    edges: pd.DataFrame
+    hits: int
+    misses: int
+
+
 def _clean_text(value: object) -> str:
     if value is None:
         return ""
@@ -200,8 +218,24 @@ def _hash_id(*parts: object, prefix: str = "") -> str:
     return f"{prefix}{digest}" if prefix else digest
 
 
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _embedding_input_text(value: object) -> str:
+    return E5_TEXT_PREFIX + _clean_text(value)
+
+
+def _embedding_text_hash(value: object) -> str:
+    return _sha256_text(_embedding_input_text(value))
+
+
 def _pair_key(left: str, right: str) -> tuple[str, str]:
     return tuple(sorted((left, right)))
+
+
+def _pair_text_hash(text_a: object, text_b: object) -> str:
+    return _sha256_text(json.dumps([_clean_text(text_a), _clean_text(text_b)], ensure_ascii=False, separators=(",", ":")))
 
 
 def _safe_segment(value: object) -> str:
@@ -247,6 +281,21 @@ def _format_model_text(row: pd.Series) -> str:
         f"штук в упаковке: {row.get('multipack_count')}" if _to_float(row.get("multipack_count")) is not None else "",
     ]
     return " | ".join(part for part in parts if part)
+
+
+def _next_sequence_id(prefix: str, existing_ids: set[str]) -> str:
+    max_number = 0
+    pattern = re.compile(rf"^{re.escape(prefix)}_(\d+)$")
+    for item in existing_ids:
+        match = pattern.match(str(item))
+        if match:
+            max_number = max(max_number, int(match.group(1)))
+    while True:
+        max_number += 1
+        candidate = f"{prefix}_{max_number:06d}"
+        if candidate not in existing_ids:
+            existing_ids.add(candidate)
+            return candidate
 
 
 class _UnionFind:
@@ -578,54 +627,153 @@ class DedupService:
                 )
                 return
 
-            cache_load = self._retrieval_cache.load(
-                nodes,
+            previous_assignment_rows = self.repository.fetch_dedup_identity_assignments(
                 project_name=str(run["project_name"]),
                 category_key=str(run["category_key"]),
+                model_method=profile.model_method,
+                model_path=profile.model_path.strip(),
+                hf_model_id=profile.hf_model_id.strip(),
                 embedding_model_name=profile.embedding_model_name,
+                faiss_top_k=profile.faiss_top_k,
+                activation=profile.activation.strip(),
+                threshold_strategy=profile.threshold_strategy,
+                threshold_same=profile.threshold_same,
+                node_ids=[str(item) for item in nodes["node_id"].tolist()],
             )
-            if cache_load.embeddings is not None:
-                embeddings = cache_load.embeddings
-                cache_metadata = cache_load.metadata.to_manifest()
+            previous_assignments = {str(row["node_id"]): row for row in previous_assignment_rows}
+            known_node_ids = set(previous_assignments)
+            new_node_ids = sorted(set(str(item) for item in nodes["node_id"].tolist()) - known_node_ids)
+
+            if not new_node_ids:
+                cache_metadata = {
+                    "status": "identity_hit",
+                    "schema_version": RETRIEVAL_CACHE_SCHEMA_VERSION,
+                    "cache_key": None,
+                    "cache_path": "duckdb:dedup_identity_assignments",
+                    "embedding_shape": [0, 0],
+                    "cache_rebuild_reason": None,
+                    "identity_hits": len(known_node_ids),
+                    "identity_misses": 0,
+                    "embedding_cache_hits": 0,
+                    "embedding_cache_misses": 0,
+                    "score_cache_hits": 0,
+                    "score_cache_misses": 0,
+                }
                 self._update_progress(
                     run_id,
                     run,
-                    percent=45,
-                    stage="build_candidates",
-                    message="Embeddings взяты из cache, собираю FAISS-кандидаты",
+                    percent=78,
+                    stage="build_groups",
+                    message=f"Все SKU-node найдены в identity-cache: {len(known_node_ids):,}, ML scoring не нужен".replace(",", " "),
                     node_count=len(nodes),
+                    candidate_count=0,
+                    edge_count=0,
                 )
+                candidates = pd.DataFrame()
+                edges = pd.DataFrame()
             else:
-                embeddings = self._encode_nodes(nodes, profile)
-                cache_metadata = self._retrieval_cache.write(
+                cache_load = self._retrieval_cache.load(
                     nodes,
-                    embeddings,
                     project_name=str(run["project_name"]),
                     category_key=str(run["category_key"]),
                     embedding_model_name=profile.embedding_model_name,
-                    rebuild_reason=str(cache_load.metadata.cache_rebuild_reason or "miss"),
-                ).to_manifest()
-                self._update_progress(
-                    run_id,
-                    run,
-                    percent=45,
-                    stage="build_candidates",
-                    message="Embeddings посчитаны, собираю FAISS-кандидаты",
-                    node_count=len(nodes),
                 )
-            candidates = self._generate_candidates(nodes, embeddings, profile)
-            if candidates.empty:
-                raise DedupRuntimeError("FAISS не вернул ни одной пары-кандидата.")
-            self._update_progress(
-                run_id,
-                run,
-                percent=60,
-                stage="score_pairs",
-                message=f"FAISS-кандидатов: {len(candidates):,}, запускаю cross-encoder".replace(",", " "),
-                node_count=len(nodes),
-                candidate_count=len(candidates),
-            )
-            edges = self._score_candidates(nodes, candidates, profile, run_id=run_id, run=run)
+                if cache_load.embeddings is not None:
+                    embeddings = cache_load.embeddings
+                    cache_metadata = cache_load.metadata.to_manifest()
+                    cache_metadata.update(
+                        {
+                            "identity_hits": len(known_node_ids),
+                            "identity_misses": len(new_node_ids),
+                            "embedding_cache_hits": len(nodes),
+                            "embedding_cache_misses": 0,
+                        }
+                    )
+                    self._update_progress(
+                        run_id,
+                        run,
+                        percent=45,
+                        stage="build_candidates",
+                        message=f"Embeddings взяты из snapshot-cache, новых SKU-node: {len(new_node_ids):,}".replace(",", " "),
+                        node_count=len(nodes),
+                    )
+                else:
+                    embedding_result = self._encode_nodes_with_cache(
+                        nodes,
+                        profile,
+                        project_name=str(run["project_name"]),
+                        category_key=str(run["category_key"]),
+                    )
+                    embeddings = embedding_result.embeddings
+                    cache_metadata = self._retrieval_cache.write(
+                        nodes,
+                        embeddings,
+                        project_name=str(run["project_name"]),
+                        category_key=str(run["category_key"]),
+                        embedding_model_name=profile.embedding_model_name,
+                        rebuild_reason=str(cache_load.metadata.cache_rebuild_reason or "miss"),
+                    ).to_manifest()
+                    cache_metadata.update(
+                        {
+                            "status": embedding_result.status,
+                            "identity_hits": len(known_node_ids),
+                            "identity_misses": len(new_node_ids),
+                            "embedding_cache_hits": embedding_result.hits,
+                            "embedding_cache_misses": embedding_result.misses,
+                            "embedding_shape": [len(nodes), embedding_result.dimension],
+                        }
+                    )
+                    self._update_progress(
+                        run_id,
+                        run,
+                        percent=45,
+                        stage="build_candidates",
+                        message=(
+                            f"Embeddings cache: {embedding_result.hits:,} hit / {embedding_result.misses:,} новых, "
+                            f"собираю FAISS-кандидаты"
+                        ).replace(",", " "),
+                        node_count=len(nodes),
+                    )
+                candidates = self._generate_candidates(nodes, embeddings, profile, query_node_ids=new_node_ids)
+                if candidates.empty:
+                    self._update_progress(
+                        run_id,
+                        run,
+                        percent=78,
+                        stage="build_groups",
+                        message="FAISS не нашёл пар для новых SKU-node, добавляю их как singleton",
+                        node_count=len(nodes),
+                        candidate_count=0,
+                        edge_count=0,
+                    )
+                    edges = pd.DataFrame()
+                    cache_metadata.update({"score_cache_hits": 0, "score_cache_misses": 0})
+                else:
+                    self._update_progress(
+                        run_id,
+                        run,
+                        percent=60,
+                        stage="score_pairs",
+                        message=f"FAISS-кандидатов для новых SKU: {len(candidates):,}, проверяю cross-encoder cache".replace(",", " "),
+                        node_count=len(nodes),
+                        candidate_count=len(candidates),
+                    )
+                    score_result = self._score_candidates(
+                        nodes,
+                        candidates,
+                        profile,
+                        run_id=run_id,
+                        run=run,
+                        project_name=str(run["project_name"]),
+                        category_key=str(run["category_key"]),
+                    )
+                    edges = score_result.edges
+                    cache_metadata.update(
+                        {
+                            "score_cache_hits": score_result.hits,
+                            "score_cache_misses": score_result.misses,
+                        }
+                    )
             self._update_progress(
                 run_id,
                 run,
@@ -636,7 +784,7 @@ class DedupService:
                 candidate_count=len(candidates),
                 edge_count=len(edges),
             )
-            groups = self._build_groups(nodes, edges)
+            groups = self._build_groups(nodes, edges, previous_assignments=previous_assignments)
             self._update_progress(
                 run_id,
                 run,
@@ -652,6 +800,20 @@ class DedupService:
             self.repository.replace_dedup_nodes(run_id, nodes.to_dict(orient="records"))
             self.repository.replace_dedup_edges(run_id, edges.to_dict(orient="records"))
             self.repository.replace_dedup_groups(run_id, groups.to_dict(orient="records"))
+            self.repository.upsert_dedup_identity_assignments(
+                project_name=str(run["project_name"]),
+                category_key=str(run["category_key"]),
+                model_method=profile.model_method,
+                model_path=profile.model_path.strip(),
+                hf_model_id=profile.hf_model_id.strip(),
+                embedding_model_name=profile.embedding_model_name,
+                faiss_top_k=profile.faiss_top_k,
+                activation=profile.activation.strip(),
+                threshold_strategy=profile.threshold_strategy,
+                threshold_same=profile.threshold_same,
+                run_id=run_id,
+                rows=groups.to_dict(orient="records"),
+            )
             materialized_rows = self.repository.refresh_dedup_products_table(run_id=run_id)
             manifest_path = self._write_manifest(
                 run_id,
@@ -772,7 +934,7 @@ class DedupService:
 
     def _encode_nodes(self, nodes: pd.DataFrame, profile: DedupProfile) -> np.ndarray:
         model = self._load_embedding_model(profile)
-        texts = [E5_TEXT_PREFIX + _clean_text(text) for text in nodes["embedding_text"].tolist()]
+        texts = [_embedding_input_text(text) for text in nodes["embedding_text"].tolist()]
         vectors = model.encode(
             texts,
             batch_size=profile.embedding_batch_size,
@@ -784,6 +946,99 @@ class DedupService:
             raise DedupRuntimeError("Embedding model вернула некорректную форму vectors.")
         return output
 
+    def _encode_nodes_with_cache(
+        self,
+        nodes: pd.DataFrame,
+        profile: DedupProfile,
+        *,
+        project_name: str,
+        category_key: str,
+    ) -> _EmbeddingCacheResult:
+        entries = [
+            {
+                "node_id": str(row.node_id),
+                "embedding_text_hash": _embedding_text_hash(row.embedding_text),
+            }
+            for row in nodes.itertuples(index=False)
+        ]
+        cached = self.repository.fetch_dedup_node_embeddings(
+            project_name=project_name,
+            category_key=category_key,
+            embedding_model_name=profile.embedding_model_name,
+            text_builder_version=RETRIEVAL_TEXT_BUILDER_VERSION,
+            normalize_embeddings=RETRIEVAL_NORMALIZE_EMBEDDINGS,
+            entries=entries,
+        )
+        vectors_by_node: dict[str, np.ndarray] = {}
+        dimension: int | None = None
+        missing_rows: list[tuple[int, Any]] = []
+        for index, row in enumerate(nodes.itertuples(index=False)):
+            node_id = str(row.node_id)
+            cached_row = cached.get(node_id)
+            if cached_row:
+                vector = np.frombuffer(cached_row["embedding_blob"], dtype="float32")
+                cached_dimension = int(cached_row["embedding_dimension"])
+                if cached_dimension > 0 and len(vector) == cached_dimension:
+                    vectors_by_node[node_id] = vector
+                    dimension = dimension or cached_dimension
+                    continue
+            missing_rows.append((index, row))
+
+        if missing_rows:
+            model = self._load_embedding_model(profile)
+            texts = [_embedding_input_text(row.embedding_text) for _, row in missing_rows]
+            encoded = model.encode(
+                texts,
+                batch_size=profile.embedding_batch_size,
+                normalize_embeddings=True,
+                convert_to_numpy=True,
+            )
+            missing_vectors = np.asarray(encoded, dtype="float32")
+            if missing_vectors.ndim != 2 or len(missing_vectors) != len(missing_rows):
+                raise DedupRuntimeError("Embedding model вернула некорректную форму vectors.")
+            dimension = int(missing_vectors.shape[1])
+            cache_rows: list[dict[str, Any]] = []
+            for offset, (_, row) in enumerate(missing_rows):
+                node_id = str(row.node_id)
+                vector = np.ascontiguousarray(missing_vectors[offset], dtype="float32")
+                vectors_by_node[node_id] = vector
+                cache_rows.append(
+                    {
+                        "node_id": node_id,
+                        "embedding_text_hash": _embedding_text_hash(row.embedding_text),
+                        "embedding_dimension": dimension,
+                        "embedding_blob": vector.tobytes(),
+                    }
+                )
+            self.repository.upsert_dedup_node_embeddings(
+                project_name=project_name,
+                category_key=category_key,
+                embedding_model_name=profile.embedding_model_name,
+                text_builder_version=RETRIEVAL_TEXT_BUILDER_VERSION,
+                normalize_embeddings=RETRIEVAL_NORMALIZE_EMBEDDINGS,
+                rows=cache_rows,
+            )
+
+        if dimension is None:
+            raise DedupRuntimeError("Embedding cache не вернул размерность vectors.")
+        output_rows: list[np.ndarray] = []
+        for row in nodes.itertuples(index=False):
+            vector = vectors_by_node.get(str(row.node_id))
+            if vector is None or len(vector) != dimension:
+                raise DedupRuntimeError("Embedding cache вернул несовместимую размерность vectors.")
+            output_rows.append(np.asarray(vector, dtype="float32"))
+        output = np.ascontiguousarray(np.vstack(output_rows), dtype="float32")
+        hits = len(nodes) - len(missing_rows)
+        misses = len(missing_rows)
+        status = "hit" if misses == 0 else "partial_hit" if hits else "rebuilt"
+        return _EmbeddingCacheResult(
+            embeddings=output,
+            hits=hits,
+            misses=misses,
+            status=status,
+            dimension=dimension,
+        )
+
     def _load_faiss(self) -> Any:
         if self._faiss_module is not None:
             return self._faiss_module
@@ -793,36 +1048,53 @@ class DedupService:
             raise DedupRuntimeError("Для FAISS retrieval нужен faiss-cpu. Установи зависимости из requirements.txt.") from exc
         return faiss
 
-    def _generate_candidates(self, nodes: pd.DataFrame, embeddings: np.ndarray, profile: DedupProfile) -> pd.DataFrame:
+    def _generate_candidates(
+        self,
+        nodes: pd.DataFrame,
+        embeddings: np.ndarray,
+        profile: DedupProfile,
+        *,
+        query_node_ids: Sequence[str] | None = None,
+    ) -> pd.DataFrame:
         faiss = self._load_faiss()
         pair_rows: dict[tuple[str, str], dict[str, Any]] = {}
         nodes_with_idx = nodes.reset_index(drop=True).copy()
         nodes_with_idx["_row_idx"] = nodes_with_idx.index
         nodes_with_idx["_subcategory_norm"] = nodes_with_idx["subcategory"].map(_norm_text)
+        query_set = {str(item) for item in query_node_ids} if query_node_ids is not None else set(nodes_with_idx["node_id"].astype(str))
+        if not query_set:
+            return pd.DataFrame()
 
         known_groups = [
             group
             for _, group in nodes_with_idx[nodes_with_idx["_subcategory_norm"].ne("")].groupby("_subcategory_norm", dropna=False)
-            if len(group) > 1
+            if len(group) > 1 and group["node_id"].astype(str).isin(query_set).any()
         ]
         known_indexes = {int(idx) for group in known_groups for idx in group["_row_idx"].tolist()}
         for group in known_groups:
+            query_indexes = group.loc[group["node_id"].astype(str).isin(query_set), "_row_idx"].astype(int).tolist()
             self._search_group(
                 faiss,
                 nodes,
                 embeddings,
                 group["_row_idx"].tolist(),
+                query_indexes,
                 pair_rows,
                 top_k=profile.faiss_top_k,
                 blocking_scope="same_subcategory",
             )
         fallback_group = nodes_with_idx[~nodes_with_idx["_row_idx"].isin(known_indexes)]
-        if len(fallback_group) > 1:
+        fallback_query_indexes = fallback_group.loc[
+            fallback_group["node_id"].astype(str).isin(query_set),
+            "_row_idx",
+        ].astype(int).tolist()
+        if len(fallback_group) > 1 and fallback_query_indexes:
             self._search_group(
                 faiss,
                 nodes,
                 embeddings,
                 fallback_group["_row_idx"].tolist(),
+                fallback_query_indexes,
                 pair_rows,
                 top_k=profile.faiss_top_k,
                 blocking_scope="global",
@@ -837,20 +1109,22 @@ class DedupService:
         nodes: pd.DataFrame,
         embeddings: np.ndarray,
         indexes: list[int],
+        query_indexes: list[int],
         pair_rows: dict[tuple[str, str], dict[str, Any]],
         *,
         top_k: int,
         blocking_scope: str,
     ) -> None:
-        if len(indexes) < 2:
+        if len(indexes) < 2 or not query_indexes:
             return
         group_vectors = np.ascontiguousarray(embeddings[indexes], dtype="float32")
+        query_vectors = np.ascontiguousarray(embeddings[query_indexes], dtype="float32")
         index = faiss.IndexFlatIP(group_vectors.shape[1])
         index.add(group_vectors)
         search_k = min(len(indexes), top_k + 1)
-        scores, neighbors = index.search(group_vectors, search_k)
+        scores, neighbors = index.search(query_vectors, search_k)
         for local_left, neighbor_row in enumerate(neighbors):
-            left_idx = indexes[local_left]
+            left_idx = query_indexes[local_left]
             for rank, local_right in enumerate(neighbor_row.tolist(), start=0):
                 if local_right < 0:
                     continue
@@ -885,19 +1159,57 @@ class DedupService:
         *,
         run_id: str,
         run: dict[str, Any] | None = None,
-    ) -> pd.DataFrame:
-        model = self._load_cross_encoder(profile)
+        project_name: str,
+        category_key: str,
+    ) -> _ScoreCacheResult:
         node_map = nodes.set_index("node_id")
-        text_pairs = [
-            (
-                str(node_map.loc[row.node_id_a, "embedding_text"]),
-                str(node_map.loc[row.node_id_b, "embedding_text"]),
+        pair_entries: list[dict[str, Any]] = []
+        text_pairs_by_key: dict[tuple[str, str], tuple[str, str]] = {}
+        for row in candidates.itertuples(index=False):
+            node_id_a, node_id_b = _pair_key(str(row.node_id_a), str(row.node_id_b))
+            text_a = str(node_map.loc[node_id_a, "embedding_text"])
+            text_b = str(node_map.loc[node_id_b, "embedding_text"])
+            pair_hash = _pair_text_hash(text_a, text_b)
+            pair_entries.append(
+                {
+                    "node_id_a": node_id_a,
+                    "node_id_b": node_id_b,
+                    "pair_text_hash": pair_hash,
+                }
             )
-            for row in candidates.itertuples(index=False)
+            text_pairs_by_key[(node_id_a, node_id_b)] = (text_a, text_b)
+        cached_scores = self.repository.fetch_dedup_pair_scores(
+            project_name=project_name,
+            category_key=category_key,
+            model_method=profile.model_method,
+            model_path=profile.model_path.strip(),
+            hf_model_id=profile.hf_model_id.strip(),
+            activation=profile.activation.strip(),
+            entries=pair_entries,
+        )
+        scores_by_pair: dict[tuple[str, str], float] = dict(cached_scores)
+        missing_entries = [
+            entry
+            for entry in pair_entries
+            if (str(entry["node_id_a"]), str(entry["node_id_b"])) not in scores_by_pair
         ]
+        hits = len(pair_entries) - len(missing_entries)
+        misses = len(missing_entries)
+        if misses == 0:
+            if run is not None:
+                self._update_progress(
+                    run_id,
+                    run,
+                    percent=78,
+                    stage="score_pairs",
+                    message=f"Cross-encoder cache hit: {hits:,} / {len(pair_entries):,} пар".replace(",", " "),
+                    node_count=len(nodes),
+                    candidate_count=len(candidates),
+                    edge_count=len(pair_entries),
+                )
         predict_kwargs: dict[str, Any] = {"batch_size": profile.cross_encoder_batch_size}
         legacy_activation: Any | None = None
-        if profile.activation == "sigmoid":
+        if missing_entries and profile.activation == "sigmoid":
             try:
                 import torch
             except ModuleNotFoundError as exc:
@@ -905,23 +1217,42 @@ class DedupService:
             legacy_activation = torch.nn.Sigmoid()
             predict_kwargs["activation_fn"] = legacy_activation
 
-        score_chunks: list[np.ndarray] = []
-        total_pairs = len(text_pairs)
+        score_cache_rows: list[dict[str, Any]] = []
+        model: Any | None = None
+        total_pairs = len(pair_entries)
         chunk_size = max(128, int(profile.cross_encoder_batch_size) * 16)
-        for start in range(0, total_pairs, chunk_size):
-            end = min(total_pairs, start + chunk_size)
+        for start in range(0, len(missing_entries), chunk_size):
+            if model is None:
+                model = self._load_cross_encoder(profile)
+            end = min(len(missing_entries), start + chunk_size)
+            chunk_entries = missing_entries[start:end]
+            text_pairs = [
+                text_pairs_by_key[(str(entry["node_id_a"]), str(entry["node_id_b"]))]
+                for entry in chunk_entries
+            ]
             raw_scores = self._predict_cross_encoder_batch(
                 model,
-                text_pairs[start:end],
+                text_pairs,
                 predict_kwargs=predict_kwargs,
                 legacy_activation=legacy_activation,
             )
             chunk_scores = np.asarray(raw_scores, dtype=float).reshape(-1)
             if len(chunk_scores) != end - start:
                 raise DedupRuntimeError("Fine-tuned BGE вернула число scores, не совпадающее с batch candidates.")
-            score_chunks.append(chunk_scores)
+            for offset, entry in enumerate(chunk_entries):
+                key = (str(entry["node_id_a"]), str(entry["node_id_b"]))
+                score = round(float(chunk_scores[offset]), 6)
+                scores_by_pair[key] = score
+                score_cache_rows.append(
+                    {
+                        "node_id_a": key[0],
+                        "node_id_b": key[1],
+                        "pair_text_hash": entry["pair_text_hash"],
+                        "score": score,
+                    }
+                )
             if run is not None:
-                scored_count = end
+                scored_count = hits + end
                 percent = 60 + round(18 * scored_count / max(1, total_pairs))
                 self._update_progress(
                     run_id,
@@ -929,28 +1260,37 @@ class DedupService:
                     percent=percent,
                     stage="score_pairs",
                     message=(
-                        f"Cross-encoder: {scored_count:,} / {total_pairs:,} пар"
+                        f"Cross-encoder: {scored_count:,} / {total_pairs:,} пар "
+                        f"(cache hit {hits:,}, новых {misses:,})"
                     ).replace(",", " "),
                     node_count=len(nodes),
                     candidate_count=len(candidates),
                     edge_count=scored_count,
                 )
-        scores = np.concatenate(score_chunks) if score_chunks else np.asarray([], dtype=float)
-        if len(scores) != len(candidates):
-            raise DedupRuntimeError("Fine-tuned BGE вернула число scores, не совпадающее с числом candidates.")
+        if score_cache_rows:
+            self.repository.upsert_dedup_pair_scores(
+                project_name=project_name,
+                category_key=category_key,
+                model_method=profile.model_method,
+                model_path=profile.model_path.strip(),
+                hf_model_id=profile.hf_model_id.strip(),
+                activation=profile.activation.strip(),
+                rows=score_cache_rows,
+            )
 
         rows: list[dict[str, Any]] = []
         for idx, row in enumerate(candidates.itertuples(index=False), start=1):
-            left = node_map.loc[row.node_id_a]
-            right = node_map.loc[row.node_id_b]
-            score = float(scores[idx - 1])
+            node_id_a, node_id_b = _pair_key(str(row.node_id_a), str(row.node_id_b))
+            left = node_map.loc[node_id_a]
+            right = node_map.loc[node_id_b]
+            score = float(scores_by_pair[(node_id_a, node_id_b)])
             predicted = score >= profile.threshold_same
             rows.append(
                 {
                     "run_id": run_id,
-                    "edge_id": _hash_id(run_id, row.node_id_a, row.node_id_b, prefix="edge_"),
-                    "node_id_a": row.node_id_a,
-                    "node_id_b": row.node_id_b,
+                    "edge_id": _hash_id(run_id, node_id_a, node_id_b, prefix="edge_"),
+                    "node_id_a": node_id_a,
+                    "node_id_b": node_id_b,
                     "score": round(score, 6),
                     "threshold_strategy": profile.threshold_strategy,
                     "threshold_same": profile.threshold_same,
@@ -962,7 +1302,7 @@ class DedupService:
                     "same_pack_signature": bool(_same_pack(left, right)),
                 }
             )
-        return pd.DataFrame(rows)
+        return _ScoreCacheResult(edges=pd.DataFrame(rows), hits=hits, misses=misses)
 
     @staticmethod
     def _predict_cross_encoder_batch(
@@ -981,22 +1321,60 @@ class DedupService:
                 return model.predict(text_pairs, **legacy_kwargs)
             return model.predict(text_pairs)
 
-    def _build_groups(self, nodes: pd.DataFrame, edges: pd.DataFrame) -> pd.DataFrame:
+    def _build_groups(
+        self,
+        nodes: pd.DataFrame,
+        edges: pd.DataFrame,
+        *,
+        previous_assignments: dict[str, dict[str, Any]] | None = None,
+    ) -> pd.DataFrame:
+        previous_assignments = previous_assignments or {}
         node_ids = [str(item) for item in nodes["node_id"].tolist()]
         uf = _UnionFind(node_ids)
+        previous_family_members: dict[str, list[str]] = {}
+        for node_id in node_ids:
+            previous = previous_assignments.get(node_id)
+            family_id = _clean_text(previous.get("ml_family_id")) if previous else ""
+            if family_id:
+                previous_family_members.setdefault(family_id, []).append(node_id)
+        for members in previous_family_members.values():
+            for member in members[1:]:
+                uf.union(members[0], member)
         if not edges.empty:
             for row in edges[edges["predicted_binary"].astype(bool)].itertuples(index=False):
                 uf.union(str(row.node_id_a), str(row.node_id_b))
         roots = {node_id: uf.find(node_id) for node_id in node_ids}
+        root_members: dict[str, list[str]] = {}
+        for node_id, root in roots.items():
+            root_members.setdefault(root, []).append(node_id)
+
+        existing_family_ids = {
+            _clean_text(row.get("ml_family_id"))
+            for row in previous_assignments.values()
+            if _clean_text(row.get("ml_family_id"))
+        }
         root_to_family: dict[str, str] = {}
-        for root in sorted(set(roots.values())):
-            root_to_family[root] = f"mlfam_{len(root_to_family) + 1:06d}"
+        for root in sorted(root_members):
+            previous_ids = [
+                _clean_text(previous_assignments[node_id].get("ml_family_id"))
+                for node_id in root_members[root]
+                if node_id in previous_assignments and _clean_text(previous_assignments[node_id].get("ml_family_id"))
+            ]
+            if previous_ids:
+                root_to_family[root] = sorted(set(previous_ids), key=lambda item: (-previous_ids.count(item), item))[0]
+            else:
+                root_to_family[root] = _next_sequence_id("mlfam", existing_family_ids)
 
         node_map = nodes.set_index("node_id")
         family_members: dict[str, list[str]] = {}
         for node_id, root in roots.items():
             family_members.setdefault(root_to_family[root], []).append(node_id)
 
+        existing_pack_ids = {
+            _clean_text(row.get("ml_pack_id"))
+            for row in previous_assignments.values()
+            if _clean_text(row.get("ml_pack_id"))
+        }
         pack_ids: dict[tuple[str, str], str] = {}
         pack_members: dict[tuple[str, str], list[str]] = {}
         pack_signatures = {node_id: _pack_signature(node_map.loc[node_id]) for node_id in node_ids}
@@ -1004,13 +1382,21 @@ class DedupService:
             family_id = root_to_family[roots[node_id]]
             pack_key = (family_id, pack_signatures[node_id])
             pack_members.setdefault(pack_key, []).append(node_id)
+        for pack_key, members in sorted(pack_members.items()):
+            previous_ids = [
+                _clean_text(previous_assignments[node_id].get("ml_pack_id"))
+                for node_id in members
+                if node_id in previous_assignments and _clean_text(previous_assignments[node_id].get("ml_pack_id"))
+            ]
+            if previous_ids:
+                pack_ids[pack_key] = sorted(set(previous_ids), key=lambda item: (-previous_ids.count(item), item))[0]
+            else:
+                pack_ids[pack_key] = _next_sequence_id("mlpack", existing_pack_ids)
         rows: list[dict[str, Any]] = []
         for node_id in node_ids:
             row = node_map.loc[node_id]
             family_id = root_to_family[roots[node_id]]
             pack_key = (family_id, pack_signatures[node_id])
-            if pack_key not in pack_ids:
-                pack_ids[pack_key] = f"mlpack_{len(pack_ids) + 1:06d}"
             members = family_members[family_id]
             pack_group_members = pack_members[pack_key]
             canonical_node = max(
@@ -1030,23 +1416,35 @@ class DedupService:
                     "canonical_node_id": canonical_node,
                     "canonical_sku": str(node_map.loc[canonical_node].get("sku") or ""),
                     "ml_dedup_status": "auto_grouped" if len(members) > 1 else "singleton",
-                    "confidence_score": self._node_confidence(node_id, edges),
+                    "confidence_score": self._node_confidence(node_id, edges, previous_assignments=previous_assignments),
                     "component_size": len(members),
                 }
             )
         return pd.DataFrame(rows)
 
     @staticmethod
-    def _node_confidence(node_id: str, edges: pd.DataFrame) -> float | None:
-        if edges.empty:
+    def _node_confidence(
+        node_id: str,
+        edges: pd.DataFrame,
+        *,
+        previous_assignments: dict[str, dict[str, Any]] | None = None,
+    ) -> float | None:
+        scores: list[float] = []
+        if not edges.empty:
+            related = edges[
+                edges["predicted_binary"].astype(bool)
+                & (edges["node_id_a"].astype(str).eq(node_id) | edges["node_id_b"].astype(str).eq(node_id))
+            ]
+            if not related.empty:
+                scores.extend(float(item) for item in pd.to_numeric(related["score"], errors="coerce").dropna().tolist())
+        previous = (previous_assignments or {}).get(node_id)
+        if previous and previous.get("confidence_score") is not None:
+            previous_score = _to_float(previous.get("confidence_score"))
+            if previous_score is not None:
+                scores.append(previous_score)
+        if not scores:
             return None
-        related = edges[
-            edges["predicted_binary"].astype(bool)
-            & (edges["node_id_a"].astype(str).eq(node_id) | edges["node_id_b"].astype(str).eq(node_id))
-        ]
-        if related.empty:
-            return None
-        return round(float(pd.to_numeric(related["score"], errors="coerce").dropna().max()), 6)
+        return round(max(scores), 6)
 
     def _write_manifest(
         self,
@@ -1192,4 +1590,10 @@ class DedupService:
             "retrieval_cache_schema_version": retrieval_cache.get("schema_version") or RETRIEVAL_CACHE_SCHEMA_VERSION,
             "embedding_shape": retrieval_cache.get("embedding_shape"),
             "cache_rebuild_reason": retrieval_cache.get("cache_rebuild_reason"),
+            "identity_hits": retrieval_cache.get("identity_hits"),
+            "identity_misses": retrieval_cache.get("identity_misses"),
+            "embedding_cache_hits": retrieval_cache.get("embedding_cache_hits"),
+            "embedding_cache_misses": retrieval_cache.get("embedding_cache_misses"),
+            "score_cache_hits": retrieval_cache.get("score_cache_hits"),
+            "score_cache_misses": retrieval_cache.get("score_cache_misses"),
         }

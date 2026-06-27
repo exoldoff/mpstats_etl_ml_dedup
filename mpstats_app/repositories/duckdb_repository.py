@@ -1399,6 +1399,407 @@ class DuckDbAppRepository:
             rows=rows,
         )
 
+    def fetch_dedup_identity_assignments(
+        self,
+        *,
+        project_name: str,
+        category_key: str,
+        model_method: str,
+        model_path: str,
+        hf_model_id: str,
+        embedding_model_name: str,
+        faiss_top_k: int,
+        activation: str,
+        threshold_strategy: str,
+        threshold_same: float,
+        node_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        clean_node_ids = sorted({str(node_id).strip() for node_id in node_ids if str(node_id).strip()})
+        if not clean_node_ids:
+            return []
+        placeholders = ", ".join("?" for _ in clean_node_ids)
+        return self._fetch_records(
+            f"""
+            SELECT
+                project_name,
+                category_key,
+                node_id,
+                model_method,
+                model_path,
+                hf_model_id,
+                embedding_model_name,
+                faiss_top_k,
+                activation,
+                threshold_strategy,
+                threshold_same,
+                ml_family_id,
+                ml_pack_id,
+                canonical_node_id,
+                canonical_sku,
+                ml_dedup_status,
+                confidence_score,
+                component_size,
+                source_run_id,
+                updated_at
+            FROM dedup_identity_assignments
+            WHERE project_name = ?
+              AND category_key = ?
+              AND model_method = ?
+              AND model_path = ?
+              AND hf_model_id = ?
+              AND embedding_model_name = ?
+              AND faiss_top_k = ?
+              AND activation = ?
+              AND threshold_strategy = ?
+              AND threshold_same = ?
+              AND node_id IN ({placeholders})
+            """,
+            [
+                project_name,
+                category_key,
+                model_method,
+                model_path,
+                hf_model_id,
+                embedding_model_name,
+                int(faiss_top_k),
+                activation,
+                threshold_strategy,
+                float(threshold_same),
+                *clean_node_ids,
+            ],
+            read_only=True,
+            temp_directory=self._duckdb_temp_directory(),
+        )
+
+    def upsert_dedup_identity_assignments(
+        self,
+        *,
+        project_name: str,
+        category_key: str,
+        model_method: str,
+        model_path: str,
+        hf_model_id: str,
+        embedding_model_name: str,
+        faiss_top_k: int,
+        activation: str,
+        threshold_strategy: str,
+        threshold_same: float,
+        run_id: str,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        if not rows:
+            return
+        columns = [
+            "project_name",
+            "category_key",
+            "node_id",
+            "model_method",
+            "model_path",
+            "hf_model_id",
+            "embedding_model_name",
+            "faiss_top_k",
+            "activation",
+            "threshold_strategy",
+            "threshold_same",
+            "ml_family_id",
+            "ml_pack_id",
+            "canonical_node_id",
+            "canonical_sku",
+            "ml_dedup_status",
+            "confidence_score",
+            "component_size",
+            "source_run_id",
+        ]
+        values = [
+            [
+                project_name,
+                category_key,
+                row.get("node_id"),
+                model_method,
+                model_path,
+                hf_model_id,
+                embedding_model_name,
+                int(faiss_top_k),
+                activation,
+                threshold_strategy,
+                float(threshold_same),
+                row.get("ml_family_id"),
+                row.get("ml_pack_id"),
+                row.get("canonical_node_id"),
+                row.get("canonical_sku"),
+                row.get("ml_dedup_status"),
+                row.get("confidence_score"),
+                row.get("component_size"),
+                run_id,
+            ]
+            for row in rows
+        ]
+        placeholders = ", ".join("?" for _ in columns)
+        column_sql = ", ".join(columns)
+        with self._lock, connect(self.settings.db_path) as con:
+            apply_migrations(con)
+            con.executemany(
+                f"""
+                INSERT INTO dedup_identity_assignments ({column_sql})
+                VALUES ({placeholders})
+                ON CONFLICT (project_name, category_key, node_id) DO UPDATE SET
+                    model_method = EXCLUDED.model_method,
+                    model_path = EXCLUDED.model_path,
+                    hf_model_id = EXCLUDED.hf_model_id,
+                    embedding_model_name = EXCLUDED.embedding_model_name,
+                    faiss_top_k = EXCLUDED.faiss_top_k,
+                    activation = EXCLUDED.activation,
+                    threshold_strategy = EXCLUDED.threshold_strategy,
+                    threshold_same = EXCLUDED.threshold_same,
+                    ml_family_id = EXCLUDED.ml_family_id,
+                    ml_pack_id = EXCLUDED.ml_pack_id,
+                    canonical_node_id = EXCLUDED.canonical_node_id,
+                    canonical_sku = EXCLUDED.canonical_sku,
+                    ml_dedup_status = EXCLUDED.ml_dedup_status,
+                    confidence_score = EXCLUDED.confidence_score,
+                    component_size = EXCLUDED.component_size,
+                    source_run_id = EXCLUDED.source_run_id,
+                    updated_at = now()
+                """,
+                values,
+            )
+
+    def fetch_dedup_node_embeddings(
+        self,
+        *,
+        project_name: str,
+        category_key: str,
+        embedding_model_name: str,
+        text_builder_version: str,
+        normalize_embeddings: bool,
+        entries: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        clean_entries = [
+            {
+                "node_id": str(entry.get("node_id") or "").strip(),
+                "embedding_text_hash": str(entry.get("embedding_text_hash") or "").strip(),
+            }
+            for entry in entries
+        ]
+        clean_entries = [entry for entry in clean_entries if entry["node_id"] and entry["embedding_text_hash"]]
+        if not clean_entries:
+            return {}
+        lookup = pd.DataFrame(clean_entries)
+        with self._lock, connect(self.settings.db_path, temp_directory=self._duckdb_temp_directory()) as con:
+            apply_migrations(con)
+            con.register("_dedup_embedding_lookup", lookup)
+            try:
+                rows = con.execute(
+                    """
+                    SELECT
+                        e.node_id,
+                        e.embedding_text_hash,
+                        e.embedding_dimension,
+                        e.embedding_blob
+                    FROM dedup_node_embeddings AS e
+                    JOIN _dedup_embedding_lookup AS l
+                      ON l.node_id = e.node_id
+                     AND l.embedding_text_hash = e.embedding_text_hash
+                    WHERE e.project_name = ?
+                      AND e.category_key = ?
+                      AND e.embedding_model_name = ?
+                      AND e.text_builder_version = ?
+                      AND e.normalize_embeddings = ?
+                    """,
+                    [project_name, category_key, embedding_model_name, text_builder_version, bool(normalize_embeddings)],
+                ).fetchall()
+            finally:
+                con.unregister("_dedup_embedding_lookup")
+        return {
+            str(row[0]): {
+                "embedding_text_hash": str(row[1]),
+                "embedding_dimension": int(row[2]),
+                "embedding_blob": bytes(row[3]),
+            }
+            for row in rows
+        }
+
+    def upsert_dedup_node_embeddings(
+        self,
+        *,
+        project_name: str,
+        category_key: str,
+        embedding_model_name: str,
+        text_builder_version: str,
+        normalize_embeddings: bool,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        if not rows:
+            return
+        columns = [
+            "project_name",
+            "category_key",
+            "node_id",
+            "embedding_model_name",
+            "text_builder_version",
+            "normalize_embeddings",
+            "embedding_text_hash",
+            "embedding_dimension",
+            "embedding_blob",
+        ]
+        values = [
+            [
+                project_name,
+                category_key,
+                row.get("node_id"),
+                embedding_model_name,
+                text_builder_version,
+                bool(normalize_embeddings),
+                row.get("embedding_text_hash"),
+                int(row.get("embedding_dimension") or 0),
+                row.get("embedding_blob"),
+            ]
+            for row in rows
+        ]
+        placeholders = ", ".join("?" for _ in columns)
+        column_sql = ", ".join(columns)
+        with self._lock, connect(self.settings.db_path) as con:
+            apply_migrations(con)
+            con.executemany(
+                f"""
+                INSERT INTO dedup_node_embeddings ({column_sql})
+                VALUES ({placeholders})
+                ON CONFLICT (
+                    project_name,
+                    category_key,
+                    node_id,
+                    embedding_model_name,
+                    text_builder_version,
+                    normalize_embeddings,
+                    embedding_text_hash
+                ) DO UPDATE SET
+                    embedding_dimension = EXCLUDED.embedding_dimension,
+                    embedding_blob = EXCLUDED.embedding_blob,
+                    updated_at = now()
+                """,
+                values,
+            )
+
+    def fetch_dedup_pair_scores(
+        self,
+        *,
+        project_name: str,
+        category_key: str,
+        model_method: str,
+        model_path: str,
+        hf_model_id: str,
+        activation: str,
+        entries: list[dict[str, Any]],
+    ) -> dict[tuple[str, str], float]:
+        clean_entries = [
+            {
+                "node_id_a": str(entry.get("node_id_a") or "").strip(),
+                "node_id_b": str(entry.get("node_id_b") or "").strip(),
+                "pair_text_hash": str(entry.get("pair_text_hash") or "").strip(),
+            }
+            for entry in entries
+        ]
+        clean_entries = [
+            entry
+            for entry in clean_entries
+            if entry["node_id_a"] and entry["node_id_b"] and entry["pair_text_hash"]
+        ]
+        if not clean_entries:
+            return {}
+        lookup = pd.DataFrame(clean_entries)
+        with self._lock, connect(self.settings.db_path, temp_directory=self._duckdb_temp_directory()) as con:
+            apply_migrations(con)
+            con.register("_dedup_pair_lookup", lookup)
+            try:
+                rows = con.execute(
+                    """
+                    SELECT
+                        s.node_id_a,
+                        s.node_id_b,
+                        s.score
+                    FROM dedup_pair_score_cache AS s
+                    JOIN _dedup_pair_lookup AS l
+                      ON l.node_id_a = s.node_id_a
+                     AND l.node_id_b = s.node_id_b
+                     AND l.pair_text_hash = s.pair_text_hash
+                    WHERE s.project_name = ?
+                      AND s.category_key = ?
+                      AND s.model_method = ?
+                      AND s.model_path = ?
+                      AND s.hf_model_id = ?
+                      AND s.activation = ?
+                    """,
+                    [project_name, category_key, model_method, model_path, hf_model_id, activation],
+                ).fetchall()
+            finally:
+                con.unregister("_dedup_pair_lookup")
+        return {(str(row[0]), str(row[1])): float(row[2]) for row in rows}
+
+    def upsert_dedup_pair_scores(
+        self,
+        *,
+        project_name: str,
+        category_key: str,
+        model_method: str,
+        model_path: str,
+        hf_model_id: str,
+        activation: str,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        if not rows:
+            return
+        columns = [
+            "project_name",
+            "category_key",
+            "node_id_a",
+            "node_id_b",
+            "model_method",
+            "model_path",
+            "hf_model_id",
+            "activation",
+            "pair_text_hash",
+            "score",
+        ]
+        values = [
+            [
+                project_name,
+                category_key,
+                row.get("node_id_a"),
+                row.get("node_id_b"),
+                model_method,
+                model_path,
+                hf_model_id,
+                activation,
+                row.get("pair_text_hash"),
+                float(row.get("score") or 0),
+            ]
+            for row in rows
+        ]
+        placeholders = ", ".join("?" for _ in columns)
+        column_sql = ", ".join(columns)
+        with self._lock, connect(self.settings.db_path) as con:
+            apply_migrations(con)
+            con.executemany(
+                f"""
+                INSERT INTO dedup_pair_score_cache ({column_sql})
+                VALUES ({placeholders})
+                ON CONFLICT (
+                    project_name,
+                    category_key,
+                    node_id_a,
+                    node_id_b,
+                    model_method,
+                    model_path,
+                    hf_model_id,
+                    activation,
+                    pair_text_hash
+                ) DO UPDATE SET
+                    score = EXCLUDED.score,
+                    updated_at = now()
+                """,
+                values,
+            )
+
     def _replace_dedup_rows(
         self,
         *,

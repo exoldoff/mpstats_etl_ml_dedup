@@ -45,6 +45,7 @@ def seed_dedup_cube(
     category_name: str = "Соус",
     marketplace_code: str = "oz",
     marketplace: str = "Ozon",
+    overwrite: bool = False,
 ) -> None:
     rows = []
     for index in range(rows_count):
@@ -74,6 +75,7 @@ def seed_dedup_cube(
         marketplace_code=marketplace_code,
         category_key=category_key,
         category_name=category_name,
+        overwrite=overwrite,
     )
     repository.upsert_cube_entry(
         {
@@ -94,17 +96,29 @@ def seed_dedup_cube(
 class FakeEmbeddingModel:
     def __init__(self) -> None:
         self.calls = 0
+        self.encoded_lengths: list[int] = []
+        self.dimension: int | None = None
 
     def encode(self, texts: list[str], **_: object) -> np.ndarray:
         self.calls += 1
-        return np.eye(len(texts), dtype="float32")
+        self.encoded_lengths.append(len(texts))
+        if self.dimension is None:
+            self.dimension = len(texts)
+        output = np.zeros((len(texts), self.dimension), dtype="float32")
+        for index in range(len(texts)):
+            output[index, index % self.dimension] = 1.0
+        return output
 
 
 class FakeCrossEncoder:
     def __init__(self, score: float = 0.99) -> None:
         self.score = score
+        self.calls = 0
+        self.pair_counts: list[int] = []
 
     def predict(self, pairs: list[tuple[str, str]], **_: object) -> np.ndarray:
+        self.calls += 1
+        self.pair_counts.append(len(pairs))
         return np.full(len(pairs), self.score, dtype=float)
 
 
@@ -483,7 +497,7 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     assert after_count == before_count
 
 
-def test_retrieval_cache_hit_reuses_embeddings_without_model_encode(tmp_path: Path) -> None:
+def test_identity_cache_hit_reuses_groups_without_model_encode(tmp_path: Path) -> None:
     embedding_model = FakeEmbeddingModel()
     service, repository, _, settings = make_service(tmp_path, embedding_model=embedding_model)
     seed_dedup_cube(repository, settings, tmp_path, rows_count=3)
@@ -495,7 +509,9 @@ def test_retrieval_cache_hit_reuses_embeddings_without_model_encode(tmp_path: Pa
     assert first["manifest_json"]["retrieval_cache_status"] == "rebuilt"
     assert Path(str(first["manifest_json"]["retrieval_cache_path"])).joinpath("embeddings.npy").is_file()
     assert second["status"] == "success"
-    assert second["manifest_json"]["retrieval_cache_status"] == "hit"
+    assert second["manifest_json"]["retrieval_cache_status"] == "identity_hit"
+    assert second["manifest_json"]["identity_hits"] == 3
+    assert second["manifest_json"]["identity_misses"] == 0
     assert embedding_model.calls == 1
 
 
@@ -527,6 +543,53 @@ def test_retrieval_cache_corrupt_node_ids_rebuilds_without_fatal_error(tmp_path:
     second = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
 
     assert second["status"] == "success"
-    assert second["manifest_json"]["retrieval_cache_status"] == "rebuilt"
-    assert str(second["manifest_json"]["cache_rebuild_reason"]).startswith("corrupt:")
-    assert embedding_model.calls == 2
+    assert second["manifest_json"]["retrieval_cache_status"] == "identity_hit"
+    assert embedding_model.calls == 1
+
+
+def test_incremental_run_embeds_and_scores_only_new_nodes(tmp_path: Path) -> None:
+    embedding_model = FakeEmbeddingModel()
+    cross_encoder = FakeCrossEncoder()
+    service, repository, _, settings = make_service(
+        tmp_path,
+        embedding_model=embedding_model,
+        cross_encoder_factory=lambda _: cross_encoder,
+    )
+    seed_dedup_cube(repository, settings, tmp_path, rows_count=3)
+    first = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    seed_dedup_cube(repository, settings, tmp_path, rows_count=4, overwrite=True)
+
+    second = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+
+    assert first["status"] == "success"
+    assert second["status"] == "success"
+    assert second["manifest_json"]["identity_hits"] == 3
+    assert second["manifest_json"]["identity_misses"] == 1
+    assert second["manifest_json"]["embedding_cache_hits"] == 3
+    assert second["manifest_json"]["embedding_cache_misses"] == 1
+    assert second["candidate_count"] == 3
+    assert embedding_model.encoded_lengths == [3, 1]
+    assert cross_encoder.pair_counts == [3, 3]
+
+
+def test_pair_score_cache_reuses_cross_encoder_scores(tmp_path: Path) -> None:
+    embedding_model = FakeEmbeddingModel()
+    cross_encoder = FakeCrossEncoder()
+    service, repository, _, settings = make_service(
+        tmp_path,
+        embedding_model=embedding_model,
+        cross_encoder_factory=lambda _: cross_encoder,
+    )
+    seed_dedup_cube(repository, settings, tmp_path, rows_count=3)
+    first = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    with connect(settings.db_path) as con:
+        con.execute("DELETE FROM dedup_identity_assignments")
+
+    second = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+
+    assert first["status"] == "success"
+    assert second["status"] == "success"
+    assert second["manifest_json"]["retrieval_cache_status"] == "hit"
+    assert second["manifest_json"]["score_cache_hits"] == 3
+    assert second["manifest_json"]["score_cache_misses"] == 0
+    assert cross_encoder.calls == 1
