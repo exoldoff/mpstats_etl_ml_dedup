@@ -1057,7 +1057,7 @@ Production-профиль зафиксирован в приложении: `met
 
 Блок `Браузер SKU` показывает готовую таблицу `mpstats_products_dedup`:
 
-- режим `2 уровня` выводит строку канона и ниже входящие SKU-node; стрелка у канона сворачивает и разворачивает входящие строки;
+- режим `2 уровня` выводит строку канона и ниже входящие SKU-node; стрелка у канона сворачивает и разворачивает входящие строки, если они есть в текущей выборке;
 - режим `Каноны` выводит только верхний уровень с нормализованным названием;
 - поиск работает по SKU, бренду, артикулу, категории и маркетплейсу.
 - ширину колонок можно менять перетаскиванием правого края заголовка.
@@ -1367,6 +1367,14 @@ blocking:
 ```bash
 python3 -m pip install -r requirements-research.txt
 ```
+
+Активный research-flow `notebooks/00_eda.ipynb` ->
+`notebooks/05_grouped_sku_demo.ipynb` оформлен как единое исследование:
+в начале каждого notebook есть оглавление, краткое введение, первая code-ячейка
+с пользовательскими `MY_*` настройками и финальный блок выводов. Обычные
+параметры запуска меняйте в первой code-ячейке, а `.env` оставляйте для
+секретов, model cache и пути к DuckDB. Outputs в git не хранятся: после
+изменения параметров запускайте нужный notebook сверху вниз.
 
 `notebooks/01_candidate_generation.ipynb` строит большой пул пар-кандидатов.
 Основной слой — dense embeddings и FAISS top-k: FAISS отвечает за поиск
@@ -1911,7 +1919,7 @@ run. Если нужно вернуться к старому per-category ре�
   `"reranker_qwen3_4b"`, `"reranker_qwen3_0_6b"`,
   `"reranker_jina_v3"`. Автовыбор method идёт по `cost`, затем по
   `false_merge_count`, `false_split_count` и `f1` на `dev`.
-- `MY_FUSION_THRESHOLD_STRATEGY = None` — рекомендуемый режим: взять
+- `MY_FUSION_THRESHOLD_STRATEGY = None` — fallback-friendly режим: взять
   `threshold_weighted_cost`, если `03` подтянул объёмы продаж; иначе взять
   `threshold_cost_sensitive`.
 - `MY_FUSION_THRESHOLD_STRATEGY = "threshold_weighted_cost"` — жёстко взять
@@ -1935,7 +1943,7 @@ run. Если нужно вернуться к старому per-category ре�
   с весом из `score`. Он помогает разрезать большие chained components, где
   одна слабая связь склеивает разные товары. Для старого поведения поставьте
   `"connected_components"`.
-- `MY_COMMUNITY_RESOLUTION = 1.0` — разрешение Leiden: значения выше `1`
+- `MY_COMMUNITY_RESOLUTION = 0.7` — разрешение Leiden: значения выше `1`
   обычно дробят family мельче, ниже `1` делают группы крупнее.
 - `MY_COMMUNITY_RANDOM_SEED = 42` — фиксирует воспроизводимый Leiden-разрез.
 - `MY_COMMUNITY_EDGE_WEIGHT_COL = "score"` — колонка веса ребра; если её нет,
@@ -1979,6 +1987,10 @@ BGE из server backup, поэтому его путь задаётся в пе�
 backup лежит в другом месте, поменяйте только `model_path`; для временного
 zero-shot запуска можно поставить `MY_CROSS_ENCODER_MODEL` равным
 `"cross_encoder_mmarco"`.
+Имя таблицы в `05` не является пользовательской настройкой: demo читает
+фиксированную таблицу `mpstats_products`. Лимиты demo-среза, FAISS и
+cross-encoder меняются только в первой code-ячейке через `MY_*`; скрытых
+`DEDUP_DEMO_*` env-overrides в notebook больше нет.
 При чтении старого куба notebook применяет тот же sales-фильтр: нули и строки
 ниже общего минимума `15` продаж не попадают в demo-срез. Дополнительно
 сохраняет дерево в reports-папку текущего run.
