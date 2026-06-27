@@ -1380,6 +1380,16 @@ python3 -m pip install -r requirements-research.txt
 секретов, model cache и пути к DuckDB. Outputs в git не хранятся: после
 изменения параметров запускайте нужный notebook сверху вниз.
 
+В `notebooks/00_eda.ipynb` есть опциональный первый EDA-блок для почтового
+архива PST/OST: он через `pypff`/`libpff` считает письма с MPStats/ecom/
+marketplace-ключевыми словами, показывает месячную динамику, долю тем
+пирогом, топ доменов-отправителей и сохраняет агрегаты в
+`artifacts/reports/mail_archive_eda/`. Для запуска на машине с архивом
+установите `sudo apt install python3-pypff pff-tools`, задайте
+`MY_MAIL_ARCHIVE_PATH` и включите `MY_RUN_MAIL_ARCHIVE_EDA = True` в первой
+code-ячейке. Тело писем не экспортируется в CSV: оно используется только для
+поиска ключевых слов.
+
 `notebooks/01_candidate_generation.ipynb` строит большой пул пар-кандидатов.
 Основной слой — dense embeddings и FAISS top-k: FAISS отвечает за поиск
 похожих соседей, но теперь не является единственным источником обучающих пар.
