@@ -1870,6 +1870,7 @@ class DuckDbAppRepository:
             raise ValueError("Dedup run не найден.")
         project_name = str(run["project_name"])
         category_key = str(run["category_key"])
+        category_name = str(run.get("category_name") or "") or None
         source_category_keys = self.resolve_dedup_source_category_keys(project_name=project_name, category_key=category_key)
         delete_category_keys = sorted({category_key, *source_category_keys})
         delete_placeholders = ", ".join("?" for _ in delete_category_keys)
@@ -1897,8 +1898,8 @@ class DuckDbAppRepository:
                     SELECT
                         g.run_id,
                         n.project_name,
-                        n.category_key,
-                        MIN(n.category_name) AS category_name,
+                        ? AS category_key,
+                        COALESCE(?, MIN(n.category_name)) AS category_name,
                         g.ml_family_id,
                         g.ml_pack_id,
                         'canonical' AS row_level,
@@ -1931,12 +1932,11 @@ class DuckDbAppRepository:
                     GROUP BY
                         g.run_id,
                         n.project_name,
-                        n.category_key,
                         g.ml_family_id,
                         g.ml_pack_id,
                         g.canonical_node_id
                     """,
-                    [run_id],
+                    [category_key, category_name, run_id],
                 )
                 con.execute(
                     """
@@ -2130,16 +2130,24 @@ class DuckDbAppRepository:
         where = ["project_name = ?"]
         params: list[Any] = [project_name]
         if category_key:
+            clean_category_key = str(category_key).strip()
             source_category_keys = self.resolve_dedup_source_category_keys(
                 project_name=project_name,
                 category_key=category_key,
             )
-            if len(source_category_keys) == 1:
+            category_keys = list(dict.fromkeys([clean_category_key, *source_category_keys]))
+            for category in self.list_dedup_eligible_categories(project_name=project_name):
+                group_key = str(category.get("category_key") or "").strip()
+                source_keys = [str(key).strip() for key in category.get("source_category_keys") or [] if str(key).strip()]
+                if clean_category_key in source_keys and group_key:
+                    category_keys = list(dict.fromkeys([group_key, clean_category_key]))
+                    break
+            if len(category_keys) == 1:
                 where.append("category_key = ?")
-                params.append(source_category_keys[0])
-            elif source_category_keys:
-                where.append(f"category_key IN ({', '.join('?' for _ in source_category_keys)})")
-                params.extend(source_category_keys)
+                params.append(category_keys[0])
+            elif category_keys:
+                where.append(f"category_key IN ({', '.join('?' for _ in category_keys)})")
+                params.extend(category_keys)
         if _clean_dedup_level(level) == "canonical":
             where.append("row_level = 'canonical'")
         if query_text and query_text.strip():

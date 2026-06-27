@@ -497,6 +497,47 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     assert after_count == before_count
 
 
+def test_dedup_browser_uses_single_canonical_for_multi_source_pack_group(tmp_path: Path) -> None:
+    service, repository, _, settings = make_service(tmp_path)
+    seed_dedup_cube(
+        repository,
+        settings,
+        tmp_path,
+        rows_count=2,
+        category_key="sauce_oz",
+        category_name="Соус",
+        marketplace_code="oz",
+        marketplace="Ozon",
+    )
+    seed_dedup_cube(
+        repository,
+        settings,
+        tmp_path,
+        rows_count=3,
+        category_key="sauce_wb",
+        category_name="Соусы",
+        marketplace_code="wb",
+        marketplace="WB",
+    )
+
+    run = service.start_runs(project_name="unit", category_keys=["dedupcat_sauces"], wait=True)["runs"][0]
+
+    assert run["status"] == "success"
+    browser = repository.fetch_dedup_products(project_name="unit", category_key="dedupcat_sauces", level="expanded", limit=20)
+    assert browser["total"] == 6
+    assert [row["row_level"] for row in browser["rows"]].count("canonical") == 1
+    assert [row["row_level"] for row in browser["rows"]].count("member") == 5
+    canonical = next(row for row in browser["rows"] if row["row_level"] == "canonical")
+    assert canonical["category_key"] == "dedupcat_sauces"
+    assert canonical["component_size"] == 5
+    assert canonical["source_row_count"] == 5
+
+    source_browser = repository.fetch_dedup_products(project_name="unit", category_key="sauce_oz", level="expanded", limit=20)
+    assert source_browser["total"] == 3
+    assert [row["row_level"] for row in source_browser["rows"]].count("canonical") == 1
+    assert [row["row_level"] for row in source_browser["rows"]].count("member") == 2
+
+
 def test_identity_cache_hit_reuses_groups_without_model_encode(tmp_path: Path) -> None:
     embedding_model = FakeEmbeddingModel()
     service, repository, _, settings = make_service(tmp_path, embedding_model=embedding_model)

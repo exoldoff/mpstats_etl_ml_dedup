@@ -4234,7 +4234,6 @@ function DedupProductsBrowser(props: {
 function dedupProductGroupKey(row: DedupProductRow) {
   return [
     row.run_id,
-    row.category_key,
     row.ml_family_id,
     row.ml_pack_id,
     row.canonical_node_id || row.node_id || ""
