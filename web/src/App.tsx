@@ -4064,10 +4064,29 @@ function DedupProductsBrowser(props: {
     { id: "revenue", label: "Выручка", defaultWidth: 130 },
     { id: "group", label: "Группа", defaultWidth: 170 }
   ];
+  const rowGroups = useMemo(() => {
+    const canonical = new Set<string>();
+    const expandable = new Set<string>();
+    props.rows.forEach((row) => {
+      const groupKey = dedupProductGroupKey(row);
+      if (row.row_level === "canonical") canonical.add(groupKey);
+      else expandable.add(groupKey);
+    });
+    return { canonical, expandable };
+  }, [props.rows]);
+  const activeCollapsedGroups = useMemo(() => {
+    if (!collapsedGroups.size) return collapsedGroups;
+    const next = new Set([...collapsedGroups].filter((groupKey) => rowGroups.canonical.has(groupKey) && rowGroups.expandable.has(groupKey)));
+    return next.size === collapsedGroups.size ? collapsedGroups : next;
+  }, [collapsedGroups, rowGroups]);
   const visibleRows = useMemo(() => {
     if (props.level !== "expanded") return props.rows;
-    return props.rows.filter((row) => row.row_level === "canonical" || !collapsedGroups.has(`${row.run_id}-${row.ml_pack_id}`));
-  }, [collapsedGroups, props.level, props.rows]);
+    return props.rows.filter((row) => {
+      if (row.row_level === "canonical") return true;
+      const groupKey = dedupProductGroupKey(row);
+      return !activeCollapsedGroups.has(groupKey);
+    });
+  }, [activeCollapsedGroups, props.level, props.rows]);
   function toggleGroup(groupKey: string) {
     setCollapsedGroups((current) => {
       const next = new Set(current);
@@ -4164,13 +4183,14 @@ function DedupProductsBrowser(props: {
           <tbody>
             {visibleRows.map((row, index) => {
               const canonical = row.row_level === "canonical";
-              const groupKey = `${row.run_id}-${row.ml_pack_id}`;
-              const collapsed = collapsedGroups.has(groupKey);
+              const groupKey = dedupProductGroupKey(row);
+              const canToggle = canonical && props.level === "expanded" && rowGroups.expandable.has(groupKey);
+              const collapsed = canToggle && activeCollapsedGroups.has(groupKey);
               return (
-                <tr className={canonical ? "dedup-canonical-row" : "dedup-member-row"} key={`${row.run_id}-${row.ml_pack_id}-${row.row_level}-${row.node_id ?? index}`}>
+                <tr className={canonical ? "dedup-canonical-row" : "dedup-member-row"} key={dedupProductRowKey(row, index)}>
                   <td>
                     <span className="dedup-level-cell">
-                      {canonical && props.level === "expanded" ? (
+                      {canToggle ? (
                         <button
                           className="dedup-tree-toggle"
                           type="button"
@@ -4209,6 +4229,25 @@ function DedupProductsBrowser(props: {
       </div>
     </div>
   );
+}
+
+function dedupProductGroupKey(row: DedupProductRow) {
+  return [
+    row.run_id,
+    row.category_key,
+    row.ml_family_id,
+    row.ml_pack_id,
+    row.canonical_node_id || row.node_id || ""
+  ].join("::");
+}
+
+function dedupProductRowKey(row: DedupProductRow, index: number) {
+  return [
+    dedupProductGroupKey(row),
+    row.row_level,
+    row.node_id || row.canonical_node_id || index,
+    row.sort_order
+  ].join("::");
 }
 
 function formatNumber(value: number | null | undefined) {
