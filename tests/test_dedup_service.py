@@ -174,17 +174,19 @@ def make_service(
     return service, repository, fake_faiss, settings
 
 
-def test_profile_locks_weighted_cost_threshold_and_faiss_k() -> None:
+def test_profile_locks_model_thresholds_but_allows_device_and_faiss_k() -> None:
     profile = DedupProfile.from_settings(
         {
             "threshold_strategy": "threshold_cost_sensitive",
             "threshold_same": 0.1,
             "faiss_top_k": 99,
+            "model_device": "mps",
             "model_method": "zero_shot",
         }
     )
 
     assert profile.model_method == "ft_bge_reranker_v2_m3"
+    assert profile.model_device == "mps"
     assert profile.threshold_strategy == "threshold_weighted_cost"
     assert profile.threshold_same == pytest.approx(0.872321)
     assert profile.category_thresholds["sauces"] == pytest.approx(0.917444)
@@ -193,7 +195,16 @@ def test_profile_locks_weighted_cost_threshold_and_faiss_k() -> None:
     assert profile.threshold_for_category(category_key="sauce", category_name="Соус") == pytest.approx(0.917444)
     assert profile.threshold_for_category(category_key="soap", category_name="Мыло") == pytest.approx(0.930329)
     assert profile.threshold_for_category(category_key="unknown", category_name="Другая") == pytest.approx(0.872321)
-    assert profile.faiss_top_k == 30
+    assert profile.faiss_top_k == 99
+
+
+def test_profile_normalizes_invalid_device_and_bounds_faiss_k() -> None:
+    low_profile = DedupProfile.from_settings({"model_device": "metal", "faiss_top_k": 0})
+    high_profile = DedupProfile.from_settings({"faiss_top_k": 999})
+
+    assert low_profile.model_device == "auto"
+    assert low_profile.faiss_top_k == 1
+    assert high_profile.faiss_top_k == 100
 
 
 def test_eligible_categories_collapse_source_keys_by_business_category(tmp_path: Path) -> None:

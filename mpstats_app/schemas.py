@@ -191,6 +191,8 @@ class DedupSettingsPayload(BaseModel):
     model_path: str = ""
     hf_model_id: str = "exoldoff/bge-reranker-v2-m3-cross-encoder-marketplaces-rus"
     embedding_model_name: str = "intfloat/multilingual-e5-small"
+    model_device: str = Field(default="auto", pattern="^(auto|cpu|mps|cuda)$")
+    faiss_top_k: int = Field(default=30, ge=1, le=100)
     embedding_batch_size: int = Field(default=64, ge=1, le=512)
     cross_encoder_batch_size: int = Field(default=32, ge=1, le=256)
 

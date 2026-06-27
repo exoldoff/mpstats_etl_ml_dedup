@@ -157,6 +157,7 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         assert settings_payload["category_thresholds"]["coconut_oil"] == pytest.approx(0.872321)
         assert settings_payload["category_thresholds"]["soap"] == pytest.approx(0.930329)
         assert settings_payload["faiss_top_k"] == 30
+        assert settings_payload["model_device"] == "auto"
         assert settings_payload["retrieval_cache_enabled"] is True
         assert settings_payload["retrieval_cache_schema_version"] == "dedup_retrieval_cache_v1"
 
@@ -166,6 +167,7 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
                 "model_path": "",
                 "hf_model_id": "exoldoff/bge-reranker-v2-m3-cross-encoder-marketplaces-rus",
                 "embedding_model_name": "intfloat/multilingual-e5-small",
+                "model_device": "mps",
                 "threshold_strategy": "threshold_cost_sensitive",
                 "threshold_same": 0.1,
                 "faiss_top_k": 99,
@@ -176,7 +178,8 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         assert saved_payload["threshold_strategy"] == "threshold_weighted_cost"
         assert saved_payload["threshold_same"] == pytest.approx(0.872321)
         assert saved_payload["category_thresholds"]["sauces"] == pytest.approx(0.917444)
-        assert saved_payload["faiss_top_k"] == 30
+        assert saved_payload["faiss_top_k"] == 99
+        assert saved_payload["model_device"] == "mps"
 
         eligible_response = client.get("/api/dedup/eligible-categories", params={"project_name": "unit"})
         assert eligible_response.status_code == 200
@@ -193,6 +196,8 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         assert run["status"] == "success"
         assert run["threshold_strategy"] == "threshold_weighted_cost"
         assert run["threshold_same"] == pytest.approx(0.917444)
+        assert run["faiss_top_k"] == 99
+        assert run["manifest_json"]["runtime_profile"]["model_device"] == "mps"
         assert run["manifest_json"]["retrieval_cache_status"] == "rebuilt"
         assert run["manifest_json"]["retrieval_cache_key"]
         assert run["manifest_json"]["embedding_shape"] == [2, 2]

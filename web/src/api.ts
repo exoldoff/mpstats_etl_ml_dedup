@@ -120,6 +120,7 @@ export type DedupSettings = {
   model_path: string;
   hf_model_id: string;
   embedding_model_name: string;
+  model_device: string;
   activation: string;
   threshold_strategy: string;
   threshold_same: number;

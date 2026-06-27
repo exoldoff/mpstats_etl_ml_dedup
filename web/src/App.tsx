@@ -97,6 +97,7 @@ const defaultDedupSettings: DedupSettings = {
   model_path: "",
   hf_model_id: "exoldoff/bge-reranker-v2-m3-cross-encoder-marketplaces-rus",
   embedding_model_name: "intfloat/multilingual-e5-small",
+  model_device: "auto",
   activation: "sigmoid",
   threshold_strategy: "threshold_weighted_cost",
   threshold_same: 0.872321,
@@ -342,6 +343,24 @@ function dedupRunProgress(run: DedupRun) {
   if (run.status === "success") return { percent: 100, message: message || "Готово" };
   if (run.status === "failed") return { percent: 100, message: message || "Ошибка" };
   return { percent, message: message || (run.status === "queued" ? "Ожидает запуска" : "В работе") };
+}
+
+function dedupRunElapsed(run: DedupRun, nowMs: number) {
+  const started = Date.parse(run.started_at || run.created_at || "");
+  if (Number.isNaN(started)) return "-";
+  const active = run.status === "queued" || run.status === "running";
+  const finished = Date.parse(run.finished_at || "");
+  const end = active || Number.isNaN(finished) ? nowMs : finished;
+  return formatElapsedDuration(Math.max(0, end - started));
+}
+
+function formatElapsedDuration(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const padded = (value: number) => String(value).padStart(2, "0");
+  return hours > 0 ? `${hours}:${padded(minutes)}:${padded(seconds)}` : `${minutes}:${padded(seconds)}`;
 }
 
 function DedupProgressCell({ run }: { run: DedupRun }) {
@@ -3859,6 +3878,13 @@ function DedupWorkspace(props: {
   const selectedCount = props.categories.filter((category) => props.selectedCategoryKeys.has(category.category_key)).length;
   const latestRun = props.runs[0] ?? null;
   const hasModelPath = Boolean(props.settings.model_path.trim());
+  const [timerNow, setTimerNow] = useState(() => Date.now());
+  const hasActiveRun = props.runs.some((run) => run.status === "queued" || run.status === "running");
+  useEffect(() => {
+    if (!hasActiveRun) return;
+    const timer = window.setInterval(() => setTimerNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveRun]);
   const categoryThresholdSummary = [
     ["Соусы", props.settings.category_thresholds.sauces],
     ["Кокос", props.settings.category_thresholds.coconut_oil],
@@ -3905,6 +3931,35 @@ function DedupWorkspace(props: {
               <input value={props.settings.embedding_model_name} onChange={(event) => props.onSettingChange("embedding_model_name", event.target.value)} />
             </label>
             <label>
+              <FieldLabel text="Устройство" hint="auto доверяет PyTorch/SentenceTransformers выбор CPU/MPS. mps явно использует Apple GPU, cpu принудительно считает на процессоре." />
+              <select value={props.settings.model_device} onChange={(event) => props.onSettingChange("model_device", event.target.value)}>
+                <option value="auto">auto</option>
+                <option value="cpu">cpu</option>
+                <option value="mps">mps</option>
+                <option value="cuda">cuda</option>
+              </select>
+            </label>
+            <label>
+              <FieldLabel text="K FAISS" hint="Сколько ближайших соседей брать на SKU-node до cross-encoder. Меньше K быстрее, но повышает риск пропустить настоящий дубль." />
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={props.settings.faiss_top_k}
+                onChange={(event) => props.onSettingChange("faiss_top_k", Number(event.target.value))}
+              />
+            </label>
+            <label>
+              <FieldLabel text="Batch embeddings" hint="Размер батча для embedding-модели перед FAISS." />
+              <input
+                type="number"
+                min={1}
+                max={512}
+                value={props.settings.embedding_batch_size}
+                onChange={(event) => props.onSettingChange("embedding_batch_size", Number(event.target.value))}
+              />
+            </label>
+            <label>
               <FieldLabel text="Batch scoring" hint="Размер батча для fine-tuned cross-encoder." />
               <input
                 type="number"
@@ -3920,7 +3975,10 @@ function DedupWorkspace(props: {
             <span>{props.settings.activation}</span>
             <span>{props.settings.threshold_strategy}</span>
             <span>{categoryThresholdSummary || `threshold_same=${props.settings.threshold_same}`}</span>
+            <span>device={props.settings.model_device}</span>
             <span>faiss_top_k={props.settings.faiss_top_k}</span>
+            <span>embedding_batch={props.settings.embedding_batch_size}</span>
+            <span>scoring_batch={props.settings.cross_encoder_batch_size}</span>
           </div>
           {!hasModelPath ? <div className="export-warning">Локальный путь модели не задан. Запуск возможен только если HF модель доступна из окружения.</div> : null}
           <div className="toolbar wrap">
@@ -3982,6 +4040,7 @@ function DedupWorkspace(props: {
             </div>
             <DedupProgressCell run={latestRun} />
             <div className="dedup-run-current-metrics">
+              <span>Время: <strong>{dedupRunElapsed(latestRun, timerNow)}</strong></span>
               <span>SKU: <strong>{formatNumber(latestRun.node_count)}</strong></span>
               <span>Кандидаты: <strong>{formatNumber(latestRun.candidate_count)}</strong></span>
               <span>Пары: <strong>{formatNumber(latestRun.edge_count)}</strong></span>
@@ -4002,6 +4061,7 @@ function DedupWorkspace(props: {
             { id: "candidates", label: "Кандидаты", value: (run) => run.candidate_count ?? 0, render: (run) => formatNumber(run.candidate_count), numeric: true },
             { id: "edges", label: "Пары", value: (run) => run.edge_count ?? 0, render: (run) => formatNumber(run.edge_count), numeric: true },
             { id: "groups", label: "Группы", value: (run) => run.group_count ?? 0, render: (run) => formatNumber(run.group_count), numeric: true },
+            { id: "elapsed", label: "Время", value: (run) => run.started_at ?? run.created_at ?? "", render: (run) => dedupRunElapsed(run, timerNow) },
             { id: "created", label: "Создан", value: (run) => run.created_at ?? "", render: (run) => formatDateTime(run.created_at) },
             {
               id: "actions",

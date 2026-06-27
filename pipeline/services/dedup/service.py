@@ -50,6 +50,7 @@ DEDUP_CATEGORY_THRESHOLD_ALIASES = {
 DEDUP_METHOD = "ft_bge_reranker_v2_m3"
 DEDUP_HF_MODEL_ID = "exoldoff/bge-reranker-v2-m3-cross-encoder-marketplaces-rus"
 DEDUP_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
+DEDUP_MODEL_DEVICE = "auto"
 DEDUP_ACTIVATION = "sigmoid"
 DEDUP_PROFILE_PATH = Path(__file__).with_name("model_profile.json")
 E5_TEXT_PREFIX = "query: "
@@ -71,6 +72,7 @@ class DedupProfile:
     model_path: str = ""
     hf_model_id: str = DEDUP_HF_MODEL_ID
     embedding_model_name: str = DEDUP_EMBEDDING_MODEL
+    model_device: str = DEDUP_MODEL_DEVICE
     activation: str = DEDUP_ACTIVATION
     threshold_strategy: str = DEDUP_THRESHOLD_STRATEGY
     threshold_same: float = DEDUP_THRESHOLD_SAME
@@ -89,11 +91,17 @@ class DedupProfile:
             embedding_model_name=str(
                 payload.get("embedding_model_name") or tracked.get("embedding_model_name") or DEDUP_EMBEDDING_MODEL
             ).strip(),
+            model_device=_model_device(payload.get("model_device") or tracked.get("model_device") or DEDUP_MODEL_DEVICE),
             activation=str(tracked.get("activation") or DEDUP_ACTIVATION).strip(),
             threshold_strategy=str(tracked.get("threshold_strategy") or DEDUP_THRESHOLD_STRATEGY).strip(),
             threshold_same=float(tracked.get("threshold_same") or DEDUP_THRESHOLD_SAME),
             category_thresholds=_category_thresholds_from_profile(tracked),
-            faiss_top_k=int(tracked.get("faiss_top_k") or DEDUP_TOP_K),
+            faiss_top_k=_bounded_int(
+                payload.get("faiss_top_k") if "faiss_top_k" in payload else tracked.get("faiss_top_k"),
+                default=DEDUP_TOP_K,
+                minimum=1,
+                maximum=100,
+            ),
             embedding_batch_size=max(1, int(payload.get("embedding_batch_size") or 64)),
             cross_encoder_batch_size=max(1, int(payload.get("cross_encoder_batch_size") or 32)),
         )
@@ -104,6 +112,7 @@ class DedupProfile:
             "model_path": self.model_path,
             "hf_model_id": self.hf_model_id,
             "embedding_model_name": self.embedding_model_name,
+            "model_device": self.model_device,
             "activation": self.activation,
             "threshold_strategy": self.threshold_strategy,
             "threshold_same": self.threshold_same,
@@ -203,6 +212,19 @@ def _to_float(value: object) -> float | None:
     if not math.isfinite(number) or number <= 0:
         return None
     return number
+
+
+def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = int(default)
+    return max(minimum, min(maximum, number))
+
+
+def _model_device(value: object) -> str:
+    device = _clean_text(value).casefold()
+    return device if device in {"auto", "cpu", "mps", "cuda"} else DEDUP_MODEL_DEVICE
 
 
 def _first_non_empty(series: pd.Series) -> str:
@@ -445,6 +467,11 @@ class DedupService:
                         "requested_at": datetime.now().isoformat(timespec="seconds"),
                         "source_category_keys": source_category_keys,
                         "source_marketplaces": list(category.get("marketplaces") or []),
+                        "runtime_profile": {
+                            "model_device": profile.model_device,
+                            "embedding_batch_size": profile.embedding_batch_size,
+                            "cross_encoder_batch_size": profile.cross_encoder_batch_size,
+                        },
                         "progress_percent": 0,
                         "progress_stage": "queued",
                         "progress_message": "Ожидает запуска",
@@ -528,18 +555,20 @@ class DedupService:
             message="Читаю строки куба",
         )
         try:
+            runtime_profile = self._runtime_profile_from_run(run)
             profile = DedupProfile(
                 model_method=str(run.get("model_method") or DEDUP_METHOD),
                 model_path=str(run.get("model_path") or ""),
                 hf_model_id=str(run.get("hf_model_id") or DEDUP_HF_MODEL_ID),
                 embedding_model_name=str(run.get("embedding_model_name") or DEDUP_EMBEDDING_MODEL),
+                model_device=_model_device(runtime_profile.get("model_device") or DEDUP_MODEL_DEVICE),
                 activation=str(run.get("activation") or DEDUP_ACTIVATION),
                 threshold_strategy=str(run.get("threshold_strategy") or DEDUP_THRESHOLD_STRATEGY),
                 threshold_same=float(run.get("threshold_same") or DEDUP_THRESHOLD_SAME),
                 category_thresholds=DedupProfile.from_settings({}).category_thresholds,
                 faiss_top_k=int(run.get("faiss_top_k") or DEDUP_TOP_K),
-                embedding_batch_size=64,
-                cross_encoder_batch_size=max(1, int(run.get("cross_encoder_batch_size") or 32)),
+                embedding_batch_size=max(1, int(runtime_profile.get("embedding_batch_size") or 64)),
+                cross_encoder_batch_size=max(1, int(runtime_profile.get("cross_encoder_batch_size") or 32)),
             )
             source = self.repository.fetch_dedup_source_dataframe(
                 table_name=self.settings.products_table,
@@ -914,6 +943,9 @@ class DedupService:
             from sentence_transformers import SentenceTransformer
         except ModuleNotFoundError as exc:
             raise DedupRuntimeError("Для ML-дедупа нужен sentence-transformers. Установи зависимости из requirements.txt.") from exc
+        device = self._model_device_arg(profile)
+        if device:
+            return SentenceTransformer(profile.embedding_model_name, device=device)
         return SentenceTransformer(profile.embedding_model_name)
 
     def _load_cross_encoder(self, profile: DedupProfile) -> Any:
@@ -930,7 +962,31 @@ class DedupService:
             raise DedupRuntimeError(
                 "Для fine-tuned BGE scoring нужен sentence-transformers. Установи зависимости из requirements.txt."
             ) from exc
+        device = self._model_device_arg(profile)
+        if device:
+            return CrossEncoder(model_name, device=device)
         return CrossEncoder(model_name)
+
+    @staticmethod
+    def _model_device_arg(profile: DedupProfile) -> str | None:
+        device = _model_device(profile.model_device)
+        if device == "auto":
+            return None
+        if device == "cpu":
+            return "cpu"
+        try:
+            import torch
+        except ModuleNotFoundError as exc:
+            raise DedupRuntimeError(f"Для устройства {device} нужен torch.") from exc
+        if device == "mps":
+            if not getattr(torch.backends, "mps", None) or not torch.backends.mps.is_available():
+                raise DedupRuntimeError("Устройство MPS недоступно в текущем Python/torch окружении.")
+            return "mps"
+        if device == "cuda":
+            if not getattr(torch, "cuda", None) or not torch.cuda.is_available():
+                raise DedupRuntimeError("Устройство CUDA недоступно в текущем Python/torch окружении.")
+            return "cuda"
+        return None
 
     def _encode_nodes(self, nodes: pd.DataFrame, profile: DedupProfile) -> np.ndarray:
         model = self._load_embedding_model(profile)
@@ -1551,6 +1607,12 @@ class DedupService:
         return {}
 
     @staticmethod
+    def _runtime_profile_from_run(run: dict[str, Any]) -> dict[str, Any]:
+        manifest = DedupService._manifest_from_run(run)
+        runtime_profile = manifest.get("runtime_profile")
+        return dict(runtime_profile) if isinstance(runtime_profile, dict) else {}
+
+    @staticmethod
     def _source_category_keys_from_run(run: dict[str, Any]) -> list[str]:
         manifest = DedupService._manifest_from_run(run)
         raw_keys = manifest.get("source_category_keys")
@@ -1575,9 +1637,15 @@ class DedupService:
         return {
             "manifest_path": str(manifest_path),
             "model_method": profile.model_method,
+            "model_device": profile.model_device,
             "threshold_strategy": profile.threshold_strategy,
             "threshold_same": profile.threshold_same,
             "faiss_top_k": profile.faiss_top_k,
+            "runtime_profile": {
+                "model_device": profile.model_device,
+                "embedding_batch_size": profile.embedding_batch_size,
+                "cross_encoder_batch_size": profile.cross_encoder_batch_size,
+            },
             "source_category_keys": list(source_category_keys or []),
             "progress_percent": max(0, min(100, int(progress_percent))),
             "progress_stage": progress_stage,
