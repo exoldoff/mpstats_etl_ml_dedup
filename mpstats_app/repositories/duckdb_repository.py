@@ -93,6 +93,8 @@ DEDUP_FAMILY_UNIT_TOKENS = frozenset(
 DEDUP_FAMILY_GENERIC_TOKENS = frozenset(
     {
         "100",
+        "aroy",
+        "aroyd",
         "extra",
         "virgin",
         "extravirgin",
@@ -142,6 +144,8 @@ DEDUP_FAMILY_GENERIC_TOKENS = frozenset(
         "добавок",
         "индонезия",
         "таиланд",
+        "арой",
+        "аройд",
     }
 )
 DEDUP_PRODUCTS_COLUMNS = (
