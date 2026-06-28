@@ -1,238 +1,156 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1250" viewBox="0 0 1800 1250" role="img" aria-labelledby="title desc">
-  <title id="title">ML-дедуп пайплайн MPStats</title>
-  <desc id="desc">Цветная блок-схема production ML-дедупликации SKU и research-калибровки модели в проекте MPStats.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">ML-дедуп MPStats: от embeddings до вывода</title>
+  <desc id="desc">Цветная блок-схема ML-этапов дедупликации SKU: embeddings, FAISS, пары-кандидаты, BGE scoring, threshold, graph grouping и dedup output.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#fffaf1"/>
-      <stop offset="45%" stop-color="#f6fbff"/>
-      <stop offset="100%" stop-color="#fbf7ff"/>
+      <stop offset="52%" stop-color="#f3fbff"/>
+      <stop offset="100%" stop-color="#f8f3ff"/>
     </linearGradient>
-    <linearGradient id="prodLane" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#eef8f6"/>
-      <stop offset="52%" stop-color="#edf5ff"/>
-      <stop offset="100%" stop-color="#f6f0ff"/>
+    <linearGradient id="rail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#e9f8f4"/>
+      <stop offset="45%" stop-color="#eef5ff"/>
+      <stop offset="100%" stop-color="#fff2da"/>
     </linearGradient>
-    <linearGradient id="researchLane" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#fff4dc"/>
-      <stop offset="46%" stop-color="#eef7ed"/>
-      <stop offset="100%" stop-color="#eff2ff"/>
-    </linearGradient>
-    <filter id="shadow" x="-8%" y="-14%" width="116%" height="132%">
-      <feDropShadow dx="0" dy="10" stdDeviation="9" flood-color="#162032" flood-opacity="0.12"/>
+    <filter id="shadow" x="-10%" y="-16%" width="120%" height="136%">
+      <feDropShadow dx="0" dy="8" stdDeviation="7" flood-color="#162033" flood-opacity="0.13"/>
     </filter>
-    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
-      <path d="M 1 1 L 11 6 L 1 11 z" fill="#41516b"/>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto">
+      <path d="M 1 1 L 11 6 L 1 11 z" fill="#344761"/>
     </marker>
-    <marker id="arrowSoft" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
-      <path d="M 1 1 L 11 6 L 1 11 z" fill="#7c5ca8"/>
+    <marker id="arrowTeal" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="9" markerHeight="9" orient="auto">
+      <path d="M 1 1 L 11 6 L 1 11 z" fill="#168a7b"/>
     </marker>
     <style>
       text {
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         letter-spacing: 0;
-        fill: #1e2633;
+        fill: #202938;
       }
-      .title { font-size: 42px; font-weight: 800; }
-      .subtitle { font-size: 22px; fill: #566174; }
-      .lane-title { font-size: 26px; font-weight: 800; }
-      .lane-note { font-size: 17px; fill: #657085; }
-      .box-title { font-size: 20px; font-weight: 800; }
-      .box-line { font-size: 16px; fill: #3d4858; }
-      .small { font-size: 14px; fill: #5b6678; }
-      .badge { font-size: 14px; font-weight: 750; fill: #233044; }
-      .step { font-size: 15px; font-weight: 850; fill: #ffffff; }
-      .arrow { fill: none; stroke: #41516b; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
-      .arrow-soft { fill: none; stroke: #7c5ca8; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowSoft); stroke-dasharray: 10 9; }
-      .thin { stroke-width: 3; }
+      .title { font-size: 36px; font-weight: 850; }
+      .subtitle { font-size: 18px; fill: #59677a; }
+      .card-title { font-size: 17px; font-weight: 850; }
+      .line { font-size: 14px; fill: #3e4b5e; }
+      .small { font-size: 12px; fill: #617084; }
+      .num { font-size: 13px; font-weight: 850; fill: #ffffff; }
+      .chip { font-size: 13px; font-weight: 780; fill: #2b384a; }
+      .arrow { fill: none; stroke: #344761; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+      .arrow-fill { fill: #344761; }
+      .cache-arrow { fill: none; stroke: #168a7b; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowTeal); stroke-dasharray: 9 8; }
     </style>
   </defs>
 
-  <rect width="1800" height="1250" fill="url(#bg)"/>
-  <circle cx="1600" cy="118" r="64" fill="#fee8a8" opacity="0.52"/>
-  <circle cx="1685" cy="102" r="34" fill="#bce9df" opacity="0.55"/>
-  <circle cx="1522" cy="156" r="26" fill="#c9d7ff" opacity="0.55"/>
+  <rect width="1200" height="760" fill="url(#bg)"/>
 
-  <text x="70" y="82" class="title">Как работает ML-дедуп MPStats</text>
-  <text x="72" y="120" class="subtitle">Production identity layer после куба + research-контур, который выбирает модель, пороги и правила группировки.</text>
+  <text x="52" y="66" class="title">ML-дедуп: от embeddings до dedup output</text>
+  <text x="54" y="98" class="subtitle">Узкая модельная линия: векторы SKU -> похожие пары -> score -> порог -> граф групп -> вывод.</text>
 
-  <g transform="translate(1220 58)">
-    <rect x="0" y="0" width="430" height="112" rx="8" fill="#ffffff" opacity="0.92" stroke="#d7dfec"/>
-    <rect x="22" y="24" width="16" height="16" rx="4" fill="#1f9d89"/>
-    <text x="48" y="37" class="badge">production run</text>
-    <rect x="205" y="24" width="16" height="16" rx="4" fill="#7c5ca8"/>
-    <text x="231" y="37" class="badge">research loop</text>
-    <rect x="22" y="68" width="16" height="16" rx="4" fill="#ef9f2f"/>
-    <text x="48" y="81" class="badge">cache / incremental</text>
-    <rect x="205" y="68" width="16" height="16" rx="4" fill="#3667d6"/>
-    <text x="231" y="81" class="badge">DuckDB identity</text>
+  <g transform="translate(52 126)">
+    <rect x="0" y="0" width="1096" height="74" rx="8" fill="#ffffff" stroke="#cfd9e8"/>
+    <text x="24" y="30" class="card-title">Вход уже подготовлен</text>
+    <text x="24" y="55" class="line">SKU-node text: название + бренд + вес/фасовка; node id: marketplace + Артикул; строки с малым объёмом продаж уже отсечены.</text>
   </g>
 
-  <g id="production-lane">
-    <rect x="70" y="172" width="1660" height="545" rx="8" fill="url(#prodLane)" stroke="#c9d9ea" stroke-width="2"/>
-    <text x="105" y="222" class="lane-title">1. Production flow: web-app запускает ML-дедуп после сохранения куба</text>
-    <text x="105" y="252" class="lane-note">Источник фактов не схлопывается: `mpstats_products` остается как есть, а ML пишет отдельный identity layer.</text>
+  <g transform="translate(52 232)">
+    <rect x="0" y="0" width="1096" height="260" rx="8" fill="url(#rail)" stroke="#cad8e8" stroke-width="2"/>
 
     <g filter="url(#shadow)">
-      <rect x="105" y="288" width="250" height="140" rx="8" fill="#ffffff" stroke="#60b8aa" stroke-width="3"/>
-      <circle cx="130" cy="314" r="15" fill="#1f9d89"/>
-      <text x="125" y="319" class="step">1</text>
-      <text x="157" y="315" class="box-title">MPStats input</text>
-      <text x="128" y="350" class="box-line">raw CSV</text>
-      <text x="128" y="376" class="box-line">processed CSV</text>
-      <text x="128" y="402" class="box-line">classified CSV</text>
+      <rect x="24" y="54" width="154" height="146" rx="8" fill="#ffffff" stroke="#2fa99a" stroke-width="3"/>
+      <circle cx="48" cy="79" r="15" fill="#1f9d89"/>
+      <text x="43" y="84" class="num">1</text>
+      <text x="74" y="80" class="card-title">Embeddings</text>
+      <text x="48" y="115" class="line">E5 model</text>
+      <text x="48" y="139" class="line">SKU -> vector</text>
+      <text x="48" y="163" class="line">normalize</text>
+      <text x="48" y="187" class="small">embedding cache</text>
 
-      <rect x="420" y="288" width="250" height="140" rx="8" fill="#ffffff" stroke="#4d8ce8" stroke-width="3"/>
-      <circle cx="445" cy="314" r="15" fill="#3667d6"/>
-      <text x="440" y="319" class="step">2</text>
-      <text x="472" y="315" class="box-title">DuckDB cube</text>
-      <text x="443" y="350" class="box-line">`mpstats_products`</text>
-      <text x="443" y="376" class="box-line">`cube_registry`</text>
-      <text x="443" y="402" class="box-line">slice metadata</text>
+      <rect x="208" y="54" width="154" height="146" rx="8" fill="#ffffff" stroke="#4d8ce8" stroke-width="3"/>
+      <circle cx="232" cy="79" r="15" fill="#3667d6"/>
+      <text x="227" y="84" class="num">2</text>
+      <text x="258" y="80" class="card-title">FAISS</text>
+      <text x="232" y="115" class="line">IndexFlatIP</text>
+      <text x="232" y="139" class="line">top_k = 30</text>
+      <text x="232" y="163" class="line">nearest SKU</text>
+      <text x="232" y="187" class="small">fast retrieval</text>
 
-      <rect x="735" y="288" width="250" height="140" rx="8" fill="#ffffff" stroke="#b47ee8" stroke-width="3"/>
-      <circle cx="760" cy="314" r="15" fill="#7c5ca8"/>
-      <text x="755" y="319" class="step">3</text>
-      <text x="787" y="315" class="box-title">Auto trigger</text>
-      <text x="758" y="350" class="box-line">`auto_dedup = true`</text>
-      <text x="758" y="376" class="box-line">eligible categories:</text>
-      <text x="758" y="402" class="box-line">Соусы, Кокос, Мыло</text>
+      <rect x="392" y="54" width="154" height="146" rx="8" fill="#ffffff" stroke="#e3a72c" stroke-width="3"/>
+      <circle cx="416" cy="79" r="15" fill="#ef9f2f"/>
+      <text x="411" y="84" class="num">3</text>
+      <text x="442" y="80" class="card-title">Pairs</text>
+      <text x="416" y="115" class="line">A-B candidates</text>
+      <text x="416" y="139" class="line">no full scan</text>
+      <text x="416" y="163" class="line">pair key</text>
+      <text x="416" y="187" class="small">not a decision yet</text>
 
-      <rect x="1050" y="288" width="250" height="140" rx="8" fill="#ffffff" stroke="#edbd3e" stroke-width="3"/>
-      <circle cx="1075" cy="314" r="15" fill="#ef9f2f"/>
-      <text x="1070" y="319" class="step">4</text>
-      <text x="1102" y="315" class="box-title">SKU-node catalog</text>
-      <text x="1073" y="350" class="box-line">marketplace + Артикул</text>
-      <text x="1073" y="376" class="box-line">title, brand, weight</text>
-      <text x="1073" y="402" class="box-line">Продажи &gt;= 15</text>
+      <rect x="576" y="54" width="154" height="146" rx="8" fill="#ffffff" stroke="#9b72d8" stroke-width="3"/>
+      <circle cx="600" cy="79" r="15" fill="#7c5ca8"/>
+      <text x="595" y="84" class="num">4</text>
+      <text x="626" y="80" class="card-title">BGE score</text>
+      <text x="600" y="115" class="line">cross-encoder</text>
+      <text x="600" y="139" class="line">pair score</text>
+      <text x="600" y="163" class="line">sigmoid</text>
+      <text x="600" y="187" class="small">ft_bge_reranker</text>
 
-      <rect x="1365" y="288" width="250" height="140" rx="8" fill="#ffffff" stroke="#f08d72" stroke-width="3"/>
-      <circle cx="1390" cy="314" r="15" fill="#e76f51"/>
-      <text x="1385" y="319" class="step">5</text>
-      <text x="1417" y="315" class="box-title">Incremental gate</text>
-      <text x="1388" y="350" class="box-line">identity-cache</text>
-      <text x="1388" y="376" class="box-line">embedding snapshot</text>
-      <text x="1388" y="402" class="box-line">pair score-cache</text>
+      <rect x="760" y="54" width="154" height="146" rx="8" fill="#ffffff" stroke="#e86e56" stroke-width="3"/>
+      <circle cx="784" cy="79" r="15" fill="#e76f51"/>
+      <text x="779" y="84" class="num">5</text>
+      <text x="810" y="80" class="card-title">Порог</text>
+      <text x="784" y="115" class="line">weighted-cost</text>
+      <text x="784" y="139" class="line">category threshold</text>
+      <text x="784" y="163" class="line">same / different</text>
+      <text x="784" y="187" class="small">0.917 / 0.872 / 0.930</text>
+
+      <rect x="944" y="54" width="128" height="146" rx="8" fill="#ffffff" stroke="#2fa99a" stroke-width="3"/>
+      <circle cx="968" cy="79" r="15" fill="#1f9d89"/>
+      <text x="963" y="84" class="num">6</text>
+      <text x="994" y="80" class="card-title">Группы</text>
+      <text x="968" y="115" class="line">positive graph</text>
+      <text x="968" y="139" class="line">family</text>
+      <text x="968" y="163" class="line">pack split</text>
+      <text x="968" y="187" class="small">family -> pack</text>
     </g>
 
-    <path class="arrow" d="M 355 358 H 410"/>
-    <path class="arrow" d="M 670 358 H 725"/>
-    <path class="arrow" d="M 985 358 H 1040"/>
-    <path class="arrow" d="M 1300 358 H 1355"/>
-
-    <g filter="url(#shadow)">
-      <rect x="190" y="520" width="255" height="132" rx="8" fill="#ffffff" stroke="#4d8ce8" stroke-width="3"/>
-      <circle cx="216" cy="546" r="15" fill="#3667d6"/>
-      <text x="211" y="551" class="step">6</text>
-      <text x="248" y="547" class="box-title">Embeddings</text>
-      <text x="216" y="581" class="box-line">`multilingual-e5-small`</text>
-      <text x="216" y="607" class="box-line">cached vectors</text>
-      <text x="216" y="633" class="box-line">normalized for search</text>
-
-      <rect x="520" y="520" width="255" height="132" rx="8" fill="#ffffff" stroke="#60b8aa" stroke-width="3"/>
-      <circle cx="546" cy="546" r="15" fill="#1f9d89"/>
-      <text x="541" y="551" class="step">7</text>
-      <text x="578" y="547" class="box-title">FAISS retrieval</text>
-      <text x="546" y="581" class="box-line">`IndexFlatIP`</text>
-      <text x="546" y="607" class="box-line">top_k = 30</text>
-      <text x="546" y="633" class="box-line">candidate pairs</text>
-
-      <rect x="850" y="520" width="255" height="132" rx="8" fill="#ffffff" stroke="#b47ee8" stroke-width="3"/>
-      <circle cx="876" cy="546" r="15" fill="#7c5ca8"/>
-      <text x="871" y="551" class="step">8</text>
-      <text x="908" y="547" class="box-title">Cross-encoder</text>
-      <text x="876" y="581" class="box-line">fine-tuned BGE</text>
-      <text x="876" y="607" class="box-line">`ft_bge_reranker_v2_m3`</text>
-      <text x="876" y="633" class="box-line">score for each pair</text>
-
-      <rect x="1180" y="520" width="255" height="132" rx="8" fill="#ffffff" stroke="#edbd3e" stroke-width="3"/>
-      <circle cx="1206" cy="546" r="15" fill="#ef9f2f"/>
-      <text x="1201" y="551" class="step">9</text>
-      <text x="1238" y="547" class="box-title">Threshold + graph</text>
-      <text x="1206" y="581" class="box-line">weighted-cost threshold</text>
-      <text x="1206" y="607" class="box-line">product family edges</text>
-      <text x="1206" y="633" class="box-line">pack groups inside family</text>
-
-      <rect x="1510" y="520" width="155" height="132" rx="8" fill="#ffffff" stroke="#4d8ce8" stroke-width="3"/>
-      <circle cx="1536" cy="546" r="15" fill="#3667d6"/>
-      <text x="1528" y="551" class="step">10</text>
-      <text x="1567" y="547" class="box-title">Outputs</text>
-      <text x="1536" y="581" class="box-line">`dedup_*` tables</text>
-      <text x="1536" y="607" class="box-line">`mpstats_products_dedup`</text>
-      <text x="1536" y="633" class="box-line">browser + CSV</text>
+    <g class="arrow-fill">
+      <rect x="178" y="125" width="13" height="4" rx="2"/>
+      <path d="M 190 114 L 207 127 L 190 140 Z"/>
+      <rect x="362" y="125" width="13" height="4" rx="2"/>
+      <path d="M 374 114 L 391 127 L 374 140 Z"/>
+      <rect x="546" y="125" width="13" height="4" rx="2"/>
+      <path d="M 558 114 L 575 127 L 558 140 Z"/>
+      <rect x="730" y="125" width="13" height="4" rx="2"/>
+      <path d="M 742 114 L 759 127 L 742 140 Z"/>
+      <rect x="914" y="125" width="13" height="4" rx="2"/>
+      <path d="M 926 114 L 943 127 L 926 140 Z"/>
     </g>
 
-    <path class="arrow" d="M 1490 428 C 1490 474, 318 468, 318 510"/>
-    <path class="arrow" d="M 445 586 H 510"/>
-    <path class="arrow" d="M 775 586 H 840"/>
-    <path class="arrow" d="M 1105 586 H 1170"/>
-    <path class="arrow" d="M 1435 586 H 1500"/>
-
-    <g>
-      <rect x="104" y="670" width="500" height="30" rx="8" fill="#e5f3ff" stroke="#a8c8ed"/>
-      <text x="126" y="691" class="small">Report/export layer делает left join к latest successful dedup-run, не меняя число фактовых строк.</text>
-      <path class="arrow thin" d="M 1510 655 C 1375 700, 790 700, 612 687"/>
-    </g>
+    <text x="24" y="231" class="line">FAISS даёт короткий candidate pool, BGE решает вероятность дубля, threshold превращает score в ребро графа.</text>
   </g>
 
-  <g id="research-lane">
-    <rect x="70" y="765" width="1660" height="405" rx="8" fill="url(#researchLane)" stroke="#decf9d" stroke-width="2"/>
-    <text x="105" y="815" class="lane-title">2. Research / calibration loop: почему именно такая модель и такие пороги</text>
-    <text x="105" y="845" class="lane-note">Ноутбуки и `research/dedup/` выбирают технологию, но production runtime не импортирует notebook cells.</text>
+  <path class="arrow" d="M 1060 432 C 1088 504, 1030 526, 968 552"/>
 
-    <g filter="url(#shadow)">
-      <rect x="105" y="895" width="230" height="142" rx="8" fill="#ffffff" stroke="#edbd3e" stroke-width="3"/>
-      <text x="130" y="930" class="box-title">00 EDA</text>
-      <text x="130" y="962" class="box-line">category-runs:</text>
-      <text x="130" y="988" class="box-line">sauces, coconut_oil, soap</text>
-      <text x="130" y="1014" class="box-line">brand / weight checks</text>
-
-      <rect x="390" y="895" width="230" height="142" rx="8" fill="#ffffff" stroke="#60b8aa" stroke-width="3"/>
-      <text x="415" y="930" class="box-title">01 Candidates</text>
-      <text x="415" y="962" class="box-line">dense embeddings</text>
-      <text x="415" y="988" class="box-line">FAISS top-k</text>
-      <text x="415" y="1014" class="box-line">supplemental pairs</text>
-
-      <rect x="675" y="895" width="230" height="142" rx="8" fill="#ffffff" stroke="#f08d72" stroke-width="3"/>
-      <text x="700" y="930" class="box-title">02 Labeling</text>
-      <text x="700" y="962" class="box-line">manual gold-set</text>
-      <text x="700" y="988" class="box-line">Telegram annotator</text>
-      <text x="700" y="1014" class="box-line">exact vs different</text>
-
-      <rect x="960" y="895" width="230" height="142" rx="8" fill="#ffffff" stroke="#4d8ce8" stroke-width="3"/>
-      <text x="985" y="930" class="box-title">03 Benchmark</text>
-      <text x="985" y="962" class="box-line">dev threshold only</text>
-      <text x="985" y="988" class="box-line">weighted-cost</text>
-      <text x="985" y="1014" class="box-line">held-out test readout</text>
-
-      <rect x="1245" y="895" width="230" height="142" rx="8" fill="#ffffff" stroke="#b47ee8" stroke-width="3"/>
-      <text x="1270" y="930" class="box-title">Fine-tune</text>
-      <text x="1270" y="962" class="box-line">BGE reranker</text>
-      <text x="1270" y="988" class="box-line">frozen split</text>
-      <text x="1270" y="1014" class="box-line">score artifacts</text>
-
-      <rect x="1530" y="895" width="155" height="142" rx="8" fill="#ffffff" stroke="#60b8aa" stroke-width="3"/>
-      <text x="1555" y="930" class="box-title">04 / 05</text>
-      <text x="1555" y="962" class="box-line">fusion</text>
-      <text x="1555" y="988" class="box-line">groups</text>
-      <text x="1555" y="1014" class="box-line">demo tree</text>
-    </g>
-
-    <path class="arrow" d="M 335 966 H 380"/>
-    <path class="arrow" d="M 620 966 H 665"/>
-    <path class="arrow" d="M 905 966 H 950"/>
-    <path class="arrow" d="M 1190 966 H 1235"/>
-    <path class="arrow" d="M 1475 966 H 1520"/>
-
-    <path class="arrow-soft" d="M 1360 895 C 1392 790, 1322 713, 1308 662"/>
-    <text x="1168" y="742" class="small">`model_profile.json` фиксирует метод, K, activation и category thresholds</text>
-
-    <g>
-      <rect x="105" y="1082" width="1530" height="50" rx="8" fill="#ffffff" opacity="0.86" stroke="#d7dfec"/>
-      <text x="130" y="1114" class="box-line">Ключевая идея: ML решает "тот же базовый товар?", а deterministic pack-правила уже после модели разделяют фасовки внутри найденной семьи.</text>
-    </g>
+  <g transform="translate(52 536)">
+    <rect x="0" y="0" width="512" height="142" rx="8" fill="#ffffff" stroke="#d3deeb"/>
+    <text x="24" y="34" class="card-title">Кэш ускоряет повторные запуски</text>
+    <text x="24" y="65" class="line">identity-cache: node уже знает ML-группу</text>
+    <text x="24" y="91" class="line">embedding-cache: vector не считается повторно</text>
+    <text x="24" y="117" class="line">pair score-cache: BGE не скорит ту же пару снова</text>
+    <path class="cache-arrow" d="M 365 -44 C 260 -80, 130 -74, 92 -52"/>
+    <path class="cache-arrow" d="M 488 -35 C 556 -75, 705 -74, 730 -52"/>
   </g>
 
-  <g id="footer">
-    <text x="70" y="1210" class="small">Generated for MPStats docs. Current production profile: FAISS K=30, fine-tuned BGE, threshold_weighted_cost, category thresholds for sauces / coconut_oil / soap.</text>
+  <g transform="translate(616 536)">
+    <rect x="0" y="0" width="532" height="142" rx="8" fill="#ffffff" stroke="#d3deeb"/>
+    <text x="24" y="34" class="card-title">Вывод дедупа</text>
+    <rect x="24" y="56" width="116" height="34" rx="8" fill="#eef3ff" stroke="#9eb9f2"/>
+    <text x="39" y="78" class="chip">nodes</text>
+    <rect x="152" y="56" width="116" height="34" rx="8" fill="#f1edff" stroke="#baa3e8"/>
+    <text x="167" y="78" class="chip">edges</text>
+    <rect x="280" y="56" width="116" height="34" rx="8" fill="#e7f6f2" stroke="#79c8bb"/>
+    <text x="295" y="78" class="chip">groups</text>
+    <rect x="408" y="56" width="96" height="34" rx="8" fill="#fff1d7" stroke="#e5b75a"/>
+    <text x="424" y="78" class="chip">browser</text>
+    <text x="24" y="116" class="line">`dedup_*` таблицы + `mpstats_products_dedup` для UI и CSV-выгрузок.</text>
   </g>
+
+  <text x="52" y="724" class="small">Production profile: intfloat/multilingual-e5-small -> FAISS top_k=30 -> fine-tuned BGE -> threshold_weighted_cost -> category thresholds for sauces / coconut_oil / soap.</text>
 </svg>
