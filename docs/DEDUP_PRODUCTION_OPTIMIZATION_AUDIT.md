@@ -4,7 +4,7 @@
 
 Scope проверки:
 
-- `notebooks/00_eda.ipynb` - `notebooks/06_grouped_sku_demo.ipynb`;
+- `notebooks/00_eda.ipynb` - `notebooks/05_grouped_sku_demo.ipynb`;
 - `research/dedup/*.py`, `research/dedup/matchers/*.py`;
 - `scripts/benchmark_classifier.py`, `scripts/profile_classifier.py`,
   `scripts/classifier_perf_utils.py`, `scripts/duckdb_benchmark.py`,
@@ -75,7 +75,7 @@ FAISS caveats для будущей реализации:
 
 Notebook 03 уже содержит несколько больших code cells: загрузка labels,
 baseline/bi-encoder/cross-encoder/reranker scoring, sales-volume join,
-threshold calibration, export и визуализации. Notebook 04/06 тоже держат
+threshold calibration, export и визуализации. Notebook 04/05 тоже держат
 существенную business logic внутри ячеек.
 
 Перед production лучше сделать такие чистые модули:
@@ -211,7 +211,7 @@ rate-limit/cost accounting.
 
 ### 9. DuckDB pushdown вместо `SELECT *` там, где это runtime
 
-В notebooks 00/01/06 есть чтение широких срезов из DuckDB. Для EDA это
+В notebooks 00/01/05 есть чтение широких срезов из DuckDB. Для EDA это
 допустимо, но production runtime должен:
 
 - выбирать только нужные колонки;
@@ -310,7 +310,7 @@ Graph-quality metrics и risk summaries теперь должны жить в
 `notebooks/04_fusion_pack_grouping.ipynb`, чтобы production-кандидат не
 зависел от отдельного read-only report notebook.
 
-### `notebooks/06_grouped_sku_demo.ipynb`
+### `notebooks/05_grouped_sku_demo.ipynb`
 
 Оставить как human preview. Перед production убрать fallback на локальный
 desktop path из runtime-логики и перенести DuckDB aggregation в repository

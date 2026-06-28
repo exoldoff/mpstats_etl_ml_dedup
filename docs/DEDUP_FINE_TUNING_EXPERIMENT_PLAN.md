@@ -436,7 +436,7 @@ pair-stratified benchmark split: он сохраняет все размечен
 - family false links;
 - family size distribution;
 - pack-level correctness;
-- ручная витрина через `06_grouped_sku_demo.ipynb`.
+- ручная витрина через `05_grouped_sku_demo.ipynb`.
 
 Выбирать модель только по pairwise F1 нельзя: нам важнее отсутствие опасных
 false merge в итоговых компонентах.

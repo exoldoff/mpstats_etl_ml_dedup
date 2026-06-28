@@ -83,7 +83,7 @@ candidate inference:
    или начать с дешёвого smoke-slice.
 3. Применить тот же `threshold_same` / strategy.
 4. Построить `fusion_family_id` и `fusion_pack_id` уже по full candidate graph.
-5. Только после этого смотреть `06_grouped_sku_demo.ipynb` как витрину
+5. Только после этого смотреть `05_grouped_sku_demo.ipynb` как витрину
    реальных групп, где family size может быть больше 3.
 
 До этого текущие family sizes нужно читать как diagnostics по benchmark

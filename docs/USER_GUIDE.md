@@ -906,7 +906,8 @@ python3 scripts/benchmark_classifier.py run --size large --include-large
 python3 scripts/benchmark_classifier.py compare old_classified.csv new_classified.csv
 ```
 
-Итоговый аудит текущего состояния описан в `CLASSIFIER_PERFORMANCE_AUDIT.md`.
+Итоговый аудит текущего состояния описан в
+`docs/archive/CLASSIFIER_PERFORMANCE_AUDIT.md`.
 
 ## 13.1. Вкладка `Проекты`
 
@@ -1474,12 +1475,14 @@ FAISS-поиск без ограничения по подкатегории.
 Это убирает очевидные exact-title дубли из FAISS-соседей; исходные артикулы
 остаются в метаданных `source_raw_record_ids` / `source_skus`.
 После FAISS-блока notebook показывает несколько anchor-SKU и их ближайших
-соседей из текущего shortlist. Количество групп, размер группы и режим выбора
+соседей из текущего списка кандидатов. Количество групп, размер группы и режим выбора
 можно менять через `MY_NEIGHBOR_GROUP_COUNT`,
 `MY_NEIGHBOR_GROUP_SIZE` и `MY_NEIGHBOR_GROUP_SAMPLE_MODE`.
 
-Для запуска новой категории поменяйте `MY_CATEGORY_RUN` в `00`, `01`, `03`,
-`04`, `05`, `06`; в `02` поменяйте `MY_CATEGORY_RUNS`.
+Для запуска новой категории поменяйте `MY_CATEGORY_RUN` в `00`, `01` и `05`.
+В `02`, `03` и `04` используется список `MY_CATEGORY_RUNS`: для одного run
+оставьте один элемент, для общего multi-category сценария оставьте
+`["sauces", "coconut_oil", "soap"]`.
 
 Все research-ноутбуки фильтруют DuckDB не только по `Категория`, но и по
 `__project_name`, чтобы `Мыло` из проекта `мыло_тест` не смешивалось с другими
