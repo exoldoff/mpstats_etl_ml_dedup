@@ -40,6 +40,7 @@ class ExportSpec:
     sort_column: str | None
     sort_direction: str
     split_by_category: bool
+    dedup_enabled: bool
     export_format: str
 
 
@@ -50,12 +51,17 @@ class ExportService:
         self._jobs: dict[str, dict[str, Any]] = {}
         self._lock = RLock()
 
-    def options(self, *, project_name: str) -> dict[str, Any]:
+    def options(self, *, project_name: str, dedup_enabled: bool = False) -> dict[str, Any]:
         project = _clean_project_name(project_name)
-        payload = self.repository.export_options(table_name=self.settings.products_table, project_name=project)
+        payload = self.repository.export_options(
+            table_name=self.settings.products_table,
+            project_name=project,
+            dedup_enabled=dedup_enabled,
+        )
         payload.update(
             {
                 "project_name": project,
+                "dedup_enabled": bool(dedup_enabled),
                 "default_output_dir": str(self.default_output_dir(project)),
                 "excel_max_rows": EXCEL_MAX_DATA_ROWS,
             }
@@ -84,7 +90,8 @@ class ExportService:
         sort_column: str | None,
         sort_direction: str,
         split_by_category: bool,
-        output_dir: str | None,
+        output_dir: str | None = None,
+        dedup_enabled: bool = False,
         export_format: str = "xlsx",
     ) -> dict[str, Any]:
         clean_name = name.strip()
@@ -101,6 +108,7 @@ class ExportService:
             sort_column=sort_column,
             sort_direction=sort_direction,
             split_by_category=split_by_category,
+            dedup_enabled=dedup_enabled,
             export_format=export_format,
         )
         if not spec.category_keys:
@@ -128,6 +136,7 @@ class ExportService:
             "sort_column": spec.sort_column,
             "sort_direction": spec.sort_direction,
             "split_by_category": spec.split_by_category,
+            "dedup_enabled": spec.dedup_enabled,
             "export_format": spec.export_format,
             "output_dir": (output_dir or "").strip() or None,
             "created_at": str(existing.get("created_at")) if existing else now,
@@ -167,6 +176,7 @@ class ExportService:
         split_by_category: bool,
         limit: int,
         offset: int,
+        dedup_enabled: bool = False,
         export_format: str = "xlsx",
     ) -> dict[str, Any]:
         spec = self._spec(
@@ -180,6 +190,7 @@ class ExportService:
             sort_column=sort_column,
             sort_direction=sort_direction,
             split_by_category=split_by_category,
+            dedup_enabled=dedup_enabled,
             export_format=export_format,
         )
         breakdown = self._breakdown(spec)
@@ -199,6 +210,7 @@ class ExportService:
             offset=offset,
             include_row_hash=True,
             default_order=bool(spec.sort_column),
+            dedup_enabled=spec.dedup_enabled,
         )
         estimated_files = self._estimate_file_count(spec, total, breakdown=breakdown)
         warnings = self._warnings_for_estimate(estimated_files)
@@ -208,6 +220,7 @@ class ExportService:
             "rows": clean_records(df.where(pd.notna(df), None).to_dict(orient="records")),
             "total": total,
             "estimated_files": estimated_files,
+            "dedup_enabled": spec.dedup_enabled,
             "export_format": spec.export_format,
             "breakdown": breakdown,
             "warnings": warnings,
@@ -228,6 +241,7 @@ class ExportService:
         split_by_category: bool,
         output_dir: str | None,
         confirm_large_export: bool,
+        dedup_enabled: bool = False,
         export_format: str = "xlsx",
         progress_callback: Any | None = None,
     ) -> dict[str, Any]:
@@ -242,6 +256,7 @@ class ExportService:
             sort_column=sort_column,
             sort_direction=sort_direction,
             split_by_category=split_by_category,
+            dedup_enabled=dedup_enabled,
             export_format=export_format,
         )
         breakdown = self._breakdown(spec)
@@ -325,6 +340,7 @@ class ExportService:
             "estimated_files": estimated_files,
             "output_dir": str(target_dir),
             "split_by_category": spec.split_by_category,
+            "dedup_enabled": spec.dedup_enabled,
             "export_format": spec.export_format,
             "breakdown": breakdown,
             "warnings": self._warnings_for_estimate(estimated_files),
@@ -451,9 +467,15 @@ class ExportService:
         sort_column: str | None,
         sort_direction: str,
         split_by_category: bool,
+        dedup_enabled: bool,
         export_format: str,
     ) -> ExportSpec:
-        visible_columns = self.repository.export_visible_columns(table_name=self.settings.products_table)
+        project = _clean_project_name(project_name)
+        visible_columns = self.repository.export_visible_columns(
+            table_name=self.settings.products_table,
+            project_name=project,
+            dedup_enabled=dedup_enabled,
+        )
         selected = [column for column in selected_columns if column in visible_columns]
         if not selected:
             selected = visible_columns
@@ -481,7 +503,7 @@ class ExportService:
         clean_hashes = sorted({str(row_hash) for row_hash in excluded_row_hashes if str(row_hash).strip()})
         clean_sort_column = sort_column if sort_column in visible_columns else None
         return ExportSpec(
-            project_name=_clean_project_name(project_name),
+            project_name=project,
             category_keys=clean_category_keys,
             period_from=period_from,
             period_to=period_to,
@@ -493,6 +515,7 @@ class ExportService:
             sort_column=clean_sort_column,
             sort_direction="desc" if str(sort_direction).lower() == "desc" else "asc",
             split_by_category=bool(split_by_category),
+            dedup_enabled=bool(dedup_enabled),
             export_format=_clean_export_format(export_format),
         )
 
@@ -505,6 +528,7 @@ class ExportService:
             period_to_index=spec.period_to_index,
             filters=spec.filters,
             excluded_row_hashes=spec.excluded_row_hashes,
+            dedup_enabled=spec.dedup_enabled,
         )
 
     def _breakdown(self, spec: ExportSpec) -> list[dict[str, Any]]:
@@ -516,6 +540,7 @@ class ExportService:
             period_to_index=spec.period_to_index,
             filters=spec.filters,
             excluded_row_hashes=spec.excluded_row_hashes,
+            dedup_enabled=spec.dedup_enabled,
         )
 
     @staticmethod
@@ -639,6 +664,7 @@ class ExportService:
             default_order=bool(spec.sort_column),
             limit=rows_in_part,
             offset=base_offset,
+            dedup_enabled=spec.dedup_enabled,
         )
         written = int(result.row_count or rows_in_part)
         if row_callback:
@@ -661,6 +687,7 @@ class ExportService:
             sort_column=spec.sort_column,
             sort_direction=spec.sort_direction,
             default_order=bool(spec.sort_column),
+            dedup_enabled=spec.dedup_enabled,
         )
         if row_callback:
             row_callback(rows_in_part, target.name)

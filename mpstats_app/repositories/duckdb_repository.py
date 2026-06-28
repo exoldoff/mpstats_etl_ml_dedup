@@ -4257,7 +4257,7 @@ class DuckDbAppRepository:
             apply_migrations(con)
             con.execute(f"UPDATE cube_registry SET reports_built_at = now() WHERE {' AND '.join(where)}", params)
 
-    def export_options(self, *, table_name: str, project_name: str) -> dict[str, Any]:
+    def export_options(self, *, table_name: str, project_name: str, dedup_enabled: bool = False) -> dict[str, Any]:
         quote_identifier(table_name)
         if not self.table_exists(table_name):
             return {
@@ -4270,7 +4270,11 @@ class DuckDbAppRepository:
             }
 
         columns = self.table_columns(table_name)
-        visible_columns = self.export_visible_columns(table_name=table_name, project_name=project_name)
+        visible_columns = self.export_visible_columns(
+            table_name=table_name,
+            project_name=project_name,
+            dedup_enabled=dedup_enabled,
+        )
         missing = [column for column in EXPORT_METADATA_COLUMNS if column not in columns]
         warnings: list[str] = []
         if missing:
@@ -4310,10 +4314,20 @@ class DuckDbAppRepository:
             "warnings": warnings,
         }
 
-    def export_visible_columns(self, *, table_name: str, project_name: str | None = None) -> list[str]:
+    def export_visible_columns(
+        self,
+        *,
+        table_name: str,
+        project_name: str | None = None,
+        dedup_enabled: bool | None = None,
+    ) -> list[str]:
         columns = self.table_columns(table_name)
         visible = [column for column in columns if not column.startswith("__")]
-        if project_name and self._project_has_successful_dedup(project_name=project_name):
+        if (
+            dedup_enabled is None
+            and project_name
+            and self._project_has_successful_dedup(project_name=project_name)
+        ):
             visible.extend(column for column in DEDUP_EXPORT_COLUMNS if column not in visible)
         return visible
 
@@ -4374,9 +4388,20 @@ class DuckDbAppRepository:
         period_to_index: int | None = None,
         filters: list[dict[str, str]] | None = None,
         excluded_row_hashes: list[str] | None = None,
+        dedup_enabled: bool | None = None,
     ) -> list[dict[str, Any]]:
-        columns = self.table_columns(table_name)
+        columns = self._export_columns_with_dedup(
+            table_name=table_name,
+            project_name=project_name,
+            dedup_enabled=dedup_enabled,
+        )
         self._require_export_metadata(columns)
+        source_sql = self._export_source_sql(
+            table_name=table_name,
+            project_name=project_name,
+            columns=columns,
+            dedup_enabled=dedup_enabled,
+        )
         where_sql, params = self._export_where_sql(
             columns=columns,
             project_name=project_name,
@@ -4409,7 +4434,7 @@ class DuckDbAppRepository:
                 CAST({quote_duckdb_name('__marketplace_code')} AS VARCHAR) AS marketplace_code,
                 {marketplace_expr} AS marketplace,
                 COUNT(*) AS rows_count
-            FROM {quote_identifier(table_name)}
+            FROM ({source_sql}) AS export_source
             {where_sql}
             GROUP BY
                 {quote_duckdb_name('__year')},
@@ -4433,10 +4458,20 @@ class DuckDbAppRepository:
         period_to_index: int | None = None,
         filters: list[dict[str, str]] | None = None,
         excluded_row_hashes: list[str] | None = None,
+        dedup_enabled: bool | None = None,
     ) -> int:
-        columns = self._export_columns_with_dedup(table_name=table_name, project_name=project_name)
+        columns = self._export_columns_with_dedup(
+            table_name=table_name,
+            project_name=project_name,
+            dedup_enabled=dedup_enabled,
+        )
         self._require_export_metadata(columns)
-        source_sql = self._export_source_sql(table_name=table_name, project_name=project_name, columns=columns)
+        source_sql = self._export_source_sql(
+            table_name=table_name,
+            project_name=project_name,
+            columns=columns,
+            dedup_enabled=dedup_enabled,
+        )
         where_sql, params = self._export_where_sql(
             columns=columns,
             project_name=project_name,
@@ -4471,14 +4506,24 @@ class DuckDbAppRepository:
         offset: int = 0,
         include_row_hash: bool = False,
         default_order: bool = True,
+        dedup_enabled: bool | None = None,
     ) -> pd.DataFrame:
-        columns = self._export_columns_with_dedup(table_name=table_name, project_name=project_name)
+        columns = self._export_columns_with_dedup(
+            table_name=table_name,
+            project_name=project_name,
+            dedup_enabled=dedup_enabled,
+        )
         self._require_export_metadata(columns)
         selected_columns = self._safe_export_columns(columns, output_columns)
         if include_row_hash and "__row_hash" in columns and "__row_hash" not in selected_columns:
             selected_columns = [*selected_columns, "__row_hash"]
         select_sql = ", ".join(quote_duckdb_name(column) for column in selected_columns)
-        source_sql = self._export_source_sql(table_name=table_name, project_name=project_name, columns=columns)
+        source_sql = self._export_source_sql(
+            table_name=table_name,
+            project_name=project_name,
+            columns=columns,
+            dedup_enabled=dedup_enabled,
+        )
         where_sql, params = self._export_where_sql(
             columns=columns,
             project_name=project_name,
@@ -4522,12 +4567,22 @@ class DuckDbAppRepository:
         default_order: bool = False,
         limit: int | None = None,
         offset: int = 0,
+        dedup_enabled: bool | None = None,
     ) -> tuple[str, list[Any], list[str]]:
-        columns = self._export_columns_with_dedup(table_name=table_name, project_name=project_name)
+        columns = self._export_columns_with_dedup(
+            table_name=table_name,
+            project_name=project_name,
+            dedup_enabled=dedup_enabled,
+        )
         self._require_export_metadata(columns)
         selected_columns = self._safe_export_columns(columns, output_columns)
         select_sql = ", ".join(_raw_export_column_expr(column) for column in selected_columns)
-        source_sql = self._export_source_sql(table_name=table_name, project_name=project_name, columns=columns)
+        source_sql = self._export_source_sql(
+            table_name=table_name,
+            project_name=project_name,
+            columns=columns,
+            dedup_enabled=dedup_enabled,
+        )
         where_sql, params = self._export_where_sql(
             columns=columns,
             project_name=project_name,
@@ -4572,6 +4627,7 @@ class DuckDbAppRepository:
         default_order: bool = False,
         limit: int | None = None,
         offset: int = 0,
+        dedup_enabled: bool | None = None,
     ) -> ExportResult:
         query, params, _ = self._export_products_query_sql(
             table_name=table_name,
@@ -4587,6 +4643,7 @@ class DuckDbAppRepository:
             default_order=default_order,
             limit=limit,
             offset=offset,
+            dedup_enabled=dedup_enabled,
         )
         return self.export_flat_query(
             query,
@@ -4613,6 +4670,7 @@ class DuckDbAppRepository:
         sort_column: str | None = None,
         sort_direction: str = "asc",
         default_order: bool = False,
+        dedup_enabled: bool | None = None,
     ) -> Path:
         result = self.export_products_flat(
             table_name=table_name,
@@ -4628,6 +4686,7 @@ class DuckDbAppRepository:
             sort_column=sort_column,
             sort_direction=sort_direction,
             default_order=default_order,
+            dedup_enabled=dedup_enabled,
         )
         return result.output_path
 
@@ -4808,9 +4867,23 @@ class DuckDbAppRepository:
         )
         return bool(row and int(row.get("runs_count") or 0) > 0)
 
-    def _export_columns_with_dedup(self, *, table_name: str, project_name: str) -> list[str]:
+    def _export_dedup_mode(self, dedup_enabled: bool | None) -> str:
+        if dedup_enabled is None:
+            return "columns"
+        return "canonical_sku" if dedup_enabled else "off"
+
+    def _export_columns_with_dedup(
+        self,
+        *,
+        table_name: str,
+        project_name: str,
+        dedup_enabled: bool | None = None,
+    ) -> list[str]:
         columns = self.table_columns(table_name)
-        if self._project_has_successful_dedup(project_name=project_name):
+        if (
+            self._export_dedup_mode(dedup_enabled) == "columns"
+            and self._project_has_successful_dedup(project_name=project_name)
+        ):
             return [*columns, *(column for column in DEDUP_EXPORT_COLUMNS if column not in columns)]
         return columns
 
@@ -4826,10 +4899,44 @@ class DuckDbAppRepository:
             return "NULL"
         return "COALESCE(" + ", ".join(pieces) + ")"
 
-    def _export_source_sql(self, *, table_name: str, project_name: str, columns: list[str]) -> str:
+    def _export_base_select_sql(self, columns: list[str], *, replace_sku_with_canonical: bool) -> str:
+        parts: list[str] = []
+        for column in columns:
+            quoted = quote_duckdb_name(column)
+            if replace_sku_with_canonical and column == "SKU":
+                parts.append(f"COALESCE(d.canonical_sku, p.{quoted}) AS {quoted}")
+            else:
+                parts.append(f"p.{quoted} AS {quoted}")
+        return ",\n                ".join(parts)
+
+    def _export_source_sql(
+        self,
+        *,
+        table_name: str,
+        project_name: str,
+        columns: list[str],
+        dedup_enabled: bool | None = None,
+    ) -> str:
         quoted_table = quote_identifier(table_name)
-        if not any(column in DEDUP_EXPORT_COLUMNS for column in columns):
+        mode = self._export_dedup_mode(dedup_enabled)
+        if mode == "off" or not self._project_has_successful_dedup(project_name=project_name):
             return f"SELECT * FROM {quoted_table}"
+
+        include_dedup_columns = mode == "columns"
+        replace_sku = mode == "canonical_sku" and "SKU" in self.table_columns(table_name)
+        if mode == "canonical_sku" and not replace_sku:
+            return f"SELECT * FROM {quoted_table}"
+
+        table_columns = self.table_columns(table_name)
+        base_select = self._export_base_select_sql(table_columns, replace_sku_with_canonical=replace_sku)
+        dedup_select = ""
+        if include_dedup_columns:
+            dedup_select = f""",
+                d.ml_family_id AS {quote_duckdb_name('ML-группа товара')},
+                d.ml_pack_id AS {quote_duckdb_name('ML-группа фасовки')},
+                d.canonical_sku AS {quote_duckdb_name('ML-канонический SKU')},
+                d.ml_dedup_status AS {quote_duckdb_name('ML-dedup статус')},
+                d.run_id AS {quote_duckdb_name('ML-dedup run')}"""
 
         article_expr = self._dedup_article_expr(self.table_columns(table_name), table_alias="p")
         return f"""
@@ -4868,12 +4975,7 @@ class DuckDbAppRepository:
                   ON g.run_id = n.run_id AND g.node_id = n.node_id
             )
             SELECT
-                p.*,
-                d.ml_family_id AS {quote_duckdb_name('ML-группа товара')},
-                d.ml_pack_id AS {quote_duckdb_name('ML-группа фасовки')},
-                d.canonical_sku AS {quote_duckdb_name('ML-канонический SKU')},
-                d.ml_dedup_status AS {quote_duckdb_name('ML-dedup статус')},
-                d.run_id AS {quote_duckdb_name('ML-dedup run')}
+                {base_select}{dedup_select}
             FROM {quoted_table} AS p
             LEFT JOIN dedup_map AS d
               ON d.project_name = p.{quote_duckdb_name('__project_name')}

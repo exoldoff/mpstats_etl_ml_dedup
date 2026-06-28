@@ -638,6 +638,7 @@ export function App() {
   const [exportPeriodTo, setExportPeriodTo] = useState("");
   const [exportOutputDir, setExportOutputDir] = useState("");
   const [exportSplitByCategory, setExportSplitByCategory] = useState(false);
+  const [exportDedupEnabled, setExportDedupEnabled] = useState(false);
   const [exportFormat, setExportFormat] = useState<ExportFormat>("xlsx");
   const [exportExcludedRows, setExportExcludedRows] = useState<Set<string>>(new Set());
   const [exportSortColumn, setExportSortColumn] = useState<string | null>(null);
@@ -1114,6 +1115,7 @@ export function App() {
       sort_column: exportSortColumn,
       sort_direction: exportSortDirection,
       split_by_category: exportSplitByCategory,
+      dedup_enabled: exportDedupEnabled,
       export_format: exportFormat,
       output_dir: exportOutputDir || null,
       confirm_large_export: exportConfirmLarge,
@@ -1162,6 +1164,7 @@ export function App() {
       sort_column: exportSortColumn,
       sort_direction: exportSortDirection,
       split_by_category: exportSplitByCategory,
+      dedup_enabled: exportDedupEnabled,
       export_format: exportFormat,
       output_dir: exportOutputDir || null
     };
@@ -1179,6 +1182,7 @@ export function App() {
       sort_column: template.sort_column ?? null,
       sort_direction: template.sort_direction,
       split_by_category: template.split_by_category,
+      dedup_enabled: Boolean(template.dedup_enabled),
       export_format: template.export_format ?? "xlsx",
       output_dir: template.output_dir ?? null,
       confirm_large_export: false,
@@ -1198,6 +1202,7 @@ export function App() {
     setExportPeriodTo(template.period_to ?? "");
     setExportOutputDir(template.output_dir ?? "");
     setExportSplitByCategory(Boolean(template.split_by_category));
+    setExportDedupEnabled(Boolean(template.dedup_enabled));
     setExportFormat(template.export_format ?? "xlsx");
     setExportFilters(template.filters.map((filter, index) => ({ ...filter, id: `template-filter-${template.id}-${index}` })));
     setExportSortColumn(template.sort_column ?? null);
@@ -1599,6 +1604,14 @@ export function App() {
 
   function changeExportFormat(value: ExportFormat) {
     setExportFormat(value);
+    setExportPreview(null);
+    setExportArtifacts([]);
+    setExportProgress(null);
+    setExportConfirmLarge(false);
+  }
+
+  function changeExportDedupEnabled(value: boolean) {
+    setExportDedupEnabled(value);
     setExportPreview(null);
     setExportArtifacts([]);
     setExportProgress(null);
@@ -2500,6 +2513,7 @@ export function App() {
               periodTo={exportPeriodTo}
               outputDir={exportOutputDir}
               splitByCategory={exportSplitByCategory}
+              dedupEnabled={exportDedupEnabled}
               exportFormat={exportFormat}
               excludedCount={exportExcludedRows.size}
               sortColumn={exportSortColumn}
@@ -2534,6 +2548,7 @@ export function App() {
               onPeriodToChange={setExportPeriodTo}
               onOutputDirChange={setExportOutputDir}
               onSplitByCategoryChange={setExportSplitByCategory}
+              onDedupEnabledChange={changeExportDedupEnabled}
               onExportFormatChange={changeExportFormat}
               onConfirmLargeChange={setExportConfirmLarge}
               onDedupCategoryChange={setDedupProductCategoryKey}
@@ -3507,6 +3522,7 @@ function ExportWorkspace(props: {
   periodTo: string;
   outputDir: string;
   splitByCategory: boolean;
+  dedupEnabled: boolean;
   exportFormat: ExportFormat;
   excludedCount: number;
   sortColumn: string | null;
@@ -3537,6 +3553,7 @@ function ExportWorkspace(props: {
   onPeriodToChange: (value: string) => void;
   onOutputDirChange: (value: string) => void;
   onSplitByCategoryChange: (value: boolean) => void;
+  onDedupEnabledChange: (value: boolean) => void;
   onExportFormatChange: (value: ExportFormat) => void;
   onConfirmLargeChange: (value: boolean) => void;
   onDedupCategoryChange: (categoryKey: string) => void;
@@ -3579,7 +3596,7 @@ function ExportWorkspace(props: {
               <div className="template-row" key={template.id}>
                 <span>
                   <strong>{template.name}</strong>
-                  <small>{(template.export_format ?? "xlsx").toUpperCase()} · {template.category_keys.length} категорий · {template.selected_columns.length} колонок · {template.period_from || "с начала"} - {template.period_to || "по последний"}</small>
+                  <small>{(template.export_format ?? "xlsx").toUpperCase()} · dedup {template.dedup_enabled ? "on" : "off"} · {template.category_keys.length} категорий · {template.selected_columns.length} колонок · {template.period_from || "с начала"} - {template.period_to || "по последний"}</small>
                 </span>
                 <div className="table-actions">
                   <button className="tiny-button" disabled={props.busy} onClick={() => props.onApplyTemplate(template)}>Применить</button>
@@ -3631,6 +3648,12 @@ function ExportWorkspace(props: {
           </label>
           <div className="export-mode-row">
             <Toggle label="Разными файлами по категориям" checked={props.splitByCategory} onChange={props.onSplitByCategoryChange} />
+            <Toggle
+              label={props.dedupEnabled ? "Дедупликация ON" : "Дедупликация OFF"}
+              hint="ON заменяет значения в колонке SKU на ML-канонические названия для найденных дублей. OFF выгружает исходный SKU из куба."
+              checked={props.dedupEnabled}
+              onChange={props.onDedupEnabledChange}
+            />
             <div className="format-switch" aria-label="Формат выгрузки">
               <button className={props.exportFormat === "xlsx" ? "active" : ""} type="button" onClick={() => props.onExportFormatChange("xlsx")}>XLSX</button>
               <button className={props.exportFormat === "csv" ? "active" : ""} type="button" onClick={() => props.onExportFormatChange("csv")}>CSV</button>

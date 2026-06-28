@@ -508,6 +508,43 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     assert after_count == before_count
 
 
+def test_flat_export_dedup_toggle_replaces_sku_with_canonical_without_changing_rows(tmp_path: Path) -> None:
+    service, repository, _, settings = make_service(tmp_path)
+    seed_dedup_cube(repository, settings, tmp_path, rows_count=3)
+    run = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    assert run["status"] == "success"
+
+    base_export = repository.fetch_export_products_dataframe(
+        table_name=settings.products_table,
+        project_name="unit",
+        output_columns=["SKU"],
+        category_keys=["sauce"],
+        limit=10,
+        dedup_enabled=False,
+    )
+    dedup_export = repository.fetch_export_products_dataframe(
+        table_name=settings.products_table,
+        project_name="unit",
+        output_columns=["SKU"],
+        category_keys=["sauce"],
+        limit=10,
+        dedup_enabled=True,
+    )
+
+    assert len(base_export) == len(dedup_export) == 3
+    assert set(base_export["SKU"].tolist()) == {
+        "Томатный соус 1 500 г",
+        "Томатный соус 2 500 г",
+        "Томатный соус 3 500 г",
+    }
+    assert set(dedup_export["SKU"].tolist()) == {"Томатный соус 3 500 г"}
+    assert "ML-группа товара" not in repository.export_visible_columns(
+        table_name=settings.products_table,
+        project_name="unit",
+        dedup_enabled=True,
+    )
+
+
 def test_dedup_browser_uses_single_canonical_for_multi_source_pack_group(tmp_path: Path) -> None:
     service, repository, _, settings = make_service(tmp_path)
     seed_dedup_cube(

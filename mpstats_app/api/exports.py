@@ -21,9 +21,10 @@ def _handle(call):
 @router.get("/options")
 def export_options(
     project_name: str = "mpstats",
+    dedup_enabled: bool = False,
     export_service: ExportService = Depends(get_export_service),
 ) -> dict[str, object]:
-    return _handle(lambda: export_service.options(project_name=project_name))
+    return _handle(lambda: export_service.options(project_name=project_name, dedup_enabled=dedup_enabled))
 
 
 @router.get("/templates")
@@ -51,6 +52,7 @@ def save_export_template(
             sort_column=payload.sort_column,
             sort_direction=payload.sort_direction,
             split_by_category=payload.split_by_category,
+            dedup_enabled=payload.dedup_enabled,
             export_format=payload.export_format,
             output_dir=payload.output_dir,
         )
@@ -83,6 +85,7 @@ def export_preview(
             sort_column=payload.sort_column,
             sort_direction=payload.sort_direction,
             split_by_category=payload.split_by_category,
+            dedup_enabled=payload.dedup_enabled,
             export_format=payload.export_format,
             limit=payload.limit,
             offset=payload.offset,
@@ -107,6 +110,7 @@ def export_build(
             sort_column=payload.sort_column,
             sort_direction=payload.sort_direction,
             split_by_category=payload.split_by_category,
+            dedup_enabled=payload.dedup_enabled,
             output_dir=payload.output_dir,
             confirm_large_export=payload.confirm_large_export,
             export_format=payload.export_format,
@@ -131,6 +135,7 @@ def export_build_job(
             sort_column=payload.sort_column,
             sort_direction=payload.sort_direction,
             split_by_category=payload.split_by_category,
+            dedup_enabled=payload.dedup_enabled,
             output_dir=payload.output_dir,
             confirm_large_export=payload.confirm_large_export,
             export_format=payload.export_format,

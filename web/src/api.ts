@@ -396,6 +396,7 @@ export type ExportColumnFilter = {
 
 export type ExportOptions = {
   project_name: string;
+  dedup_enabled?: boolean;
   default_output_dir: string;
   columns: string[];
   selected_columns: string[];
@@ -411,6 +412,7 @@ export type ExportPreview = {
   rows: Record<string, unknown>[];
   total: number;
   estimated_files: number;
+  dedup_enabled?: boolean;
   export_format?: ExportFormat;
   breakdown: ExportBreakdownItem[];
   warnings: string[];
@@ -447,6 +449,7 @@ export type ExportBuildResponse = {
   estimated_files: number;
   output_dir: string;
   split_by_category: boolean;
+  dedup_enabled?: boolean;
   export_format?: ExportFormat;
   breakdown: ExportBreakdownItem[];
   warnings: string[];
@@ -476,6 +479,7 @@ export type ExportPayload = {
   sort_column?: string | null;
   sort_direction: "asc" | "desc" | string;
   split_by_category: boolean;
+  dedup_enabled: boolean;
   export_format?: ExportFormat;
   limit?: number;
   offset?: number;
@@ -495,6 +499,7 @@ export type ExportTemplate = {
   sort_column?: string | null;
   sort_direction: "asc" | "desc" | string;
   split_by_category: boolean;
+  dedup_enabled?: boolean;
   export_format?: ExportFormat;
   output_dir?: string | null;
   created_at?: string | null;
