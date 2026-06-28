@@ -533,6 +533,20 @@ class DedupService:
         payload["level"] = _product_level(level)
         return payload
 
+    def split_product_from_family(self, *, run_id: str, node_id: str, note: str | None = None) -> dict[str, Any]:
+        override = self.repository.upsert_dedup_manual_split_override(
+            run_id=run_id,
+            node_id=node_id,
+            note=note,
+        )
+        materialized_rows = self.repository.apply_dedup_manual_overrides(run_id=run_id)
+        return {
+            "run_id": run_id,
+            "node_id": node_id,
+            "override": override,
+            "materialized_rows": materialized_rows,
+        }
+
     def export_products(self, *, project_name: str, category_key: str | None = None, level: str = "expanded") -> Path:
         clean_level = "canonical" if str(level or "").strip().casefold() == "canonical" else "expanded"
         project_dir = self.settings.project_root / "data" / "projects" / _safe_segment(project_name) / "exports"
@@ -600,6 +614,12 @@ class DedupService:
                 message=f"Собрано SKU-node: {len(nodes):,}".replace(",", " "),
                 node_count=len(nodes),
             )
+            node_ids = [str(item) for item in nodes["node_id"].tolist()]
+            manual_overrides = self.repository.fetch_dedup_manual_overrides(
+                project_name=str(run["project_name"]),
+                category_key=str(run["category_key"]),
+                node_ids=node_ids,
+            )
             if len(nodes) < 2:
                 cache_metadata = self._retrieval_cache.skipped("not_enough_nodes").to_manifest()
                 self._update_progress(
@@ -612,7 +632,7 @@ class DedupService:
                     candidate_count=0,
                 )
                 self._load_cross_encoder(profile)
-                groups = self._build_groups(nodes, edges=pd.DataFrame())
+                groups = self._build_groups(nodes, edges=pd.DataFrame(), manual_overrides=manual_overrides)
                 self._update_progress(
                     run_id,
                     run,
@@ -673,11 +693,11 @@ class DedupService:
                 activation=profile.activation.strip(),
                 threshold_strategy=profile.threshold_strategy,
                 threshold_same=profile.threshold_same,
-                node_ids=[str(item) for item in nodes["node_id"].tolist()],
+                node_ids=node_ids,
             )
             previous_assignments = {str(row["node_id"]): row for row in previous_assignment_rows}
             known_node_ids = set(previous_assignments)
-            new_node_ids = sorted(set(str(item) for item in nodes["node_id"].tolist()) - known_node_ids)
+            new_node_ids = sorted(set(node_ids) - known_node_ids)
 
             if not new_node_ids:
                 cache_metadata = {
@@ -819,7 +839,12 @@ class DedupService:
                 candidate_count=len(candidates),
                 edge_count=len(edges),
             )
-            groups = self._build_groups(nodes, edges, previous_assignments=previous_assignments)
+            groups = self._build_groups(
+                nodes,
+                edges,
+                previous_assignments=previous_assignments,
+                manual_overrides=manual_overrides,
+            )
             self._update_progress(
                 run_id,
                 run,
@@ -1389,12 +1414,21 @@ class DedupService:
         edges: pd.DataFrame,
         *,
         previous_assignments: dict[str, dict[str, Any]] | None = None,
+        manual_overrides: list[dict[str, Any]] | None = None,
     ) -> pd.DataFrame:
         previous_assignments = previous_assignments or {}
+        manual_by_node = {
+            str(row.get("node_id")): row
+            for row in (manual_overrides or [])
+            if str(row.get("action") or "") == "split_singleton" and str(row.get("node_id") or "").strip()
+        }
+        manual_singleton_nodes = set(manual_by_node)
         node_ids = [str(item) for item in nodes["node_id"].tolist()]
         uf = _UnionFind(node_ids)
         previous_family_members: dict[str, list[str]] = {}
         for node_id in node_ids:
+            if node_id in manual_singleton_nodes:
+                continue
             previous = previous_assignments.get(node_id)
             family_id = _clean_text(previous.get("ml_family_id")) if previous else ""
             if family_id:
@@ -1404,7 +1438,11 @@ class DedupService:
                 uf.union(members[0], member)
         if not edges.empty:
             for row in edges[edges["predicted_binary"].astype(bool)].itertuples(index=False):
-                uf.union(str(row.node_id_a), str(row.node_id_b))
+                left = str(row.node_id_a)
+                right = str(row.node_id_b)
+                if left in manual_singleton_nodes or right in manual_singleton_nodes:
+                    continue
+                uf.union(left, right)
         roots = {node_id: uf.find(node_id) for node_id in node_ids}
         root_members: dict[str, list[str]] = {}
         for node_id, root in roots.items():
@@ -1415,14 +1453,26 @@ class DedupService:
             for row in previous_assignments.values()
             if _clean_text(row.get("ml_family_id"))
         }
+        existing_family_ids.update(
+            _clean_text(row.get("target_family_id"))
+            for row in manual_by_node.values()
+            if _clean_text(row.get("target_family_id"))
+        )
         root_to_family: dict[str, str] = {}
         for root in sorted(root_members):
+            manual_ids = [
+                _clean_text(manual_by_node[node_id].get("target_family_id"))
+                for node_id in root_members[root]
+                if node_id in manual_by_node and _clean_text(manual_by_node[node_id].get("target_family_id"))
+            ]
             previous_ids = [
                 _clean_text(previous_assignments[node_id].get("ml_family_id"))
                 for node_id in root_members[root]
                 if node_id in previous_assignments and _clean_text(previous_assignments[node_id].get("ml_family_id"))
             ]
-            if previous_ids:
+            if len(root_members[root]) == 1 and manual_ids:
+                root_to_family[root] = manual_ids[0]
+            elif previous_ids:
                 root_to_family[root] = sorted(set(previous_ids), key=lambda item: (-previous_ids.count(item), item))[0]
             else:
                 root_to_family[root] = _next_sequence_id("mlfam", existing_family_ids)
@@ -1437,6 +1487,11 @@ class DedupService:
             for row in previous_assignments.values()
             if _clean_text(row.get("ml_pack_id"))
         }
+        existing_pack_ids.update(
+            _clean_text(row.get("target_pack_id"))
+            for row in manual_by_node.values()
+            if _clean_text(row.get("target_pack_id"))
+        )
         pack_ids: dict[tuple[str, str], str] = {}
         pack_members: dict[tuple[str, str], list[str]] = {}
         pack_signatures = {node_id: _pack_signature(node_map.loc[node_id]) for node_id in node_ids}
@@ -1445,12 +1500,19 @@ class DedupService:
             pack_key = (family_id, pack_signatures[node_id])
             pack_members.setdefault(pack_key, []).append(node_id)
         for pack_key, members in sorted(pack_members.items()):
+            manual_pack_ids = [
+                _clean_text(manual_by_node[node_id].get("target_pack_id"))
+                for node_id in members
+                if node_id in manual_by_node and _clean_text(manual_by_node[node_id].get("target_pack_id"))
+            ]
             previous_ids = [
                 _clean_text(previous_assignments[node_id].get("ml_pack_id"))
                 for node_id in members
                 if node_id in previous_assignments and _clean_text(previous_assignments[node_id].get("ml_pack_id"))
             ]
-            if previous_ids:
+            if len(members) == 1 and manual_pack_ids:
+                pack_ids[pack_key] = manual_pack_ids[0]
+            elif previous_ids:
                 pack_ids[pack_key] = sorted(set(previous_ids), key=lambda item: (-previous_ids.count(item), item))[0]
             else:
                 pack_ids[pack_key] = _next_sequence_id("mlpack", existing_pack_ids)
@@ -1461,6 +1523,7 @@ class DedupService:
             pack_key = (family_id, pack_signatures[node_id])
             members = family_members[family_id]
             pack_group_members = pack_members[pack_key]
+            manual_singleton = node_id in manual_singleton_nodes
             canonical_node = max(
                 pack_group_members,
                 key=lambda item: (
@@ -1477,9 +1540,11 @@ class DedupService:
                     "ml_pack_id": pack_ids[pack_key],
                     "canonical_node_id": canonical_node,
                     "canonical_sku": str(node_map.loc[canonical_node].get("sku") or ""),
-                    "ml_dedup_status": "auto_grouped" if len(members) > 1 else "singleton",
-                    "confidence_score": self._node_confidence(node_id, edges, previous_assignments=previous_assignments),
-                    "component_size": len(members),
+                    "ml_dedup_status": "manual_singleton" if manual_singleton else "auto_grouped" if len(members) > 1 else "singleton",
+                    "confidence_score": None
+                    if manual_singleton
+                    else self._node_confidence(node_id, edges, previous_assignments=previous_assignments),
+                    "component_size": 1 if manual_singleton else len(members),
                 }
             )
         return pd.DataFrame(rows)

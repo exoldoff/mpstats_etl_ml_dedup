@@ -202,6 +202,12 @@ class DedupRunPayload(ProjectPayload):
     wait: bool = False
 
 
+class DedupProductSplitPayload(BaseModel):
+    run_id: str
+    node_id: str
+    note: str | None = None
+
+
 class MonthlySyncPayload(ProjectPayload):
     settings: PipelineSettingsPayload | None = None
     start_immediately: bool = True

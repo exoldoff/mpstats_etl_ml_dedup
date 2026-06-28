@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from mpstats_app.api.dependencies import get_dedup_service
-from mpstats_app.schemas import DedupRunPayload, DedupSettingsPayload
+from mpstats_app.schemas import DedupProductSplitPayload, DedupRunPayload, DedupSettingsPayload
 from pipeline.services.dedup import DedupService
 
 
@@ -77,6 +77,14 @@ def export_products(
 ) -> FileResponse:
     target = _handle(lambda: service.export_products(project_name=project_name, category_key=category_key, level=level))
     return FileResponse(target, filename=target.name)
+
+
+@router.post("/products/split")
+def split_product_from_family(
+    payload: DedupProductSplitPayload,
+    service: DedupService = Depends(get_dedup_service),
+) -> dict[str, object]:
+    return _handle(lambda: service.split_product_from_family(run_id=payload.run_id, node_id=payload.node_id, note=payload.note))
 
 
 @router.post("/runs")

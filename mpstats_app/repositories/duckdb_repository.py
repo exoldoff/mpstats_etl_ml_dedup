@@ -916,6 +916,11 @@ def _dedup_category_group(category_name: object) -> tuple[str, str] | None:
     return DEDUP_ELIGIBLE_CATEGORY_GROUPS.get(clean)
 
 
+def _dedup_manual_id(prefix: str, node_id: object) -> str:
+    suffix = re.sub(r"[^0-9A-Za-z_]+", "_", str(node_id or "").strip())[-32:].strip("_")
+    return f"{prefix}_{suffix or uuid4().hex[:12]}"
+
+
 def _dedup_group_category_key(group_key: str) -> str:
     return f"dedupcat_{group_key}"
 
@@ -2039,6 +2044,272 @@ class DuckDbAppRepository:
                 temp_directory=self._duckdb_temp_directory(),
             )
         raise ValueError("artifact должен быть groups или edges.")
+
+    def fetch_dedup_manual_overrides(
+        self,
+        *,
+        project_name: str,
+        category_key: str,
+        node_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        clean_node_ids = sorted({str(node_id).strip() for node_id in (node_ids or []) if str(node_id).strip()})
+        where = ["project_name = ?", "category_key = ?"]
+        params: list[Any] = [project_name, category_key]
+        if clean_node_ids:
+            placeholders = ", ".join("?" for _ in clean_node_ids)
+            where.append(f"node_id IN ({placeholders})")
+            params.extend(clean_node_ids)
+        return self._fetch_records(
+            f"""
+            SELECT
+                project_name,
+                category_key,
+                node_id,
+                action,
+                target_family_id,
+                target_pack_id,
+                source_run_id,
+                note,
+                created_at,
+                updated_at
+            FROM dedup_manual_overrides
+            WHERE {" AND ".join(where)}
+            ORDER BY updated_at DESC, node_id
+            """,
+            params,
+            read_only=True,
+            temp_directory=self._duckdb_temp_directory(),
+        )
+
+    def upsert_dedup_manual_split_override(self, *, run_id: str, node_id: str, note: str | None = None) -> dict[str, Any]:
+        clean_run_id = str(run_id or "").strip()
+        clean_node_id = str(node_id or "").strip()
+        if not clean_run_id or not clean_node_id:
+            raise ValueError("Нужны run_id и node_id для ручной правки ML-дедупа.")
+        with self._lock, connect(self.settings.db_path, temp_directory=self._duckdb_temp_directory()) as con:
+            apply_migrations(con)
+            row = con.execute(
+                """
+                SELECT
+                    r.project_name,
+                    r.category_key,
+                    r.category_name,
+                    r.status,
+                    g.ml_family_id,
+                    g.ml_pack_id,
+                    g.component_size,
+                    n.sku
+                FROM dedup_runs AS r
+                JOIN dedup_sku_groups AS g
+                  ON g.run_id = r.run_id
+                JOIN dedup_sku_nodes AS n
+                  ON n.run_id = g.run_id AND n.node_id = g.node_id
+                WHERE r.run_id = ? AND g.node_id = ?
+                """,
+                [clean_run_id, clean_node_id],
+            ).fetchone()
+            if not row:
+                raise ValueError("SKU-node не найден в выбранном dedup run.")
+            if str(row[3]) != "success":
+                raise ValueError("Ручные правки доступны только для успешного dedup run.")
+            project_name = str(row[0])
+            category_key = str(row[1])
+            target_family_id = _dedup_manual_id("mlfam_manual", clean_node_id)
+            target_pack_id = _dedup_manual_id("mlpack_manual", clean_node_id)
+            con.execute(
+                """
+                INSERT INTO dedup_manual_overrides (
+                    project_name,
+                    category_key,
+                    node_id,
+                    action,
+                    target_family_id,
+                    target_pack_id,
+                    source_run_id,
+                    note,
+                    updated_at
+                )
+                VALUES (?, ?, ?, 'split_singleton', ?, ?, ?, ?, now())
+                ON CONFLICT (project_name, category_key, node_id) DO UPDATE SET
+                    action = EXCLUDED.action,
+                    target_family_id = EXCLUDED.target_family_id,
+                    target_pack_id = EXCLUDED.target_pack_id,
+                    source_run_id = EXCLUDED.source_run_id,
+                    note = EXCLUDED.note,
+                    updated_at = now()
+                """,
+                [project_name, category_key, clean_node_id, target_family_id, target_pack_id, clean_run_id, note],
+            )
+            updated = con.execute(
+                """
+                SELECT
+                    project_name,
+                    category_key,
+                    node_id,
+                    action,
+                    target_family_id,
+                    target_pack_id,
+                    source_run_id,
+                    note,
+                    created_at,
+                    updated_at
+                FROM dedup_manual_overrides
+                WHERE project_name = ? AND category_key = ? AND node_id = ?
+                """,
+                [project_name, category_key, clean_node_id],
+            ).fetchone()
+            columns = [
+                "project_name",
+                "category_key",
+                "node_id",
+                "action",
+                "target_family_id",
+                "target_pack_id",
+                "source_run_id",
+                "note",
+                "created_at",
+                "updated_at",
+            ]
+        return clean_record(dict(zip(columns, updated))) if updated else {}
+
+    def apply_dedup_manual_overrides(self, *, run_id: str) -> int:
+        clean_run_id = str(run_id or "").strip()
+        if not clean_run_id:
+            raise ValueError("Нужен run_id для применения ручных правок ML-дедупа.")
+        with self._lock, connect(self.settings.db_path, temp_directory=self._duckdb_temp_directory()) as con:
+            apply_migrations(con)
+            run = con.execute(
+                """
+                SELECT
+                    run_id,
+                    project_name,
+                    category_key,
+                    model_method,
+                    COALESCE(model_path, '') AS model_path,
+                    COALESCE(hf_model_id, '') AS hf_model_id,
+                    COALESCE(embedding_model_name, '') AS embedding_model_name,
+                    faiss_top_k,
+                    COALESCE(activation, '') AS activation,
+                    threshold_strategy,
+                    threshold_same
+                FROM dedup_runs
+                WHERE run_id = ? AND status = 'success'
+                """,
+                [clean_run_id],
+            ).fetchone()
+            if not run:
+                raise ValueError("Успешный dedup run не найден.")
+            with duckdb_transaction(con):
+                con.execute(
+                    """
+                    UPDATE dedup_sku_groups AS g
+                    SET
+                        ml_family_id = o.target_family_id,
+                        ml_pack_id = o.target_pack_id,
+                        canonical_node_id = g.node_id,
+                        canonical_sku = n.sku,
+                        ml_dedup_status = 'manual_singleton',
+                        confidence_score = NULL,
+                        component_size = 1
+                    FROM dedup_manual_overrides AS o
+                    JOIN dedup_sku_nodes AS n
+                      ON n.project_name = o.project_name
+                     AND n.node_id = o.node_id
+                    WHERE g.run_id = ?
+                      AND n.run_id = g.run_id
+                      AND g.node_id = o.node_id
+                      AND o.action = 'split_singleton'
+                      AND o.project_name = ?
+                      AND o.category_key = ?
+                    """,
+                    [clean_run_id, run[1], run[2]],
+                )
+                con.execute(
+                    """
+                    UPDATE dedup_sku_groups AS g
+                    SET
+                        canonical_node_id = r.canonical_node_id,
+                        canonical_sku = r.canonical_sku,
+                        component_size = r.family_size,
+                        ml_dedup_status = CASE
+                            WHEN g.ml_dedup_status = 'manual_singleton' THEN 'manual_singleton'
+                            WHEN r.family_size > 1 THEN 'auto_grouped'
+                            ELSE 'singleton'
+                        END
+                    FROM (
+                        SELECT
+                            run_id,
+                            node_id,
+                            FIRST_VALUE(node_id) OVER (
+                                PARTITION BY run_id, ml_family_id, ml_pack_id
+                                ORDER BY sales_volume DESC NULLS LAST, revenue DESC NULLS LAST, sku DESC NULLS LAST
+                            ) AS canonical_node_id,
+                            FIRST_VALUE(sku) OVER (
+                                PARTITION BY run_id, ml_family_id, ml_pack_id
+                                ORDER BY sales_volume DESC NULLS LAST, revenue DESC NULLS LAST, sku DESC NULLS LAST
+                            ) AS canonical_sku,
+                            COUNT(*) OVER (PARTITION BY run_id, ml_family_id) AS family_size
+                        FROM (
+                            SELECT
+                                g.run_id,
+                                g.node_id,
+                                g.ml_family_id,
+                                g.ml_pack_id,
+                                n.sales_volume,
+                                n.revenue,
+                                n.sku
+                            FROM dedup_sku_groups AS g
+                            JOIN dedup_sku_nodes AS n
+                              ON n.run_id = g.run_id AND n.node_id = g.node_id
+                            WHERE g.run_id = ?
+                        ) AS grouped
+                    ) AS r
+                    WHERE g.run_id = r.run_id AND g.node_id = r.node_id
+                    """,
+                    [clean_run_id],
+                )
+                con.execute(
+                    """
+                    UPDATE dedup_identity_assignments AS a
+                    SET
+                        ml_family_id = g.ml_family_id,
+                        ml_pack_id = g.ml_pack_id,
+                        canonical_node_id = g.canonical_node_id,
+                        canonical_sku = g.canonical_sku,
+                        ml_dedup_status = g.ml_dedup_status,
+                        confidence_score = g.confidence_score,
+                        component_size = g.component_size,
+                        source_run_id = g.run_id,
+                        updated_at = now()
+                    FROM dedup_sku_groups AS g
+                    WHERE g.run_id = ?
+                      AND a.project_name = ?
+                      AND a.category_key = ?
+                      AND a.node_id = g.node_id
+                      AND a.model_method = ?
+                      AND COALESCE(a.model_path, '') = ?
+                      AND COALESCE(a.hf_model_id, '') = ?
+                      AND COALESCE(a.embedding_model_name, '') = ?
+                      AND a.faiss_top_k = ?
+                      AND COALESCE(a.activation, '') = ?
+                      AND a.threshold_strategy = ?
+                      AND a.threshold_same = ?
+                    """,
+                    [
+                        clean_run_id,
+                        run[1],
+                        run[2],
+                        run[3],
+                        run[4],
+                        run[5],
+                        run[6],
+                        int(run[7]),
+                        run[8],
+                        run[9],
+                        float(run[10]),
+                    ],
+                )
+        return self.refresh_dedup_products_table(run_id=clean_run_id)
 
     def refresh_dedup_products_table(self, *, run_id: str) -> int:
         run = self.get_dedup_run(run_id)

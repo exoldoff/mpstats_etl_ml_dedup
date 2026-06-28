@@ -216,6 +216,24 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         product_rows = products_response.json()["rows"]
         assert [row["row_level"] for row in product_rows].count("canonical") == 1
         assert [row["row_level"] for row in product_rows].count("member") == 2
+        member_row = next(row for row in product_rows if row["row_level"] == "member")
+
+        split_response = client.post(
+            "/api/dedup/products/split",
+            json={"run_id": run["run_id"], "node_id": member_row["node_id"], "note": "api test split"},
+        )
+        assert split_response.status_code == 200
+        assert split_response.json()["materialized_rows"] == 4
+        split_products_response = client.get(
+            "/api/dedup/products",
+            params={"project_name": "unit", "category_key": "dedupcat_sauces", "level": "expanded"},
+        )
+        assert split_products_response.status_code == 200
+        split_product_rows = split_products_response.json()["rows"]
+        assert [row["row_level"] for row in split_product_rows].count("canonical") == 2
+        assert next(row for row in split_product_rows if row["node_id"] == member_row["node_id"] and row["row_level"] == "member")[
+            "ml_dedup_status"
+        ] == "manual_singleton"
 
         products_export = client.get(
             "/api/dedup/products/export",
@@ -236,4 +254,11 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
                     """
                 ).fetchall()
             }
-        assert {"dedup_runs", "dedup_sku_nodes", "dedup_sku_edges", "dedup_sku_groups", "mpstats_products_dedup"}.issubset(tables)
+        assert {
+            "dedup_runs",
+            "dedup_sku_nodes",
+            "dedup_sku_edges",
+            "dedup_sku_groups",
+            "dedup_manual_overrides",
+            "mpstats_products_dedup",
+        }.issubset(tables)

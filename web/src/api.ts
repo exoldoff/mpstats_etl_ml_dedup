@@ -692,6 +692,11 @@ export const api = {
   },
   startDedupRuns: (payload: { project_name: string; category_keys: string[]; wait?: boolean }) =>
     request<{ runs: DedupRun[] }>("/api/dedup/runs", { method: "POST", body: JSON.stringify(payload) }),
+  splitDedupProduct: (payload: { run_id: string; node_id: string; note?: string }) =>
+    request<{ run_id: string; node_id: string; override: Record<string, unknown>; materialized_rows: number }>(
+      "/api/dedup/products/split",
+      { method: "POST", body: JSON.stringify(payload) }
+    ),
   getDedupRun: (runId: string) => request<DedupRun>(`/api/dedup/runs/${encodeURIComponent(runId)}`),
   exportDedupArtifact: (runId: string, artifact: "groups" | "edges") =>
     request<{ run_id: string; artifact: string; rows: Record<string, unknown>[] }>(

@@ -508,6 +508,51 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     assert after_count == before_count
 
 
+def test_manual_split_override_removes_sku_from_family_and_persists(tmp_path: Path) -> None:
+    service, repository, _, settings = make_service(tmp_path)
+    seed_dedup_cube(repository, settings, tmp_path, rows_count=3)
+
+    first_run = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    browser = repository.fetch_dedup_products(project_name="unit", category_key="dedupcat_sauces", level="expanded", limit=20)
+    member = next(row for row in browser["rows"] if row["row_level"] == "member")
+    node_id = str(member["node_id"])
+
+    result = service.split_product_from_family(run_id=first_run["run_id"], node_id=node_id, note="test split")
+
+    assert result["materialized_rows"] == 5
+    overrides = repository.fetch_dedup_manual_overrides(
+        project_name="unit",
+        category_key="dedupcat_sauces",
+        node_ids=[node_id],
+    )
+    assert len(overrides) == 1
+    assert overrides[0]["action"] == "split_singleton"
+
+    groups = repository.fetch_dedup_artifact(run_id=first_run["run_id"], artifact="groups")
+    groups_by_node = {str(row["node_id"]): row for row in groups}
+    split_group = groups_by_node[node_id]
+    assert split_group["ml_dedup_status"] == "manual_singleton"
+    assert split_group["component_size"] == 1
+    assert split_group["canonical_node_id"] == node_id
+    assert str(split_group["ml_family_id"]).startswith("mlfam_manual_")
+    assert {row["component_size"] for item, row in groups_by_node.items() if item != node_id} == {2}
+
+    split_browser = repository.fetch_dedup_products(project_name="unit", category_key="dedupcat_sauces", level="expanded", limit=20)
+    assert split_browser["total"] == 5
+    assert [row["row_level"] for row in split_browser["rows"]].count("canonical") == 2
+    assert [row["row_level"] for row in split_browser["rows"]].count("member") == 3
+    assert next(row for row in split_browser["rows"] if row["node_id"] == node_id and row["row_level"] == "member")[
+        "ml_dedup_status"
+    ] == "manual_singleton"
+
+    second_run = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    second_groups = repository.fetch_dedup_artifact(run_id=second_run["run_id"], artifact="groups")
+    second_by_node = {str(row["node_id"]): row for row in second_groups}
+    assert second_run["manifest_json"]["retrieval_cache_status"] == "identity_hit"
+    assert second_by_node[node_id]["ml_dedup_status"] == "manual_singleton"
+    assert second_by_node[node_id]["ml_family_id"] == split_group["ml_family_id"]
+
+
 def test_flat_export_dedup_toggle_replaces_sku_with_family_title_without_changing_rows(tmp_path: Path) -> None:
     service, repository, _, settings = make_service(tmp_path)
     rows = [

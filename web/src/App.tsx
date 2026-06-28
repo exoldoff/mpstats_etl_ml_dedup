@@ -31,6 +31,7 @@ import {
   SkipForward,
   Table2,
   Trash2,
+  Unlink,
   Upload,
   X
 } from "lucide-react";
@@ -1743,6 +1744,21 @@ export function App() {
     return response;
   }
 
+  async function splitDedupProduct(row: DedupProductRow) {
+    if (!row.run_id || !row.node_id) throw new Error("В этой строке нет SKU-node для ручной правки.");
+    const response = await api.splitDedupProduct({
+      run_id: row.run_id,
+      node_id: row.node_id,
+      note: "split from dedup browser"
+    });
+    const [productsResponse, runsResponse] = await Promise.all([
+      loadDedupProducts(dedupProductCategoryKey, dedupProductLevel, dedupProductQuery),
+      api.listDedupRuns(projectName)
+    ]);
+    setDedupRuns(runsResponse.runs);
+    return { response, products: productsResponse.rows.length };
+  }
+
   async function saveDedupSettings() {
     const saved = await api.saveDedupSettings(dedupSettings);
     setDedupSettings({ ...defaultDedupSettings, ...saved });
@@ -2598,6 +2614,7 @@ export function App() {
               onProductQueryChange={setDedupProductQuery}
               onProductSearch={() => void runAction("Поиск в ML-дедупе", () => loadDedupProducts(dedupProductCategoryKey, dedupProductLevel, dedupProductQuery))}
               onLoadArtifact={(runId, artifact) => void runAction("Загрузка артефакта ML-дедупа", () => loadDedupArtifact(runId, artifact))}
+              onSplitProduct={(row) => void runAction("Ручная правка ML-дедупа", () => splitDedupProduct(row))}
             />
           ) : null}
 
@@ -3898,6 +3915,7 @@ function DedupWorkspace(props: {
   onProductQueryChange: (value: string) => void;
   onProductSearch: () => void;
   onLoadArtifact: (runId: string, artifact: "groups" | "edges") => void;
+  onSplitProduct: (row: DedupProductRow) => void;
 }) {
   const selectedCount = props.categories.filter((category) => props.selectedCategoryKeys.has(category.category_key)).length;
   const latestRun = props.runs[0] ?? null;
@@ -4049,6 +4067,7 @@ function DedupWorkspace(props: {
         onCategoryChange={props.onProductCategoryChange}
         onQueryChange={props.onProductQueryChange}
         onSearch={props.onProductSearch}
+        onSplitProduct={props.onSplitProduct}
       />
 
       <div className="dedup-runs-panel">
@@ -4133,6 +4152,7 @@ function DedupProductsBrowser(props: {
   onCategoryChange: (categoryKey: string) => void;
   onQueryChange: (value: string) => void;
   onSearch: () => void;
+  onSplitProduct: (row: DedupProductRow) => void;
 }) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -4146,7 +4166,8 @@ function DedupProductsBrowser(props: {
     { id: "subcategory", label: "Подкатегория", defaultWidth: 170 },
     { id: "sales", label: "Продажи", defaultWidth: 120 },
     { id: "revenue", label: "Выручка", defaultWidth: 130 },
-    { id: "group", label: "Группа", defaultWidth: 170 }
+    { id: "group", label: "Группа", defaultWidth: 170 },
+    { id: "actions", label: "", defaultWidth: 130 }
   ];
   const rowGroups = useMemo(() => {
     const canonical = new Set<string>();
@@ -4271,6 +4292,7 @@ function DedupProductsBrowser(props: {
               const groupKey = dedupProductGroupKey(row, props.level);
               const canToggle = topLevel && props.level !== "canonical" && rowGroups.expandable.has(groupKey);
               const collapsed = canToggle && activeCollapsedGroups.has(groupKey);
+              const canSplit = !topLevel && Boolean(row.run_id && row.node_id) && row.ml_dedup_status !== "manual_singleton";
               return (
                 <tr className={dedupRowClassName(row, props.level)} key={dedupProductRowKey(row, props.level, index)}>
                   <td>
@@ -4304,6 +4326,19 @@ function DedupProductsBrowser(props: {
                   <td>
                     <span className="mono-small">{row.ml_family_id}</span>
                     <small>{row.ml_pack_id || "family"}</small>
+                  </td>
+                  <td>
+                    <div className="table-actions">
+                      <button
+                        className="tiny-button"
+                        disabled={props.busy || !canSplit}
+                        type="button"
+                        title="Убрать этот SKU из текущей family и сделать отдельным singleton."
+                        onClick={() => props.onSplitProduct(row)}
+                      >
+                        <Unlink size={13} />Убрать
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
