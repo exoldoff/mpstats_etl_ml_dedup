@@ -549,6 +549,118 @@ def test_dedup_browser_uses_single_canonical_for_multi_source_pack_group(tmp_pat
     assert [row["row_level"] for row in source_browser["rows"]].count("member") == 2
 
 
+def test_dedup_browser_family_level_groups_pack_canons_without_members(tmp_path: Path) -> None:
+    service, repository, _, settings = make_service(tmp_path)
+    rows = [
+        {
+            "Маркетплейс": "Ozon",
+            "Категория": "Кокосовое масло",
+            "Артикул": "COCO-2-1",
+            "SKU": "Кокосовое масло Aroy-D Extra Virgin 180 мл 2 шт",
+            "Бренд": "Aroy-D",
+            "Подкатегория": "Нерафинированное",
+            "Продажи, шт": "50",
+            "Выручка, руб": "5000",
+            "Вес, кг": "0.36",
+            "Вес, кг (ед.)": "0.18",
+        },
+        {
+            "Маркетплейс": "Ozon",
+            "Категория": "Кокосовое масло",
+            "Артикул": "COCO-2-2",
+            "SKU": "Кокосовое масло Aroy-D Extra Virgin 180 мл, набор: 2 штуки",
+            "Бренд": "Aroy-D",
+            "Подкатегория": "Нерафинированное",
+            "Продажи, шт": "40",
+            "Выручка, руб": "4000",
+            "Вес, кг": "0.36",
+            "Вес, кг (ед.)": "0.18",
+        },
+        {
+            "Маркетплейс": "Ozon",
+            "Категория": "Кокосовое масло",
+            "Артикул": "COCO-10-1",
+            "SKU": "Кокосовое масло Aroy-D Extra Virgin 180 мл, набор: 10 штук",
+            "Бренд": "Aroy-D",
+            "Подкатегория": "Нерафинированное",
+            "Продажи, шт": "30",
+            "Выручка, руб": "3000",
+            "Вес, кг": "1.8",
+            "Вес, кг (ед.)": "0.18",
+        },
+        {
+            "Маркетплейс": "Ozon",
+            "Категория": "Кокосовое масло",
+            "Артикул": "COCO-10-2",
+            "SKU": "Кокосовое масло Aroy-D Extra Virgin 180 мл 10 шт",
+            "Бренд": "Aroy-D",
+            "Подкатегория": "Нерафинированное",
+            "Продажи, шт": "20",
+            "Выручка, руб": "2000",
+            "Вес, кг": "1.8",
+            "Вес, кг (ед.)": "0.18",
+        },
+        {
+            "Маркетплейс": "Ozon",
+            "Категория": "Кокосовое масло",
+            "Артикул": "COCO-450-1",
+            "SKU": "Кокосовое масло Aroy-D Extra Virgin 450 мл",
+            "Бренд": "Aroy-D",
+            "Подкатегория": "Нерафинированное",
+            "Продажи, шт": "25",
+            "Выручка, руб": "2500",
+            "Вес, кг": "0.45",
+            "Вес, кг (ед.)": "0.45",
+        },
+    ]
+    source_file = tmp_path / "dedup-family-coconut.csv"
+    write_semicolon_csv(pd.DataFrame(rows), source_file)
+    inserted = repository.import_products_file_idempotent(
+        run_id="run-dedup-family-coconut",
+        csv_path=source_file,
+        table_name=settings.products_table,
+        project_name="unit",
+        year=2026,
+        month=5,
+        marketplace_code="oz",
+        category_key="coconut",
+        category_name="Кокосовое масло",
+        overwrite=False,
+    )
+    repository.upsert_cube_entry(
+        {
+            "project_name": "unit",
+            "year": 2026,
+            "month": 5,
+            "marketplace": "Ozon",
+            "marketplace_code": "oz",
+            "category_key": "coconut",
+            "category_name": "Кокосовое масло",
+            "rows_count": inserted,
+            "source_processed_file_path": str(source_file),
+            "file_hash": "dedup-family-coconut",
+        }
+    )
+
+    run = service.start_runs(project_name="unit", category_keys=["coconut"], wait=True)["runs"][0]
+
+    assert run["status"] == "success"
+    family_browser = repository.fetch_dedup_products(project_name="unit", category_key="coconut", level="family", limit=20)
+    assert family_browser["total"] == 4
+    assert [row["row_level"] for row in family_browser["rows"]] == ["family", "pack", "pack", "pack"]
+    family_row = family_browser["rows"][0]
+    assert family_row["component_size"] == 3
+    assert family_row["source_row_count"] == 5
+    assert family_row["unit_amount"] is None
+    assert "2 шт" not in str(family_row["normalized_sku"]).casefold()
+    assert "набор" not in str(family_row["normalized_sku"]).casefold()
+    assert "180 мл" not in str(family_row["normalized_sku"]).casefold()
+    pack_rows = family_browser["rows"][1:]
+    assert {row["component_size"] for row in pack_rows} == {1, 2}
+    assert {row["unit_amount"] for row in pack_rows} == {0.18, 0.45}
+    assert {row["multipack_count"] for row in pack_rows} == {1.0, 2.0, 10.0}
+
+
 def test_identity_cache_hit_reuses_groups_without_model_encode(tmp_path: Path) -> None:
     embedding_model = FakeEmbeddingModel()
     service, repository, _, settings = make_service(tmp_path, embedding_model=embedding_model)

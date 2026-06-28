@@ -46,6 +46,7 @@ import {
   ClassifierRule,
   CubeItem,
   DedupCategory,
+  DedupProductLevel,
   DedupProductRow,
   DedupRun,
   DedupSettings,
@@ -600,7 +601,7 @@ export function App() {
   const [dedupArtifactTitle, setDedupArtifactTitle] = useState("");
   const [dedupProductRows, setDedupProductRows] = useState<DedupProductRow[]>([]);
   const [dedupProductTotal, setDedupProductTotal] = useState(0);
-  const [dedupProductLevel, setDedupProductLevel] = useState<"expanded" | "canonical">("expanded");
+  const [dedupProductLevel, setDedupProductLevel] = useState<DedupProductLevel>("family");
   const [dedupProductCategoryKey, setDedupProductCategoryKey] = useState("");
   const [dedupProductQuery, setDedupProductQuery] = useState("");
   const [classifierRules, setClassifierRules] = useState<ClassifierRule[]>([]);
@@ -3860,7 +3861,7 @@ function DedupWorkspace(props: {
   artifactRows: Record<string, unknown>[];
   productRows: DedupProductRow[];
   productTotal: number;
-  productLevel: "expanded" | "canonical";
+  productLevel: DedupProductLevel;
   productCategoryKey: string;
   productQuery: string;
   busy: boolean;
@@ -3869,7 +3870,7 @@ function DedupWorkspace(props: {
   onReload: () => void;
   onSaveSettings: () => void;
   onStart: () => void;
-  onProductLevelChange: (level: "expanded" | "canonical") => void;
+  onProductLevelChange: (level: DedupProductLevel) => void;
   onProductCategoryChange: (categoryKey: string) => void;
   onProductQueryChange: (value: string) => void;
   onProductSearch: () => void;
@@ -4101,11 +4102,11 @@ function DedupProductsBrowser(props: {
   categories: DedupCategory[];
   rows: DedupProductRow[];
   total: number;
-  level: "expanded" | "canonical";
+  level: DedupProductLevel;
   categoryKey: string;
   query: string;
   busy: boolean;
-  onLevelChange: (level: "expanded" | "canonical") => void;
+  onLevelChange: (level: DedupProductLevel) => void;
   onCategoryChange: (categoryKey: string) => void;
   onQueryChange: (value: string) => void;
   onSearch: () => void;
@@ -4128,22 +4129,22 @@ function DedupProductsBrowser(props: {
     const canonical = new Set<string>();
     const expandable = new Set<string>();
     props.rows.forEach((row) => {
-      const groupKey = dedupProductGroupKey(row);
-      if (row.row_level === "canonical") canonical.add(groupKey);
+      const groupKey = dedupProductGroupKey(row, props.level);
+      if (isDedupTopLevelRow(row, props.level)) canonical.add(groupKey);
       else expandable.add(groupKey);
     });
     return { canonical, expandable };
-  }, [props.rows]);
+  }, [props.level, props.rows]);
   const activeCollapsedGroups = useMemo(() => {
     if (!collapsedGroups.size) return collapsedGroups;
     const next = new Set([...collapsedGroups].filter((groupKey) => rowGroups.canonical.has(groupKey) && rowGroups.expandable.has(groupKey)));
     return next.size === collapsedGroups.size ? collapsedGroups : next;
   }, [collapsedGroups, rowGroups]);
   const visibleRows = useMemo(() => {
-    if (props.level !== "expanded") return props.rows;
+    if (props.level === "canonical") return props.rows;
     return props.rows.filter((row) => {
-      if (row.row_level === "canonical") return true;
-      const groupKey = dedupProductGroupKey(row);
+      if (isDedupTopLevelRow(row, props.level)) return true;
+      const groupKey = dedupProductGroupKey(row, props.level);
       return !activeCollapsedGroups.has(groupKey);
     });
   }, [activeCollapsedGroups, props.level, props.rows]);
@@ -4195,7 +4196,8 @@ function DedupProductsBrowser(props: {
             ))}
           </select>
           <div className="segmented-control">
-            <button className={props.level === "expanded" ? "active" : ""} type="button" onClick={() => props.onLevelChange("expanded")}>2 уровня</button>
+            <button className={props.level === "family" ? "active" : ""} type="button" title="Базовый товар, внутри фасовки." onClick={() => props.onLevelChange("family")}>Основная</button>
+            <button className={props.level === "expanded" ? "active" : ""} type="button" title="Фасовка, внутри исходные SKU-дубли." onClick={() => props.onLevelChange("expanded")}>Дубли</button>
             <button className={props.level === "canonical" ? "active" : ""} type="button" onClick={() => props.onLevelChange("canonical")}>Каноны</button>
           </div>
           <div className="search-inline">
@@ -4242,12 +4244,12 @@ function DedupProductsBrowser(props: {
           </thead>
           <tbody>
             {visibleRows.map((row, index) => {
-              const canonical = row.row_level === "canonical";
-              const groupKey = dedupProductGroupKey(row);
-              const canToggle = canonical && props.level === "expanded" && rowGroups.expandable.has(groupKey);
+              const topLevel = isDedupTopLevelRow(row, props.level);
+              const groupKey = dedupProductGroupKey(row, props.level);
+              const canToggle = topLevel && props.level !== "canonical" && rowGroups.expandable.has(groupKey);
               const collapsed = canToggle && activeCollapsedGroups.has(groupKey);
               return (
-                <tr className={canonical ? "dedup-canonical-row" : "dedup-member-row"} key={dedupProductRowKey(row, index)}>
+                <tr className={dedupRowClassName(row, props.level)} key={dedupProductRowKey(row, props.level, index)}>
                   <td>
                     <span className="dedup-level-cell">
                       {canToggle ? (
@@ -4265,11 +4267,11 @@ function DedupProductsBrowser(props: {
                       )}
                       <span>
                         <strong>{row.normalized_sku || row.canonical_sku || row.sku || "-"}</strong>
-                        <small>{canonical ? `${formatNumber(row.component_size)} SKU${collapsed ? " · свернуто" : ""}` : row.ml_dedup_status || "member"}</small>
+                        <small>{dedupRowSubtitle(row, props.level, collapsed)}</small>
                       </span>
                     </span>
                   </td>
-                  <td>{canonical ? row.canonical_sku || row.sku || "-" : row.sku || "-"}</td>
+                  <td>{topLevel ? row.canonical_sku || row.sku || "-" : row.sku || row.canonical_sku || "-"}</td>
                   <td>{row.marketplace || row.marketplace_code || "-"}</td>
                   <td>{row.article || "-"}</td>
                   <td>{row.brand || "-"}</td>
@@ -4278,7 +4280,7 @@ function DedupProductsBrowser(props: {
                   <td>{formatNumber(row.revenue)}</td>
                   <td>
                     <span className="mono-small">{row.ml_family_id}</span>
-                    <small>{row.ml_pack_id}</small>
+                    <small>{row.ml_pack_id || "family"}</small>
                   </td>
                 </tr>
               );
@@ -4291,7 +4293,36 @@ function DedupProductsBrowser(props: {
   );
 }
 
-function dedupProductGroupKey(row: DedupProductRow) {
+function isDedupTopLevelRow(row: DedupProductRow, level: DedupProductLevel) {
+  if (level === "family") return row.row_level === "family";
+  return row.row_level === "canonical";
+}
+
+function dedupRowClassName(row: DedupProductRow, level: DedupProductLevel) {
+  if (level === "family" && row.row_level === "family") return "dedup-canonical-row dedup-family-row";
+  return isDedupTopLevelRow(row, level) ? "dedup-canonical-row" : "dedup-member-row";
+}
+
+function dedupRowSubtitle(row: DedupProductRow, level: DedupProductLevel, collapsed: boolean) {
+  if (level === "family" && row.row_level === "family") {
+    return `${formatNumber(row.component_size)} фасовок${collapsed ? " · свернуто" : ""}`;
+  }
+  if (level === "family" && row.row_level === "pack") {
+    return `${formatNumber(row.component_size)} SKU`;
+  }
+  if (isDedupTopLevelRow(row, level)) {
+    return `${formatNumber(row.component_size)} SKU${collapsed ? " · свернуто" : ""}`;
+  }
+  return row.ml_dedup_status || "member";
+}
+
+function dedupProductGroupKey(row: DedupProductRow, level: DedupProductLevel) {
+  if (level === "family") {
+    return [
+      row.run_id,
+      row.ml_family_id
+    ].join("::");
+  }
   return [
     row.run_id,
     row.ml_family_id,
@@ -4300,9 +4331,9 @@ function dedupProductGroupKey(row: DedupProductRow) {
   ].join("::");
 }
 
-function dedupProductRowKey(row: DedupProductRow, index: number) {
+function dedupProductRowKey(row: DedupProductRow, level: DedupProductLevel, index: number) {
   return [
-    dedupProductGroupKey(row),
+    dedupProductGroupKey(row, level),
     row.row_level,
     row.node_id || row.canonical_node_id || index,
     row.sort_order

@@ -7,6 +7,7 @@ import io
 import json
 import logging
 from pathlib import Path
+import re
 from threading import RLock
 import time
 from typing import Any, Literal
@@ -742,7 +743,26 @@ def _validate_sheet_name(sheet_name: str) -> str:
 
 def _clean_dedup_level(level: str) -> str:
     clean = str(level or "expanded").strip().casefold()
-    return "canonical" if clean == "canonical" else "expanded"
+    if clean in {"canonical", "family"}:
+        return clean
+    return "expanded"
+
+
+def _dedup_family_title(value: object) -> str:
+    title = str(value or "").strip()
+    if not title:
+        return ""
+    title = re.sub(
+        r"(?i)(?:[,;:\-–—]\s*)?\bнабор\s*:?\s*\d+\s*(?:штук[аи]?|шт\.?)\b",
+        "",
+        title,
+    )
+    title = re.sub(r"(?i)(?:[,;:\-–—]\s*)?\b\d+\s*(?:штук[аи]?|шт\.?)\b", "", title)
+    title = re.sub(r"(?i)(?:[,;:\-–—]\s*)?\b\d+(?:[,.]\d+)?\s*(?:мл|л|г|гр|кг)\b", "", title)
+    title = re.sub(r"\s+([,;:])", r"\1", title)
+    title = re.sub(r"\s{2,}", " ", title)
+    title = re.sub(r"[,;:\-–—]\s*$", "", title)
+    return title.strip() or str(value or "").strip()
 
 
 def _dedup_category_group(category_name: object) -> tuple[str, str] | None:
@@ -2005,10 +2025,18 @@ class DuckDbAppRepository:
     ) -> dict[str, Any]:
         if not self.table_exists("mpstats_products_dedup"):
             return {"columns": list(DEDUP_PRODUCTS_COLUMNS), "rows": [], "total": 0}
+        clean_level = _clean_dedup_level(level)
+        if clean_level == "family":
+            return self._fetch_dedup_family_products(
+                project_name=project_name,
+                category_key=category_key,
+                query_text=query_text,
+                limit=limit,
+            )
         where_sql, params = self._dedup_products_where(
             project_name=project_name,
             category_key=category_key,
-            level=level,
+            level=clean_level,
             query_text=query_text,
         )
         safe_limit = max(1, min(int(limit), 5000))
@@ -2036,6 +2064,163 @@ class DuckDbAppRepository:
             read_only=True,
             temp_directory=self._duckdb_temp_directory(),
         )
+        return {
+            "columns": list(DEDUP_PRODUCTS_COLUMNS),
+            "rows": rows,
+            "total": int(count["total"]) if count else 0,
+        }
+
+    def _fetch_dedup_family_products(
+        self,
+        *,
+        project_name: str,
+        category_key: str | None,
+        query_text: str | None,
+        limit: int,
+    ) -> dict[str, Any]:
+        where_sql, params = self._dedup_products_where(
+            project_name=project_name,
+            category_key=category_key,
+            level="expanded",
+            query_text=query_text,
+        )
+        safe_limit = max(1, min(int(limit), 5000))
+        base_query = f"""
+            WITH matched_rows AS (
+                SELECT *
+                FROM mpstats_products_dedup
+                {where_sql}
+            ),
+            matched_packs AS (
+                SELECT DISTINCT run_id, ml_family_id, ml_pack_id
+                FROM matched_rows
+            ),
+            pack_rows AS (
+                SELECT c.*
+                FROM mpstats_products_dedup AS c
+                JOIN matched_packs AS m
+                  ON m.run_id = c.run_id
+                 AND m.ml_family_id = c.ml_family_id
+                 AND m.ml_pack_id = c.ml_pack_id
+                WHERE c.row_level = 'canonical'
+            ),
+            ranked_packs AS (
+                SELECT
+                    p.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY p.run_id, p.ml_family_id
+                        ORDER BY p.revenue DESC NULLS LAST, p.source_row_count DESC NULLS LAST, p.normalized_sku NULLS LAST
+                    ) AS family_rank
+                FROM pack_rows AS p
+            ),
+            family_rows AS (
+                SELECT
+                    run_id,
+                    MIN(project_name) AS project_name,
+                    MIN(category_key) AS category_key,
+                    MIN(category_name) AS category_name,
+                    ml_family_id,
+                    NULL AS ml_pack_id,
+                    'family' AS row_level,
+                    0 AS sort_order,
+                    MAX(CASE WHEN family_rank = 1 THEN canonical_node_id END) AS node_id,
+                    MAX(CASE WHEN family_rank = 1 THEN canonical_node_id END) AS canonical_node_id,
+                    MAX(CASE WHEN family_rank = 1 THEN canonical_sku END) AS canonical_sku,
+                    MAX(CASE WHEN family_rank = 1 THEN normalized_sku END) AS normalized_sku,
+                    NULL AS marketplace_code,
+                    NULL AS marketplace,
+                    NULL AS article,
+                    MAX(CASE WHEN family_rank = 1 THEN sku END) AS sku,
+                    CASE
+                        WHEN COUNT(DISTINCT NULLIF(brand, '')) = 1 THEN MIN(NULLIF(brand, ''))
+                        ELSE NULL
+                    END AS brand,
+                    CASE
+                        WHEN COUNT(DISTINCT NULLIF(subcategory, '')) = 1 THEN MIN(NULLIF(subcategory, ''))
+                        ELSE NULL
+                    END AS subcategory,
+                    CASE
+                        WHEN COUNT(DISTINCT unit_amount) = 1 THEN MIN(unit_amount)
+                        ELSE NULL
+                    END AS unit_amount,
+                    NULL AS total_amount,
+                    NULL AS multipack_count,
+                    COALESCE(SUM(sales_volume), 0) AS sales_volume,
+                    COALESCE(SUM(revenue), 0) AS revenue,
+                    COALESCE(SUM(source_row_count), 0) AS source_row_count,
+                    COUNT(*) AS component_size,
+                    CASE WHEN COUNT(*) > 1 THEN 'family_group' ELSE 'family_singleton' END AS ml_dedup_status,
+                    MAX(confidence_score) AS confidence_score
+                FROM ranked_packs
+                GROUP BY run_id, ml_family_id
+            ),
+            visible_rows AS (
+                SELECT {", ".join(quote_duckdb_name(column) for column in DEDUP_PRODUCTS_COLUMNS)}
+                FROM family_rows
+                UNION ALL
+                SELECT
+                    run_id,
+                    project_name,
+                    category_key,
+                    category_name,
+                    ml_family_id,
+                    ml_pack_id,
+                    'pack' AS row_level,
+                    1 AS sort_order,
+                    node_id,
+                    canonical_node_id,
+                    canonical_sku,
+                    normalized_sku,
+                    marketplace_code,
+                    marketplace,
+                    article,
+                    sku,
+                    brand,
+                    subcategory,
+                    unit_amount,
+                    total_amount,
+                    multipack_count,
+                    sales_volume,
+                    revenue,
+                    source_row_count,
+                    component_size,
+                    ml_dedup_status,
+                    confidence_score
+                FROM ranked_packs
+            )
+            SELECT {", ".join(quote_duckdb_name(column) for column in DEDUP_PRODUCTS_COLUMNS)}
+            FROM visible_rows
+        """
+        count = self._fetch_one(
+            f"SELECT COUNT(*) AS total FROM ({base_query}) AS visible_count",
+            params,
+            read_only=True,
+            temp_directory=self._duckdb_temp_directory(),
+        )
+        rows = self._fetch_records(
+            f"""
+            {base_query}
+            ORDER BY
+                category_name NULLS LAST,
+                ml_family_id,
+                sort_order,
+                unit_amount NULLS LAST,
+                multipack_count NULLS LAST,
+                total_amount NULLS LAST,
+                revenue DESC NULLS LAST,
+                normalized_sku NULLS LAST
+            LIMIT ?
+            """,
+            [*params, safe_limit],
+            read_only=True,
+            temp_directory=self._duckdb_temp_directory(),
+        )
+        for row in rows:
+            if row.get("row_level") == "family":
+                title = _dedup_family_title(row.get("normalized_sku") or row.get("canonical_sku") or row.get("sku"))
+                row["normalized_sku"] = title
+                row["canonical_sku"] = title
+                row["sku"] = title
         return {
             "columns": list(DEDUP_PRODUCTS_COLUMNS),
             "rows": rows,

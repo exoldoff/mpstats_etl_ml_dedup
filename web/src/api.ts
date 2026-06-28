@@ -202,6 +202,8 @@ export type DedupProductRow = {
   confidence_score?: number | null;
 };
 
+export type DedupProductLevel = "expanded" | "family" | "canonical";
+
 export type PipelineRun = {
   id: string;
   project_name: string;
@@ -673,7 +675,7 @@ export const api = {
     ),
   listDedupRuns: (projectName: string) =>
     request<{ runs: DedupRun[] }>(`/api/dedup/runs?project_name=${encodeURIComponent(projectName)}`),
-  getDedupProducts: (payload: { project_name: string; category_key?: string; level?: "expanded" | "canonical"; query?: string; limit?: number }) => {
+  getDedupProducts: (payload: { project_name: string; category_key?: string; level?: DedupProductLevel; query?: string; limit?: number }) => {
     const params = new URLSearchParams({
       project_name: payload.project_name,
       level: payload.level ?? "expanded",

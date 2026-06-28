@@ -57,6 +57,7 @@ E5_TEXT_PREFIX = "query: "
 ELIGIBLE_CATEGORY_NAMES = {"соус", "соусы", "кокосовое масло", "мыло"}
 DEDUP_ACTIVE_STATUSES = {"queued", "running"}
 DEDUP_REPLACED_STATUSES = ["failed"]
+DEDUP_PRODUCT_LEVELS = {"expanded", "family", "canonical"}
 
 EmbeddingFactory = Callable[[str], Any]
 CrossEncoderFactory = Callable[[str], Any]
@@ -225,6 +226,11 @@ def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> 
 def _model_device(value: object) -> str:
     device = _clean_text(value).casefold()
     return device if device in {"auto", "cpu", "mps", "cuda"} else DEDUP_MODEL_DEVICE
+
+
+def _product_level(value: object) -> str:
+    level = _clean_text(value).casefold()
+    return level if level in DEDUP_PRODUCT_LEVELS else "expanded"
 
 
 def _first_non_empty(series: pd.Series) -> str:
@@ -524,7 +530,7 @@ class DedupService:
         )
         payload["project_name"] = project_name
         payload["category_key"] = category_key
-        payload["level"] = "canonical" if str(level or "").strip().casefold() == "canonical" else "expanded"
+        payload["level"] = _product_level(level)
         return payload
 
     def export_products(self, *, project_name: str, category_key: str | None = None, level: str = "expanded") -> Path:

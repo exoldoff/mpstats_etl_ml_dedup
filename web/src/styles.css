@@ -2462,6 +2462,10 @@ a.ghost-button {
   color: #163f2a;
 }
 
+.dedup-family-row {
+  background: #e9f4ed;
+}
+
 .dedup-member-row .dedup-level-cell {
   padding-left: 18px;
 }
