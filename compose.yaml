@@ -1,0 +1,32 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mpstats-local-app:latest
+    ports:
+      - "127.0.0.1:8055:8055"
+    environment:
+      MPSTATS_APP_HOST: "0.0.0.0"
+      MPSTATS_APP_PORT: "8055"
+      MPSTATS_WORKDIR: "/app/runtime/pipeline"
+      MPSTATS_DB_PATH: "/app/runtime/mpstats.duckdb"
+      MPSTATS_CONFIG_PATH: "/app/runtime/pipeline/step1_export_config.json"
+      MPSTATS_RULES_PATH: "/app/runtime/classifiers/rules.csv"
+      MPSTATS_MANUAL_OVERRIDES_PATH: "/app/runtime/classifiers/manual_overrides.csv"
+      MPSTATS_CATEGORY_CATALOG_PATH: "/app/runtime/catalog/category_catalog.csv"
+      MPSTATS_STATIC_DIR: "/app/web/dist"
+      DUCKDB_TEMP_DIRECTORY: "/app/runtime/duckdb_tmp"
+      HF_HOME: "/app/runtime/huggingface"
+    volumes:
+      - mpstats-runtime:/app/runtime
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8055/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  mpstats-runtime:

@@ -26,6 +26,23 @@ open "MPStats Local App.command"
 и при необходимости установит их из `requirements.txt`, включая пакеты для
 `ML-дедуп`.
 
+**Docker**
+
+Для проверки переносимости на другой машине можно поднять тот же web-app в
+контейнере:
+
+```bash
+docker compose config
+docker compose build
+docker compose up
+```
+
+После старта откройте `http://127.0.0.1:8055`. Compose хранит локальную
+DuckDB, настройки, справочник, правила классификатора и cache моделей в
+именованном volume `mpstats-runtime`, поэтому секреты и рабочие данные не
+попадают в git и не запекаются в образ. Остановить контейнер можно через
+`Ctrl+C`, затем `docker compose down`.
+
 После запуска откроется локальное приложение в браузере. Дальше всё делается через интерфейс: вставьте MPStats cookie, выберите проект, период, категории, создайте план и нажмите запуск.
 
 Другие пользовательские способы запуска не поддерживаются: работа с проектом сосредоточена в web-интерфейсе.
@@ -58,6 +75,20 @@ MPStats cookie хранится только локально. Локальна�
 - `filter.md` — справочник синтаксиса фильтров MPStats.
 - `Справочник категорий MP STATS.csv` — справочник категорий.
 - `classifiers/rules.csv` — правила классификации.
+
+## Инженерные проверки перед защитой
+
+Минимальный набор команд, который демонстрирует Git/Docker/runtime-гигиену:
+
+```bash
+git status --short
+python3 -m pytest tests/test_app_config.py tests/test_web_api.py
+docker compose config
+```
+
+`docker compose build` дополнительно проверяет полную сборку образа: frontend
+собирается через `npm ci && npm run build`, backend ставит зависимости из
+`requirements.txt`, а контейнер стартует через healthcheck `/api/health`.
 
 ## License
 

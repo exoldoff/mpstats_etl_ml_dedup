@@ -36,7 +36,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-"%VENV_PY%" -c "import duckdb, fastapi, numpy, openpyxl, pandas, requests, uvicorn" >nul 2>nul
+"%VENV_PY%" -c "import duckdb, faiss, fastapi, numpy, openpyxl, pandas, requests, sentence_transformers, torch, uvicorn" >nul 2>nul
 if errorlevel 1 (
   echo [MPStats] Installing Python dependencies into .venv...
   "%VENV_PY%" -m pip install -r requirements.txt
@@ -47,7 +47,7 @@ if errorlevel 1 (
   )
 )
 
-"%VENV_PY%" -c "import duckdb, fastapi, numpy, openpyxl, pandas, requests, uvicorn" >nul 2>nul
+"%VENV_PY%" -c "import duckdb, faiss, fastapi, numpy, openpyxl, pandas, requests, sentence_transformers, torch, uvicorn" >nul 2>nul
 if errorlevel 1 (
   echo [MPStats] Dependencies are still incomplete after install.
   pause

@@ -97,6 +97,12 @@ class CategoryCatalogService:
         return {"imported": 0, "source": None}
 
     def find_source(self) -> Path | None:
+        if self.settings.category_catalog_path is not None:
+            return (
+                self.settings.category_catalog_path
+                if self.settings.category_catalog_path.exists()
+                else None
+            )
         candidates = sorted(self.settings.project_root.glob("Справочник категори*MP STATS.csv"))
         if not candidates:
             return None
@@ -116,7 +122,7 @@ class CategoryCatalogService:
         return self.repository.list_categories()
 
     def list_source_rows(self) -> dict[str, Any]:
-        source = self.find_source()
+        source = self.settings.category_catalog_path or self.find_source()
         if source is None:
             source = self.settings.project_root / "Справочник категорий MP STATS.csv"
         if not source.exists():
@@ -125,7 +131,9 @@ class CategoryCatalogService:
         return {"path": str(source), "rows": self._source_rows_from_frame(frame)}
 
     def save_source_rows(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
-        source = self.find_source() or (self.settings.project_root / "Справочник категорий MP STATS.csv")
+        source = self.settings.category_catalog_path or self.find_source() or (
+            self.settings.project_root / "Справочник категорий MP STATS.csv"
+        )
         normalized_rows = [self._normalize_source_row(row, index) for index, row in enumerate(rows, start=1)]
         frame = pd.DataFrame(normalized_rows, columns=SOURCE_COLUMNS)
         source.parent.mkdir(parents=True, exist_ok=True)

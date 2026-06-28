@@ -26,6 +26,7 @@ MPstats-FMCG-ETL собирает данные MPStats по маркетплей
 6. `docs/ARCHITECTURE.md` — целевая методология SKU-дедупликации.
 7. `docs/ARCHITECTURE_PROGRESS.md` — что уже реализовано и проверено.
 8. `docs/USER_GUIDE.md` — пользовательская инструкция для локальной web-app.
+9. `Dockerfile` и `compose.yaml` — воспроизводимый контейнерный запуск web-app.
 
 ## Как устроен репозиторий
 
@@ -37,6 +38,7 @@ MPstats-FMCG-ETL собирает данные MPStats по маркетплей
 | `research/dedup/` | Исследовательские модули дедупликации: candidates, labeling, matchers, calibration, graph grouping. |
 | `notebooks/` | Конкурсный research-рассказ: от EDA до demo дерева SKU. |
 | `docs/` | Архитектура, прогресс, runbooks, пользовательская инструкция и эта карта. |
+| `Dockerfile`, `compose.yaml` | Docker-контур: сборка frontend/backend, healthcheck и volume для локальных данных. |
 | `docs/archive/` | Старые аудиты и исторические материалы, которые полезны как контекст, но не являются главным входом. |
 | `docs/assets/` | Вспомогательные картинки/таблицы для документации. |
 | `tools/dedup_labeling_bot/` | Отдельный Telegram-инструмент для ручной разметки пар. |
@@ -64,6 +66,21 @@ notebooks и документация, а не пользовательские 
 4. Notebook `03`: как сравниваем модели и выбираем threshold только на dev.
 5. Notebook `04`: как из pairwise решений получаются family/pack группы.
 6. Notebook `05`: короткое end-to-end demo на реальных строках DuckDB.
+7. Engineering-проверки: `git status --short`, узкий pytest и
+   `docker compose config` / `docker compose build`.
+
+## Инженерные решения
+
+- Git хранит код, миграции, тесты, frontend source/build и документацию; `.env`,
+  `mpstats.duckdb`, локальные выгрузки, cache моделей и пользовательские CSV
+  игнорируются.
+- macOS/Windows запускатели создают project-local `.venv` и не требуют
+  установки зависимостей в системный Python.
+- Docker-контур собирает frontend через `npm ci`, ставит Python-зависимости из
+  `requirements.txt`, поднимает FastAPI на `127.0.0.1:8055` и проверяет
+  `/api/health`.
+- В Docker все mutable данные вынесены в volume `mpstats-runtime`: база,
+  pipeline-файлы, справочник, правила, ручные override и cache моделей.
 
 ## Что не является мусором
 

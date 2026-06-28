@@ -4,7 +4,10 @@ venv/
 env/
 __pycache__/
 *.pyc
+.pytest_cache/
 .ipynb_checkpoints/
+runtime/
+web/node_modules/
 
 # Local data and generated artifacts are mounted at runtime, not baked into the image.
 artifacts/
