@@ -13,6 +13,7 @@ import time
 from typing import Any, Literal
 from uuid import uuid4
 
+from duckdb import sqltypes as duckdb_sqltypes
 import pandas as pd
 
 from pipeline.repositories.sql_repository import (
@@ -70,6 +71,78 @@ DEDUP_EXPORT_COLUMNS = (
     "ML-канонический SKU",
     "ML-dedup статус",
     "ML-dedup run",
+)
+DEDUP_EXPORT_FAMILY_TITLE_FUNCTION = "mpstats_dedup_family_title"
+DEDUP_FAMILY_MIN_CATEGORY_TOKENS = 2
+DEDUP_FAMILY_UNIT_TOKENS = frozenset(
+    {
+        "г",
+        "гр",
+        "кг",
+        "мл",
+        "л",
+        "шт",
+        "штуки",
+        "штук",
+        "штука",
+        "уп",
+        "упак",
+        "упаковка",
+    }
+)
+DEDUP_FAMILY_GENERIC_TOKENS = frozenset(
+    {
+        "100",
+        "extra",
+        "virgin",
+        "extravirgin",
+        "для",
+        "без",
+        "на",
+        "и",
+        "в",
+        "с",
+        "из",
+        "по",
+        "от",
+        "до",
+        "нерафинированное",
+        "нерафинированный",
+        "нерафинированная",
+        "рафинированное",
+        "рафинированный",
+        "рафинированная",
+        "пищевое",
+        "пищевой",
+        "пищевые",
+        "растительное",
+        "растительный",
+        "растительная",
+        "холодного",
+        "холодный",
+        "холодная",
+        "отжима",
+        "отжим",
+        "первого",
+        "первый",
+        "натуральное",
+        "натуральный",
+        "натуральная",
+        "органическое",
+        "органический",
+        "органическая",
+        "универсальное",
+        "универсальный",
+        "косметическое",
+        "косметический",
+        "тела",
+        "волос",
+        "еды",
+        "жарки",
+        "добавок",
+        "индонезия",
+        "таиланд",
+    }
 )
 DEDUP_PRODUCTS_COLUMNS = (
     "run_id",
@@ -748,10 +821,52 @@ def _clean_dedup_level(level: str) -> str:
     return "expanded"
 
 
-def _dedup_family_title(value: object) -> str:
+_DEDUP_FAMILY_TOKEN_RE = re.compile(r"[0-9a-zа-я]+")
+
+
+def _dedup_family_tokens(value: object, *, keep_short: bool = False) -> list[str]:
+    text = str(value or "").casefold().replace("ё", "е")
+    tokens = _DEDUP_FAMILY_TOKEN_RE.findall(text)
+    result: list[str] = []
+    for token in tokens:
+        if not keep_short and len(token) < 2:
+            continue
+        if token.isdigit():
+            continue
+        if token in DEDUP_FAMILY_UNIT_TOKENS:
+            continue
+        result.append(token)
+    return result
+
+
+def _dedup_brand_alias_tokens(brand: object) -> set[str]:
+    tokens = set(_dedup_family_tokens(brand))
+    normalized = " ".join(_dedup_family_tokens(brand, keep_short=True))
+    if normalized in {"aroy d", "aroyd"} or "aroy" in tokens:
+        tokens.update({"арой", "аройд"})
+    return tokens
+
+
+def _dedup_brand_pattern(brand: object) -> str | None:
+    tokens = _dedup_family_tokens(brand, keep_short=True)
+    if not tokens:
+        return None
+    return r"(?i)(?:[,;:\-–—]\s*)?\b" + r"[^0-9a-zа-я]*".join(re.escape(token) for token in tokens) + r"\b"
+
+
+def _cleanup_dedup_family_title(value: str) -> str:
+    title = re.sub(r"\s+([,;:])", r"\1", value)
+    title = re.sub(r"\s{2,}", " ", title)
+    title = re.sub(r"^[,;:\-–—]\s*", "", title)
+    title = re.sub(r"[,;:\-–—]\s*$", "", title)
+    return title.strip()
+
+
+def _dedup_family_title(value: object, brand: object = None, category_name: object = None) -> str:
     title = str(value or "").strip()
     if not title:
         return ""
+    original_title = title
     title = re.sub(
         r"(?i)(?:[,;:\-–—]\s*)?\bнабор\s*:?\s*\d+\s*(?:штук[аи]?|шт\.?)\b",
         "",
@@ -759,10 +874,37 @@ def _dedup_family_title(value: object) -> str:
     )
     title = re.sub(r"(?i)(?:[,;:\-–—]\s*)?\b\d+\s*(?:штук[аи]?|шт\.?)\b", "", title)
     title = re.sub(r"(?i)(?:[,;:\-–—]\s*)?\b\d+(?:[,.]\d+)?\s*(?:мл|л|г|гр|кг)\b", "", title)
-    title = re.sub(r"\s+([,;:])", r"\1", title)
-    title = re.sub(r"\s{2,}", " ", title)
-    title = re.sub(r"[,;:\-–—]\s*$", "", title)
-    return title.strip() or str(value or "").strip()
+    title = re.sub(r"(?i)(?:[,;:\-–—]\s*)?\b\d+(?:[,.]\d+)?\s*%\b", "", title)
+    brand_pattern = _dedup_brand_pattern(brand)
+    if brand_pattern:
+        title = re.sub(brand_pattern, "", title)
+    if "aroy" in _dedup_brand_alias_tokens(brand):
+        title = re.sub(r"(?i)(?:[,;:\-–—]\s*)?\bарой\s*[-–—]?\s*д\b", "", title)
+    title = _cleanup_dedup_family_title(title)
+
+    category_title = str(category_name or "").strip()
+    category_tokens = set(_dedup_family_tokens(category_title))
+    title_tokens = set(_dedup_family_tokens(title or original_title))
+    if len(category_tokens) >= DEDUP_FAMILY_MIN_CATEGORY_TOKENS and category_tokens.issubset(title_tokens):
+        extra_tokens = title_tokens - category_tokens - _dedup_brand_alias_tokens(brand)
+        extra_tokens = {token for token in extra_tokens if token not in DEDUP_FAMILY_GENERIC_TOKENS}
+        if not extra_tokens:
+            return category_title
+
+    return title or original_title
+
+
+def _register_dedup_export_functions(con: Any) -> None:
+    try:
+        con.create_function(
+            DEDUP_EXPORT_FAMILY_TITLE_FUNCTION,
+            _dedup_family_title,
+            return_type=duckdb_sqltypes.VARCHAR,
+            null_handling="special",
+        )
+    except Exception as exc:
+        if "already exists" not in str(exc).casefold():
+            raise
 
 
 def _dedup_category_group(category_name: object) -> tuple[str, str] | None:
@@ -875,10 +1017,13 @@ class DuckDbAppRepository:
         *,
         read_only: bool = False,
         temp_directory: Path | None = None,
+        register_dedup_export_functions: bool = False,
     ) -> list[dict[str, Any]]:
         with self._lock, connect(self.settings.db_path, read_only=read_only, temp_directory=temp_directory) as con:
             if not read_only:
                 apply_migrations(con)
+            if register_dedup_export_functions:
+                _register_dedup_export_functions(con)
             result = con.execute(query, params or [])
             columns = [col[0] for col in result.description]
             return clean_records([dict(zip(columns, row)) for row in result.fetchall()])
@@ -890,8 +1035,15 @@ class DuckDbAppRepository:
         *,
         read_only: bool = False,
         temp_directory: Path | None = None,
+        register_dedup_export_functions: bool = False,
     ) -> dict[str, Any] | None:
-        rows = self._fetch_records(query, params, read_only=read_only, temp_directory=temp_directory)
+        rows = self._fetch_records(
+            query,
+            params,
+            read_only=read_only,
+            temp_directory=temp_directory,
+            register_dedup_export_functions=register_dedup_export_functions,
+        )
         return rows[0] if rows else None
 
     def create_run(
@@ -4095,6 +4247,7 @@ class DuckDbAppRepository:
                 {"db_path": self.settings.db_path, "file_path": target, "format": clean_format},
             ) as metrics:
                 with self._lock, connect(self.settings.db_path, read_only=True, temp_directory=self._duckdb_temp_directory()) as con:
+                    _register_dedup_export_functions(con)
                     if clean_format == "csv":
                         csv_query = clean_query
                         columns: list[str] | None = None
@@ -4446,6 +4599,7 @@ class DuckDbAppRepository:
             params,
             read_only=True,
             temp_directory=self._duckdb_temp_directory(),
+            register_dedup_export_functions=bool(dedup_enabled),
         )
 
     def count_export_products(
@@ -4486,6 +4640,7 @@ class DuckDbAppRepository:
             params,
             read_only=True,
             temp_directory=self._duckdb_temp_directory(),
+            register_dedup_export_functions=bool(dedup_enabled),
         )
         return int(row["total"]) if row else 0
 
@@ -4540,6 +4695,7 @@ class DuckDbAppRepository:
             default_order=default_order,
         )
         with self._lock, connect(self.settings.db_path, read_only=True, temp_directory=self._duckdb_temp_directory()) as con:
+            _register_dedup_export_functions(con)
             return con.execute(
                 f"""
                 SELECT {select_sql}
@@ -4870,7 +5026,7 @@ class DuckDbAppRepository:
     def _export_dedup_mode(self, dedup_enabled: bool | None) -> str:
         if dedup_enabled is None:
             return "columns"
-        return "canonical_sku" if dedup_enabled else "off"
+        return "family_sku" if dedup_enabled else "off"
 
     def _export_columns_with_dedup(
         self,
@@ -4899,12 +5055,12 @@ class DuckDbAppRepository:
             return "NULL"
         return "COALESCE(" + ", ".join(pieces) + ")"
 
-    def _export_base_select_sql(self, columns: list[str], *, replace_sku_with_canonical: bool) -> str:
+    def _export_base_select_sql(self, columns: list[str], *, sku_replacement_sql: str | None = None) -> str:
         parts: list[str] = []
         for column in columns:
             quoted = quote_duckdb_name(column)
-            if replace_sku_with_canonical and column == "SKU":
-                parts.append(f"COALESCE(d.canonical_sku, p.{quoted}) AS {quoted}")
+            if sku_replacement_sql and column == "SKU":
+                parts.append(f"COALESCE({sku_replacement_sql}, p.{quoted}) AS {quoted}")
             else:
                 parts.append(f"p.{quoted} AS {quoted}")
         return ",\n                ".join(parts)
@@ -4923,12 +5079,15 @@ class DuckDbAppRepository:
             return f"SELECT * FROM {quoted_table}"
 
         include_dedup_columns = mode == "columns"
-        replace_sku = mode == "canonical_sku" and "SKU" in self.table_columns(table_name)
-        if mode == "canonical_sku" and not replace_sku:
+        replace_sku = mode == "family_sku" and "SKU" in self.table_columns(table_name)
+        if mode == "family_sku" and not replace_sku:
             return f"SELECT * FROM {quoted_table}"
 
         table_columns = self.table_columns(table_name)
-        base_select = self._export_base_select_sql(table_columns, replace_sku_with_canonical=replace_sku)
+        base_select = self._export_base_select_sql(
+            table_columns,
+            sku_replacement_sql="d.family_sku" if replace_sku else None,
+        )
         dedup_select = ""
         if include_dedup_columns:
             dedup_select = f""",
@@ -4937,6 +5096,51 @@ class DuckDbAppRepository:
                 d.canonical_sku AS {quote_duckdb_name('ML-канонический SKU')},
                 d.ml_dedup_status AS {quote_duckdb_name('ML-dedup статус')},
                 d.run_id AS {quote_duckdb_name('ML-dedup run')}"""
+        family_ctes = ""
+        family_join = ""
+        family_select = ""
+        if replace_sku:
+            family_ctes = f""",
+            family_candidates AS (
+                SELECT
+                    latest.run_id,
+                    g.ml_family_id,
+                    g.canonical_sku,
+                    MIN(n.brand) AS brand,
+                    MIN(n.category_name) AS category_name,
+                    COALESCE(SUM(n.revenue), 0) AS revenue,
+                    COALESCE(SUM(n.sales_volume), 0) AS sales_volume,
+                    COUNT(*) AS source_count
+                FROM latest_dedup_runs AS latest
+                JOIN dedup_sku_nodes AS n
+                  ON n.run_id = latest.run_id
+                JOIN dedup_sku_groups AS g
+                  ON g.run_id = n.run_id AND g.node_id = n.node_id
+                GROUP BY
+                    latest.run_id,
+                    g.ml_family_id,
+                    g.canonical_sku
+            ),
+            family_titles AS (
+                SELECT run_id, ml_family_id, family_sku
+                FROM (
+                    SELECT
+                        run_id,
+                        ml_family_id,
+                        NULLIF({DEDUP_EXPORT_FAMILY_TITLE_FUNCTION}(canonical_sku, brand, category_name), '') AS family_sku,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY run_id, ml_family_id
+                            ORDER BY revenue DESC NULLS LAST, sales_volume DESC NULLS LAST, source_count DESC NULLS LAST, canonical_sku NULLS LAST
+                        ) AS family_rank
+                    FROM family_candidates
+                )
+                WHERE family_rank = 1
+            )"""
+            family_join = """
+                LEFT JOIN family_titles AS f
+                  ON f.run_id = g.run_id AND f.ml_family_id = g.ml_family_id"""
+            family_select = """,
+                    f.family_sku"""
 
         article_expr = self._dedup_article_expr(self.table_columns(table_name), table_alias="p")
         return f"""
@@ -4956,7 +5160,7 @@ class DuckDbAppRepository:
                       AND project_name = {sql_literal(project_name)}
                 )
                 WHERE rn = 1
-            ),
+            ){family_ctes},
             dedup_map AS (
                 SELECT
                     n.project_name,
@@ -4967,12 +5171,13 @@ class DuckDbAppRepository:
                     g.ml_pack_id,
                     g.canonical_sku,
                     g.ml_dedup_status,
-                    g.run_id
+                    g.run_id{family_select}
                 FROM latest_dedup_runs AS latest
                 JOIN dedup_sku_nodes AS n
                   ON n.run_id = latest.run_id
                 JOIN dedup_sku_groups AS g
                   ON g.run_id = n.run_id AND g.node_id = n.node_id
+                {family_join}
             )
             SELECT
                 {base_select}{dedup_select}

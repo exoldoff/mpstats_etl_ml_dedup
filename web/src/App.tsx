@@ -3650,7 +3650,7 @@ function ExportWorkspace(props: {
             <Toggle label="Разными файлами по категориям" checked={props.splitByCategory} onChange={props.onSplitByCategoryChange} />
             <Toggle
               label={props.dedupEnabled ? "Дедупликация ON" : "Дедупликация OFF"}
-              hint="ON заменяет значения в колонке SKU на ML-канонические названия для найденных дублей. OFF выгружает исходный SKU из куба."
+              hint="ON заменяет SKU на нормализованное название базового товара. Вес и фасовка остаются в отдельных колонках. OFF выгружает исходный SKU из куба."
               checked={props.dedupEnabled}
               onChange={props.onDedupEnabledChange}
             />

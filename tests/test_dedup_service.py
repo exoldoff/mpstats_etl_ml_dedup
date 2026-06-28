@@ -508,17 +508,82 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     assert after_count == before_count
 
 
-def test_flat_export_dedup_toggle_replaces_sku_with_canonical_without_changing_rows(tmp_path: Path) -> None:
+def test_flat_export_dedup_toggle_replaces_sku_with_family_title_without_changing_rows(tmp_path: Path) -> None:
     service, repository, _, settings = make_service(tmp_path)
-    seed_dedup_cube(repository, settings, tmp_path, rows_count=3)
-    run = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    rows = [
+        {
+            "Маркетплейс": "Ozon",
+            "Категория": "Кокосовое масло",
+            "Артикул": "COCO-180-1",
+            "SKU": "Кокосовое масло Aroy-D Extra Virgin 180 мл",
+            "Бренд": "Aroy-D",
+            "Подкатегория": "Нерафинированное",
+            "Продажи, шт": "50",
+            "Выручка, руб": "5000",
+            "Вес, кг": "0.18",
+            "Вес, кг (ед.)": "0.18",
+        },
+        {
+            "Маркетплейс": "Ozon",
+            "Категория": "Кокосовое масло",
+            "Артикул": "COCO-180-2",
+            "SKU": "Кокосовое масло AROY-D Extra Virgin 180 мл, набор: 2 штуки",
+            "Бренд": "Aroy-D",
+            "Подкатегория": "Нерафинированное",
+            "Продажи, шт": "40",
+            "Выручка, руб": "4000",
+            "Вес, кг": "0.36",
+            "Вес, кг (ед.)": "0.18",
+        },
+        {
+            "Маркетплейс": "Ozon",
+            "Категория": "Кокосовое масло",
+            "Артикул": "COCO-450-1",
+            "SKU": "Масло кокосовое Aroy-D нерафинированное, 450мл",
+            "Бренд": "Aroy-D",
+            "Подкатегория": "Нерафинированное",
+            "Продажи, шт": "30",
+            "Выручка, руб": "3000",
+            "Вес, кг": "0.45",
+            "Вес, кг (ед.)": "0.45",
+        },
+    ]
+    source_file = tmp_path / "dedup-export-coconut.csv"
+    write_semicolon_csv(pd.DataFrame(rows), source_file)
+    inserted = repository.import_products_file_idempotent(
+        run_id="run-dedup-export-coconut",
+        csv_path=source_file,
+        table_name=settings.products_table,
+        project_name="unit",
+        year=2026,
+        month=5,
+        marketplace_code="oz",
+        category_key="coconut",
+        category_name="Кокосовое масло",
+        overwrite=False,
+    )
+    repository.upsert_cube_entry(
+        {
+            "project_name": "unit",
+            "year": 2026,
+            "month": 5,
+            "marketplace": "Ozon",
+            "marketplace_code": "oz",
+            "category_key": "coconut",
+            "category_name": "Кокосовое масло",
+            "rows_count": inserted,
+            "source_processed_file_path": str(source_file),
+            "file_hash": "dedup-export-coconut",
+        }
+    )
+    run = service.start_runs(project_name="unit", category_keys=["coconut"], wait=True)["runs"][0]
     assert run["status"] == "success"
 
     base_export = repository.fetch_export_products_dataframe(
         table_name=settings.products_table,
         project_name="unit",
         output_columns=["SKU"],
-        category_keys=["sauce"],
+        category_keys=["coconut"],
         limit=10,
         dedup_enabled=False,
     )
@@ -526,23 +591,34 @@ def test_flat_export_dedup_toggle_replaces_sku_with_canonical_without_changing_r
         table_name=settings.products_table,
         project_name="unit",
         output_columns=["SKU"],
-        category_keys=["sauce"],
+        category_keys=["coconut"],
         limit=10,
         dedup_enabled=True,
     )
 
     assert len(base_export) == len(dedup_export) == 3
     assert set(base_export["SKU"].tolist()) == {
-        "Томатный соус 1 500 г",
-        "Томатный соус 2 500 г",
-        "Томатный соус 3 500 г",
+        "Кокосовое масло Aroy-D Extra Virgin 180 мл",
+        "Кокосовое масло AROY-D Extra Virgin 180 мл, набор: 2 штуки",
+        "Масло кокосовое Aroy-D нерафинированное, 450мл",
     }
-    assert set(dedup_export["SKU"].tolist()) == {"Томатный соус 3 500 г"}
+    assert set(dedup_export["SKU"].tolist()) == {"Кокосовое масло"}
     assert "ML-группа товара" not in repository.export_visible_columns(
         table_name=settings.products_table,
         project_name="unit",
         dedup_enabled=True,
     )
+    export_path = tmp_path / "flat-dedup-coconut.csv"
+    repository.export_products_to_csv(
+        table_name=settings.products_table,
+        target=export_path,
+        project_name="unit",
+        output_columns=["SKU"],
+        category_keys=["coconut"],
+        dedup_enabled=True,
+    )
+    csv_export = pd.read_csv(export_path, sep=";", encoding="utf-8-sig")
+    assert set(csv_export["SKU"].tolist()) == {"Кокосовое масло"}
 
 
 def test_dedup_browser_uses_single_canonical_for_multi_source_pack_group(tmp_path: Path) -> None:
