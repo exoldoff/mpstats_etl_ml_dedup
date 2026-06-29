@@ -1420,10 +1420,11 @@ Category-run, DuckDB path, размеры выборок, FAISS/reranker-пар�
 `research/dedup/data/coconut_oil/`, `artifacts/reports/coconut_oil/`,
 `research/dedup/data/soap/`, `artifacts/reports/soap/`.
 
-Перед выполнением research-ноутбуков установите зависимости для embedding
-blocking:
+Перед выполнением research-ноутбуков установите базовые зависимости и
+research extras для embedding blocking:
 
 ```bash
+python3 -m pip install -r requirements.txt
 python3 -m pip install -r requirements-research.txt
 ```
 
@@ -1588,9 +1589,10 @@ Telegram-бот из `tools/dedup_labeling_bot/`. Он работает с те�
 локальной SQLite-базе рядом с CSV. Это не production-БД и не часть
 `mpstats_app`.
 
-Сначала обновите research-зависимости:
+Сначала обновите базовые и research-зависимости:
 
 ```bash
+python3 -m pip install -r requirements.txt
 python3 -m pip install -r requirements-research.txt
 ```
 
@@ -1980,10 +1982,12 @@ Jina v3 удобна для эксперимента, но перед production
 отдельно проверить лицензионные условия.
 
 Если в таблице статусов все reranker-модели падают с ошибкой про
-`huggingface_hub` или `logging`, обновите research-зависимости в том Python,
-который выбран как Jupyter kernel, и перезапустите kernel:
+`huggingface_hub`, `logging` или отсутствующие библиотеки визуализации,
+обновите базовые и research-зависимости в том Python, который выбран как
+Jupyter kernel, и перезапустите kernel:
 
 ```bash
+python3 -m pip install -U -r requirements.txt
 python3 -m pip install -U -r requirements-research.txt
 ```
 
