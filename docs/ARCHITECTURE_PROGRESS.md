@@ -89,12 +89,37 @@
   `connected_family_id` / `connected_pack_id`.
 - Для демонстрации результата на реальных строках DuckDB теперь используется
   `notebooks/05_grouped_sku_demo.ipynb`: он сам берёт маленький срез похожих
-  SKU из `mpstats_products`, прогоняет bi-encoder embeddings + FAISS +
-  cross-encoder, собирает группы и показывает дерево `каноничный SKU ->
-  входящие SKU` с агрегатами куба. Demo default использует локальный
-  fine-tuned cross-encoder `ft_bge_reranker_v2_m3` через отдельный
-  notebook-config, потому что этот метод не является alias-ом общего
-  `model_registry`.
+  SKU из `mpstats_products`, прогоняет bi-encoder embeddings + FAISS,
+  опционально включает cross-encoder, собирает группы и показывает дерево
+  `каноничный SKU -> входящие SKU` с агрегатами куба. Demo-config содержит
+  локальный fine-tuned cross-encoder `ft_bge_reranker_v2_m3`, потому что этот
+  метод не является alias-ом общего `model_registry`, но безопасный default
+  держит `MY_SKIP_CROSS_ENCODER=True`; для Mac first-run cross-encoder нужно
+  включать явно с CPU device, маленьким batch и небольшим лимитом пар.
+
+## 2026-07-01 — Safe cross-encoder mode for notebook 05
+
+### Зачем
+
+`05_grouped_sku_demo.ipynb` был демонстрационным notebook, но по умолчанию
+сразу пытался грузить fine-tuned BGE cross-encoder. На Apple Silicon это
+может увести модель в MPS/unified memory и зависнуть или убить kernel уже на
+ячейке rerank, хотя сам demo-flow должен быть безопасным для первого запуска.
+
+### Что сделано
+
+- Cross-encoder в notebook 05 теперь отключён по умолчанию:
+  `MY_SKIP_CROSS_ENCODER=True`.
+- Если cross-encoder отключён, scoring cell больше не резолвит локальный
+  `model_path` и не трогает модель; notebook явно использует
+  `bi_encoder_fallback`.
+- Для ручного включения добавлены безопасные Mac-дефолты:
+  `MY_CROSS_ENCODER_DEVICE="cpu"`, `MY_CROSS_ENCODER_BATCH_SIZE=8`,
+  `MY_CROSS_ENCODER_PAIR_LIMIT=80`.
+
+### Проверки
+
+См. финальный ответ текущего изменения.
 
 ## 2026-07-01 — Markdown cleanup and consolidated technical notes
 

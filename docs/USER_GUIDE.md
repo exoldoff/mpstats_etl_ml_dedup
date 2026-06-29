@@ -1434,6 +1434,14 @@ python3 -m pip install -r requirements.txt
 секретов, model cache и пути к DuckDB. Outputs в git не хранятся: после
 изменения параметров запускайте нужный notebook сверху вниз.
 
+В `notebooks/05_grouped_sku_demo.ipynb` cross-encoder по умолчанию отключён
+флагом `MY_SKIP_CROSS_ENCODER=True`, чтобы первый demo-прогон не грузил
+fine-tuned BGE модель на Mac. Сначала проверьте notebook в таком режиме: он
+дойдёт до дерева SKU через `bi_encoder_fallback`. Для проверки reranker
+поставьте `MY_SKIP_CROSS_ENCODER=False`, оставьте
+`MY_CROSS_ENCODER_DEVICE="cpu"` и начинайте с маленьких значений
+`MY_CROSS_ENCODER_PAIR_LIMIT=80` и `MY_CROSS_ENCODER_BATCH_SIZE=8`.
+
 В `notebooks/00_eda.ipynb` есть опциональный первый EDA-блок для почтового
 архива PST/OST: он через `pypff` из pip-пакета `libpff-python` считает письма
 с MPStats/ecom/marketplace-ключевыми словами, показывает месячную динамику,
