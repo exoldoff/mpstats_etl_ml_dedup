@@ -1,12 +1,2 @@
-faiss-cpu>=1.8
-accelerate>=0.30
-datasets>=2.20
-huggingface-hub>=0.20
-igraph>=0.11
-ipywidgets>=8.1
-leidenalg>=0.10
-peft>=0.11
-plotly>=5.22
-python-telegram-bot>=22.5
-sentence-transformers>=5.0
-transformers>=4.51
+# Compatibility alias: all Python dependencies now live in requirements.txt.
+-r requirements.txt

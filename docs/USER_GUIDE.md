@@ -1420,12 +1420,10 @@ Category-run, DuckDB path, размеры выборок, FAISS/reranker-пар�
 `research/dedup/data/coconut_oil/`, `artifacts/reports/coconut_oil/`,
 `research/dedup/data/soap/`, `artifacts/reports/soap/`.
 
-Перед выполнением research-ноутбуков установите базовые зависимости и
-research extras для embedding blocking:
+Перед выполнением research-ноутбуков установите общий список зависимостей:
 
 ```bash
 python3 -m pip install -r requirements.txt
-python3 -m pip install -r requirements-research.txt
 ```
 
 Активный research-flow `notebooks/00_eda.ipynb` ->
@@ -1437,14 +1435,15 @@ python3 -m pip install -r requirements-research.txt
 изменения параметров запускайте нужный notebook сверху вниз.
 
 В `notebooks/00_eda.ipynb` есть опциональный первый EDA-блок для почтового
-архива PST/OST: он через `pypff`/`libpff` считает письма с MPStats/ecom/
-marketplace-ключевыми словами, показывает месячную динамику, долю тем
-пирогом, топ доменов-отправителей и сохраняет агрегаты в
-`artifacts/reports/mail_archive_eda/`. Для запуска на машине с архивом
-установите `sudo apt install python3-pypff pff-tools`, задайте
-`MY_MAIL_ARCHIVE_PATH` и включите `MY_RUN_MAIL_ARCHIVE_EDA = True` в первой
-code-ячейке. Тело писем не экспортируется в CSV: оно используется только для
-поиска ключевых слов.
+архива PST/OST: он через `pypff` из pip-пакета `libpff-python` считает письма
+с MPStats/ecom/marketplace-ключевыми словами, показывает месячную динамику,
+долю тем пирогом, топ доменов-отправителей и сохраняет агрегаты в
+`artifacts/reports/mail_archive_eda/`. Для запуска установите
+`requirements.txt`, задайте `MY_MAIL_ARCHIVE_PATH` и включите
+`MY_RUN_MAIL_ARCHIVE_EDA = True` в первой code-ячейке. Системные `pff-tools`
+нужны только если вы отдельно хотите пользоваться CLI-утилитами libpff.
+Тело писем не экспортируется в CSV: оно используется только для поиска
+ключевых слов.
 
 `notebooks/01_candidate_generation.ipynb` строит большой пул пар-кандидатов.
 Основной слой — dense embeddings и FAISS top-k: FAISS отвечает за поиск
@@ -1589,11 +1588,10 @@ Telegram-бот из `tools/dedup_labeling_bot/`. Он работает с те�
 локальной SQLite-базе рядом с CSV. Это не production-БД и не часть
 `mpstats_app`.
 
-Сначала обновите базовые и research-зависимости:
+Сначала обновите общий список зависимостей:
 
 ```bash
 python3 -m pip install -r requirements.txt
-python3 -m pip install -r requirements-research.txt
 ```
 
 Запуск на конкретном CSV:
@@ -1983,12 +1981,11 @@ Jina v3 удобна для эксперимента, но перед production
 
 Если в таблице статусов все reranker-модели падают с ошибкой про
 `huggingface_hub`, `logging` или отсутствующие библиотеки визуализации,
-обновите базовые и research-зависимости в том Python, который выбран как
-Jupyter kernel, и перезапустите kernel:
+обновите общий список зависимостей в том Python, который выбран как Jupyter
+kernel, и перезапустите kernel:
 
 ```bash
 python3 -m pip install -U -r requirements.txt
-python3 -m pip install -U -r requirements-research.txt
 ```
 
 После `03` запустите `04_fusion_pack_grouping.ipynb`. Он не запускает модели

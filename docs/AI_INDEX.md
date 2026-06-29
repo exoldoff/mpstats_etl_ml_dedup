@@ -326,12 +326,10 @@ python3 -m compileall research/dedup
 
 Notebook smoke через `nbclient`:
 
-Для research-ноутбуков предварительно нужны базовые зависимости и research
-extras:
+Для research-ноутбуков достаточно общего списка зависимостей:
 
 ```bash
 python3 -m pip install -r requirements.txt
-python3 -m pip install -r requirements-research.txt
 ```
 
 ```bash
