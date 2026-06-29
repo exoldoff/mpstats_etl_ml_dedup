@@ -44,7 +44,7 @@ RUN python3 -m pip install \
 RUN python3 -m pip install -r requirements-research.txt
 
 COPY research ./research
-COPY docs/DEDUP_FINE_TUNING_EXPERIMENT_PLAN.md docs/DEDUP_TRAINING_RUNBOOK.md ./docs/
+COPY docs/ARCHITECTURE.md docs/ARCHITECTURE_PROGRESS.md docs/USER_GUIDE.md ./docs/
 COPY docker/dedup-training/entrypoint.sh /usr/local/bin/dedup-training
 
 RUN chmod +x /usr/local/bin/dedup-training \

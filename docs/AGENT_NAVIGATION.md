@@ -51,11 +51,11 @@
 | --- | --- | --- | --- | --- |
 | Agent onboarding, навигация, документация | `AGENTS.md`, `docs/AI_INDEX.md`, этот файл, `README.md` | `AGENTS.md`, `docs/*.md`, `README.md` | Не трогать app/pipeline/research-код | `git diff --check` |
 | Production web-app UI/API | `docs/AI_INDEX.md`, `docs/USER_GUIDE.md`, релевантные route/service/component | `mpstats_app/`, `web/`, `tests/` | Не добавлять CLI/notebook/desktop GUI | `python3 -m pytest tests/test_web_api.py` или более узкий тест |
-| Pipeline processing | `docs/PIPELINE_OVERVIEW.md`, `docs/AI_INDEX.md` | `pipeline/services/`, `pipeline/repositories/` | Не менять UI и analytics/output columns без запроса | `python3 -m compileall pipeline classifiers mpstats_app` плюс релевантный pytest |
+| Pipeline processing | `docs/AI_INDEX.md`, `docs/ARCHITECTURE_PROGRESS.md`, relevant service/repository | `pipeline/services/`, `pipeline/repositories/` | Не менять UI и analytics/output columns без запроса | `python3 -m compileall pipeline classifiers mpstats_app` плюс релевантный pytest |
 | Schema, SQL, repository, model | `docs/AI_INDEX.md`, relevant repository/migration/test | `pipeline/migrations/`, repositories, models, tests | Не менять schema без DB impact, миграции и теста | Миграционный/репозиторный тест плюс DB impact в финале |
 | Классификатор | `docs/AI_INDEX.md`, `docs/USER_GUIDE.md` | `classifiers/rules.csv`, `classifiers/engine.py`, `mpstats_app/services/classifier_rules_service.py` | Не нормализовать бизнес-значения правил без запроса | `python3 -m compileall classifiers` плюс релевантный тест |
-| Справочник категорий и `TASKS` | `docs/AI_INDEX.md`, `.cursor/agents/mpstats-tasks-handbook.md`, `filter.md` | `Справочник категорий MP STATS.csv`, `TASKS`, архив задач | Не нормализовать пробелы, регистр, filters или path | Точечный diff справочника/задач |
-| Research SKU dedup | `docs/ARCHITECTURE.md`, `docs/ARCHITECTURE_PROGRESS.md`, relevant DEDUP docs | `research/dedup/`, `notebooks/`, research docs | Не переносить в `pipeline/` или `mpstats_app/` до выбора технологии | `python3 -m pytest research/dedup/tests` и/или `python3 -m compileall research/dedup` |
+| Справочник категорий и `TASKS` | `AGENTS.md`, `docs/AI_INDEX.md`, `docs/USER_GUIDE.md` | `Справочник категорий MP STATS.csv`, `TASKS`, `pipeline/step1_config.py` | Не нормализовать пробелы, регистр, filters или path | Точечный diff справочника/задач |
+| Research SKU dedup | `docs/ARCHITECTURE.md`, `docs/ARCHITECTURE_PROGRESS.md`, relevant notebook/module | `research/dedup/`, `notebooks/`, architecture docs | Не переносить в `pipeline/` или `mpstats_app/` до выбора технологии | `python3 -m pytest research/dedup/tests` и/или `python3 -m compileall research/dedup` |
 | Notebook/report work | `docs/ARCHITECTURE_PROGRESS.md`, нужный notebook, relevant research module | `notebooks/`, `research/dedup/`, `artifacts/reports/` | Не убирать inline-визуализации из research notebooks | Узкий `nbclient` smoke, если зависимости и данные доступны |
 | Telegram labeling tools | `docs/AI_INDEX.md`, `docs/USER_GUIDE.md`, relevant bot files | `tools/dedup_labeling_bot/`, labeling docs/data contracts | Не смешивать с notebook sampling logic | Узкий pytest/compile для bot/research modules |
 | Анализ CSV/DB artifacts | Точный путь из запроса, `docs/AI_INDEX.md` для контракта | Только указанные artifacts и минимальные helper-команды | Не менять код, если пользователь просит выводы | Скрипт/SQL, который читает конкретные файлы |
@@ -72,8 +72,11 @@
 | `docs/ARCHITECTURE_PROGRESS.md` | Mutable research-журнал | Что уже сделано, какие artifacts актуальны, какие проверки прошли. |
 | `docs/USER_GUIDE.md` | Пользовательская инструкция | Любые изменения UI, workflow, расчётов, статусов, справочника, классификатора. |
 | `README.md` | Человеческий вход | Краткий запуск, возможности, основные документы. |
-| `docs/PIPELINE_OVERVIEW.md` | Pipeline overview | Объяснение текущих шагов pipeline и архитектурных tradeoffs. |
-| `docs/DEDUP_*.md` | Узкие research runbooks/reports | Fine-tuning, HF-аудит, production-аудит, threshold calibration. |
+
+Узкие runbook-и, audits и historical reports больше не живут отдельными
+Markdown-файлами. Технические детали и результаты этапов фиксируются в
+`docs/ARCHITECTURE_PROGRESS.md`, а команды запуска и пользовательские сценарии
+— в `docs/USER_GUIDE.md`.
 
 ## Правила уборки документации
 

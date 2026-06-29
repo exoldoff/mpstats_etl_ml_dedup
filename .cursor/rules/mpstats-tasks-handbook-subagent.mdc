@@ -1,5 +1,5 @@
 ---
-description: Заполнение/обновление TASKS — делегировать субагенту mpstats-tasks-handbook
+description: Заполнение/обновление TASKS по справочнику категорий MPStats
 globs: "**/MPstats_export*.ipynb"
 alwaysApply: false
 ---
@@ -8,8 +8,14 @@ alwaysApply: false
 
 Когда пользователь просит **заполнить**, **обновить** или **синхронизировать** список **`TASKS`** в пайплайне MPStats по **CSV-справочнику категорий** (или эквивалентный запрос):
 
-1. **Не делай** перенос строк CSV → `TASKS` самостоятельно в основном агенте.
-2. **Делегируй** работу субагенту **`mpstats-tasks-handbook`** (инструмент задач / Task с `subagent_type: "mpstats-tasks-handbook"`).
-3. Ориентир по правилам и отчёту пользователю: **`.cursor/agents/mpstats-tasks-handbook.md`**.
+1. Используй правила из `AGENTS.md`, `docs/AGENT_NAVIGATION.md` и
+   пользовательское описание справочника в `docs/USER_GUIDE.md`.
+2. Источник правды — только CSV `Справочник категорий MP STATS.csv`; Excel
+   дубликаты и старые архивы не использовать.
+3. `path`, `cat` и строки фильтров копируй буквально. Для `filterModel.name`
+   используй `contains`, `notContains` или комбинированную модель с
+   `operator`, `condition1`, `condition2`.
+4. Если нужен технический backup `TASKS`, сохраняй его в ignored-зону
+   `artifacts/task_archives/`, а не в новый Markdown-файл.
 
 Исключение: пользователь **явно** просит обойти субагента или править только одну строку без справочника — тогда можно править напрямую.

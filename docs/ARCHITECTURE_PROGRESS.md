@@ -96,6 +96,132 @@
   notebook-config, потому что этот метод не является alias-ом общего
   `model_registry`.
 
+## 2026-07-01 — Markdown cleanup and consolidated technical notes
+
+### Зачем
+
+Документация была раздроблена на много отдельных Markdown-аудитов, runbook-ов
+и презентационных карт. Это мешало быстро понять, где источник правды. После
+уборки активными Markdown-документами остаются только:
+
+- `AGENTS.md`;
+- `README.md`;
+- `docs/AI_INDEX.md`;
+- `docs/AGENT_NAVIGATION.md`;
+- `docs/ARCHITECTURE.md`;
+- `docs/ARCHITECTURE_PROGRESS.md`;
+- `docs/USER_GUIDE.md`;
+- `notebooks/README.md`.
+
+Удаляемые tracked Markdown-файлы перед удалением сохранены в ignored backup:
+`artifacts/backups/markdown_docs_cleanup/20260701_180631/`.
+
+### Pipeline technical summary
+
+Основной пользовательский workflow живёт в `mpstats_app/` + `web/`.
+Текущий data flow:
+
+```text
+Справочник категорий MP STATS.csv
+  -> download_tasks / pipeline_runs в DuckDB
+MPStats API
+  -> raw CSV
+  -> processed CSV
+  -> classified CSV
+  -> mpstats.duckdb: mpstats_products + cube_registry
+  -> dedup_* identity tables + mpstats_products_dedup
+  -> reports / exports
+```
+
+Pandas остаётся на файловом этапе: чтение raw CSV, подготовка processed CSV,
+классификация, ручные override и запись промежуточных CSV. DuckDB/SQL
+используется после попадания данных в куб: статусы запусков, импорт
+classified-файлов, защита от дублей срезов, `cube_registry`, отчёты, exports,
+quality checks и production ML-dedup identity tables.
+
+Классификатор пока не перенесён полностью в SQL, потому что правила завязаны
+на приоритеты, `fill_empty`/`overwrite`, `otherwise`, создание колонок,
+ручные правки и отчётность `candidate_rows` / `applied_rows`. Безопасный путь
+ускорения — сначала сделать DuckDB-реализацию для CSV и тестом сравнить её с
+pandas-результатом на одном входе.
+
+### Threshold and model notes
+
+SKU matching benchmark использует forced binary contract:
+
+```python
+predicted_binary = 1 if score >= threshold_same else 0
+```
+
+`same_base_product=1` для `exact_duplicate` и legacy
+`same_product_different_pack`; `same_base_product=0` для
+`different_product`. Threshold выбирается только на `dev`; `test` нужен только
+для финального readout. Основные стратегии: `threshold_max_f1`,
+`threshold_cost_sensitive`, `threshold_max_weighted_f1`,
+`threshold_weighted_cost`. Бизнес-вес ошибки строится по объёму продаж:
+`pair_weight = log1p(max(sales_volume_a, sales_volume_b))`. Если объём нельзя
+подтянуть, unweighted fallback считается диагностикой, не финальным выбором.
+
+Ключевые model-audit решения:
+
+- E5 (`intfloat/multilingual-e5-small/base`) использовать с prefix `query: `
+  для symmetric SKU-to-SKU similarity; SentenceTransformers-модуль уже делает
+  mean pooling + normalize.
+- BERTA — sentence embedding model с mean pooling + normalize; при расширении
+  smoke-тестов проверять не только `paraphrase: `, но и `categorize: ` /
+  `categorize_entailment: `.
+- RuModernBERT — raw Masked LM, не sentence embedding model; mean pooling там
+  экспериментальная эвристика, результаты читать как raw-encoder baseline.
+- Qwen3 Embedding использует last-token pooling и instruction-aware query side;
+  для local HF path не заменять это ручным mean pooling.
+- Reranker/cross-encoder модели асимметричны по природе query-document. Для SKU
+  пар отдельно проверять `score(a,b)`, `score(b,a)`, `avg` и `max`, если это
+  влияет на новый метод.
+- `jinaai/jina-reranker-v3` требует `trust_remote_code=True` и является
+  listwise reranker; перед production-использованием отдельно проверять
+  лицензию и runtime envelope.
+
+### Fine-tuning and GPU run notes
+
+Training scripts живут в `research/dedup/training/`, а не в notebooks:
+
+- `prepare_dataset.py` мержит current labeling CSV, Telegram SQLite sidecar и
+  старый sauce set, выносит conflicts/uncertain отдельно и строит split.
+- `train_pair_classifier.py` обучает sequence-classification pair model.
+- `train_cross_encoder.py` обучает SentenceTransformers CrossEncoder /
+  reranker.
+- `score_pair_classifier.py` и `score_cross_encoder.py` пишут score CSV по
+  frozen split.
+- `calibrate_scores.py` запускает dev/test threshold calibration для готового
+  score CSV.
+
+Команды запуска и Docker-entrypoint-и перенесены в `docs/USER_GUIDE.md`.
+Текущий clean training snapshot:
+`research/dedup/data/training/dedup_pairs_final_split.csv`; pair-stratified
+benchmark split:
+`research/dedup/data/training/dedup_pairs_final_pair_stratified_split.csv`.
+
+### Production dedup optimization notes
+
+Production dedup не должен мутировать monthly facts. Факты остаются в
+`mpstats_products`, а identity layer живёт отдельно:
+`dedup_runs`, `dedup_sku_nodes`, `dedup_sku_edges`, `dedup_sku_groups`,
+`mpstats_products_dedup`.
+
+Production v1 уже сделал главный практический шаг: content-addressed
+embedding cache (`manifest.json`, `node_ids.json`, `embeddings.npy`) и
+in-memory rebuild `IndexFlatIP`. Persisted FAISS mmap/IVF index отложен до
+отдельного recall@k benchmark. Для будущего расширения важны:
+
+- typed artifacts или DuckDB/Parquet contracts вместо CSV-only там, где это
+  production runtime;
+- run manifest с git commit, model alias/id/backend, thresholds, input query,
+  package versions и checksums;
+- safety gates против false merge и graph chaining: max false merge,
+  precision floor, max component size / brand diversity без review;
+- quarantine/review status для рискованных компонент;
+- component-level metrics отдельно от pairwise metrics.
+
 ## 2026-06-30 — Production retrieval embeddings cache
 
 ### Зачем
@@ -369,8 +495,8 @@ notebook-ячеек, без перезаписи старого benchmark и с 
     fine-tuned модели по frozen split и пишут score CSV.
   - `calibrate_scores.py` запускает существующую dev/test threshold calibration
     для fine-tuned score CSV без перезаписи старого benchmark.
-- Добавлен runbook `docs/DEDUP_TRAINING_RUNBOOK.md` с командами локального
-  freeze, A5000-oriented Docker smoke/full training, scoring и calibration.
+- Команды локального freeze, A5000-oriented Docker smoke/full training,
+  scoring и calibration теперь описаны в `docs/USER_GUIDE.md`.
 - `requirements-research.txt` дополнен training-зависимостями:
   `datasets`, `accelerate`, `peft`.
 - Текущая разметка зафиксирована как final clean snapshot
@@ -668,10 +794,9 @@ exact-title дублями с cosine около `1.0`.
     family/pack link metrics;
   - `06_evaluation_report.ipynb` собирает итог по binary benchmark и fusion.
   Позже они объединены в `05_evaluation_report.ipynb`.
-- `docs/AI_INDEX.md`, `docs/ARCHITECTURE.md`,
-  `docs/THRESHOLD_CALIBRATION_REPORT.md` и `docs/USER_GUIDE.md` обновлены под
-  flow `03 -> 04 -> 05 -> 06`; актуальный flow после объединения —
-  `03 -> 04 -> 05`.
+- `docs/AI_INDEX.md`, `docs/ARCHITECTURE.md` и `docs/USER_GUIDE.md`
+  обновлены под flow `03 -> 04 -> 05 -> 06`; актуальный flow после
+  объединения — `03 -> 04 -> 05`.
 
 ### Проверки
 
@@ -718,9 +843,8 @@ exact-title дублями с cosine около `1.0`.
   - `artifacts/reports/binary_threshold_predictions.csv`;
   - `artifacts/reports/binary_threshold_by_volume_bucket.csv`, если sales
     volume доступен.
-- `docs/ARCHITECTURE.md`, `docs/AI_INDEX.md`,
-  `docs/THRESHOLD_CALIBRATION_REPORT.md` и `docs/USER_GUIDE.md` обновлены
-  под новый benchmark.
+- `docs/ARCHITECTURE.md`, `docs/AI_INDEX.md` и `docs/USER_GUIDE.md`
+  обновлены под новый benchmark.
 
 ### Проверки
 
@@ -760,8 +884,9 @@ deduplication: false merge разных товаров опаснее, чем п
   превращается в автосклейку.
 - `notebooks/05_evaluation_report.ipynb` показывает dev calibration как
   главный выборочный отчёт, а test — только как held-out проверку.
-- Добавлен `docs/THRESHOLD_CALIBRATION_REPORT.md` с критерием auto-merge,
-  объяснением, почему `macro_f1` не production-критерий, и списком артефактов.
+- Критерий auto-merge, объяснение, почему `macro_f1` не production-критерий,
+  и список артефактов теперь зафиксированы в этом журнале и
+  `docs/USER_GUIDE.md`.
 
 ### Проверки
 

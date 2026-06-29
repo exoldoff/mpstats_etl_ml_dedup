@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_CONFIG_FILENAME = "step1_export_config.json"
-DEFAULT_ARCHIVE_FILENAME = "справочник tasks архив.md"
+DEFAULT_ARCHIVE_FILENAME = "artifacts/task_archives/tasks_archive.py"
 
 
 def default_config_path(base_dir: str | Path | None = None) -> Path:

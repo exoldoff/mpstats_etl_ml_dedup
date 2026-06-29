@@ -63,16 +63,13 @@ MPStats cookie хранится только локально. Локальна�
 
 ## Документация
 
-- `docs/JURY_GUIDE.md` — короткая карта проекта для жюри и защиты.
-- `notebooks/README.md` — порядок research-ноутбуков по SKU-дедупликации.
+- `AGENTS.md` — правила работы агентов и границы изменений.
 - `docs/AI_INDEX.md` — быстрый индекс проекта для агентов и разработки.
 - `docs/AGENT_NAVIGATION.md` — система навигации по трекам проекта для агентов.
 - `docs/ARCHITECTURE.md` — архитектура research-направления SKU deduplication.
-- `docs/ARCHITECTURE_PROGRESS.md` — текущий журнал research-этапов.
+- `docs/ARCHITECTURE_PROGRESS.md` — текущий журнал research/production-dedup этапов и технических заметок.
 - `docs/USER_GUIDE.md` — подробная пользовательская инструкция.
-- `docs/THRESHOLD_CALIBRATION_REPORT.md` — как читать cost-sensitive benchmark для SKU matching.
-- `docs/archive/` — старые аудиты и исторические материалы, не основной маршрут для первого чтения.
-- `filter.md` — справочник синтаксиса фильтров MPStats.
+- `notebooks/README.md` — порядок research-ноутбуков по SKU-дедупликации.
 - `Справочник категорий MP STATS.csv` — справочник категорий.
 - `classifiers/rules.csv` — правила классификации.
 
@@ -89,6 +86,11 @@ docker compose config
 `docker compose build` дополнительно проверяет полную сборку образа: frontend
 собирается через `npm ci && npm run build`, backend ставит зависимости из
 `requirements.txt`, а контейнер стартует через healthcheck `/api/health`.
+
+Быстрый маршрут перед защитой: сначала показать web-app как основной продукт,
+затем `notebooks/README.md` и ноутбуки `00`-`05` как исследовательскую историю
+SKU-дедупликации, после этого открыть `docs/ARCHITECTURE.md` для методологии и
+`docs/ARCHITECTURE_PROGRESS.md` для фактически реализованных этапов.
 
 ## License
 

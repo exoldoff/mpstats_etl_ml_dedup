@@ -405,6 +405,13 @@ Excel-дубликаты не считаются источником правд
 - `И` — должны выполниться оба условия;
 - `ИЛИ` — достаточно одного условия.
 
+Технически это сохраняется как `filterModel.name`. Одиночное условие выглядит
+как `{"filterType": "text", "type": "contains", "filter": "текст"}` или
+`notContains`. Два условия сохраняются как комбинированная модель с
+`filterType`, `operator` (`AND`/`OR`), `condition1` и `condition2`. Значения
+фраз копируются из справочника буквально: регистр, пробелы и написание не
+нормализуются автоматически.
+
 **Комментарий**
 
 Поле для рабочих заметок.
@@ -941,8 +948,10 @@ python3 scripts/benchmark_classifier.py run --size large --include-large
 python3 scripts/benchmark_classifier.py compare old_classified.csv new_classified.csv
 ```
 
-Итоговый аудит текущего состояния описан в
-`docs/archive/CLASSIFIER_PERFORMANCE_AUDIT.md`.
+Исторический подробный аудит производительности больше не является отдельным
+пользовательским маршрутом. Для текущей проверки используйте команды выше и
+смотрите фактические `candidate_rows`, `applied_rows` и время выполнения в
+отчётах классификатора.
 
 ## 13.1. Вкладка `Проекты`
 
@@ -1772,6 +1781,39 @@ combo-счёт возвращается, снова запускается 5-м�
 `label`-строки будут сохранены и продублированы в backup
 `*_preserved_labels.csv`. После freeze разметки для reranker benchmark
 запускайте `03` сверху вниз:
+
+Скриптовый training-flow нужен только для research/fine-tuning. Он не входит
+в обычную работу web-app. Базовая последовательность:
+
+```bash
+python3 -m research.dedup.training.prepare_dataset --fail-on-conflicts
+python3 -m research.dedup.training.prepare_dataset
+python3 -m research.dedup.training.export_sales_lookup \
+  --duckdb-path mpstats.duckdb \
+  --output-path research/dedup/data/training/sales_volume_lookup.csv
+```
+
+Для GPU-сервера предпочтителен Docker image:
+
+```bash
+docker build \
+  -f docker/dedup-training/Dockerfile \
+  -t mpstats-dedup-training:cu128 \
+  .
+
+docker run --rm --gpus all \
+  -v "$PWD/research/dedup/data:/workspace/research/dedup/data" \
+  -v "$PWD/artifacts:/workspace/artifacts" \
+  -v "$PWD/.hf_cache:/workspace/.hf_cache" \
+  mpstats-dedup-training:cu128 doctor
+```
+
+Основные entrypoint-команды контейнера: `prepare`, `export-sales-lookup`,
+`smoke-rubert`, `train-rubert`, `train-mmarco`, `train-bge`, `train-qwen`,
+`train-qwen4-lora`, `score-pair`, `score-cross`, `calibrate`. Для Qwen
+используйте `DEDUP_TRAINING_PRECISION=bf16`; по умолчанию calibration требует
+weighted-метрики, отключить это можно только диагностически через
+`DEDUP_REQUIRE_WEIGHTED_CALIBRATION=0`.
 
 ```bash
 python3 - <<'PY'

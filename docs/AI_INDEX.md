@@ -52,19 +52,14 @@
 | `docs/AGENT_NAVIGATION.md` | навигационная система для агентов | docs/onboarding задачи, выбор между треками, нетривиальные изменения |
 | `docs/ARCHITECTURE.md` | источник research-архитектуры | задачи по dedup, matching, evaluation, notebooks, ML-методологии |
 | `docs/ARCHITECTURE_PROGRESS.md` | журнал research-этапов | понять, что уже сделано, какие CSV/ноутбуки/проверки актуальны |
-| `docs/JURY_GUIDE.md` | карта проекта для жюри | быстрый маршрут по repo перед защитой |
-| `docs/THRESHOLD_CALIBRATION_REPORT.md` | критерии SKU matching benchmark | cost-sensitive пороги, manual review, почему macro-F1 не главный критерий |
-| `docs/DEDUP_MODEL_HF_AUDIT.md` | HF-аудит моделей dedup research | prefixes, pooling, prompts, reranker settings, known mismatches |
-| `docs/DEDUP_FINE_TUNING_EXPERIMENT_PLAN.md` | план первого supervised fine-tuning эксперимента SKU dedup | после завершения ручной разметки: состав gold/training set, выбор reranker-моделей, split без leakage, метрики и порядок обучения |
-| `docs/DEDUP_TRAINING_RUNBOOK.md` | команды запуска первого fine-tuning цикла | подготовка frozen split, запуск smoke/full training на H200, scoring fine-tuned моделей и threshold calibration |
-| `docs/DEDUP_PRODUCTION_OPTIMIZATION_AUDIT.md` | аудит прод-готовности dedup flow | что оптимизировать перед переносом из notebooks/research в production: FAISS/mmap, artifacts, manifests, safety gates |
 | `README.md` | краткий обзор | запуск, структура, состояние проекта |
 | `notebooks/README.md` | порядок research notebooks | как читать и запускать конкурсную notebook-историю |
 | `docs/USER_GUIDE.md` | пользовательская инструкция web-app | изменения UI, workflow, расчётов, статусов, справочника, классификатора |
-| `docs/PIPELINE_OVERVIEW.md` | краткое объяснение pipeline | вопросы про текущие шаги pipeline и pandas/SQL |
-| `filter.md` | справочник MPStats-фильтров | задачи с `filterModel` и CSV-колонкой `Фильтр` |
-| `.cursor/agents/mpstats-tasks-handbook.md` | узкий handbook | обновление `TASKS` из CSV-справочника |
-| `справочник tasks архив.md` | append-only архив | после обновления `TASKS`, только дописывать недостающие задачи |
+
+Отдельные Markdown-аудиты, runbook-и и архивные отчёты схлопнуты в эту
+короткую карту, `docs/ARCHITECTURE_PROGRESS.md` и `docs/USER_GUIDE.md`.
+Новые `.md`-файлы добавляй только если пользователь явно просит отдельный
+артефакт.
 
 ## Research Dedup: текущая архитектура
 
@@ -131,7 +126,6 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `notebooks/03_matching_comparison.ipynb` | сравнение baseline/reranker methods на размеченном gold-set выбранного run |
 | `notebooks/04_fusion_pack_grouping.ipynb` | post-03 fusion для одного или нескольких category-runs, family/pack grouping, graph-quality диагностика, 3D components и CSV `fusion_*_<suffix>.csv` |
 | `notebooks/05_grouped_sku_demo.ipynb` | demo-flow дедупликатора: DuckDB-кандидаты -> bi-encoder/FAISS -> cross-encoder -> группы SKU |
-| `docs/archive/` | исторические аудиты и устаревшие отчёты: полезный контекст, но не основной маршрут для жюри |
 | `docs/assets/` | вспомогательные картинки/CSV для документов; не runtime-артефакты pipeline |
 
 Локальные CSV/backup/model artifacts — рабочие данные, они не коммитятся и
@@ -191,8 +185,8 @@ fine-tuning outputs и report paths смотри в `docs/ARCHITECTURE_PROGRESS.
   `ModelManager` управляет локальным кэшем `research/dedup/models/`,
   in-process pool и offline-флагом `DEDUP_MODEL_LOCAL_ONLY=1`.
   Cache dir можно заменить через `DEDUP_MODEL_CACHE_DIR`.
-- Перед добавлением/сменой embedding/reranker модели смотри
-  `docs/DEDUP_MODEL_HF_AUDIT.md`: там зафиксированы HF prefixes, pooling,
+- Перед добавлением/сменой embedding/reranker модели смотри consolidated notes
+  в `docs/ARCHITECTURE_PROGRESS.md`: там зафиксированы HF prefixes, pooling,
   prompts, max length и known mismatches для E5, BERTA, RuModernBERT, Qwen,
   BGE, Jina и cross-encoders.
 - Online embedding-модели подключаются только через Polza.ai backend:
