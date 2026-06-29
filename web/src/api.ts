@@ -126,6 +126,10 @@ export type DedupSettings = {
   threshold_same: number;
   category_thresholds: Record<string, number>;
   faiss_top_k: number;
+  graph_grouping_algorithm: string;
+  graph_community_resolution: number;
+  graph_community_seed: number | null;
+  graph_edge_weight_col: string;
   embedding_batch_size: number;
   cross_encoder_batch_size: number;
   retrieval_cache_enabled: boolean;

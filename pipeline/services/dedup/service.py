@@ -23,6 +23,11 @@ from pipeline.services.dedup.retrieval_cache import (
     RETRIEVAL_TEXT_BUILDER_VERSION,
     RetrievalEmbeddingCache,
 )
+from pipeline.services.dedup.graph_grouping import (
+    GraphGroupingConfig,
+    build_family_components,
+    normalize_graph_algorithm,
+)
 
 
 DEDUP_SETTINGS_KEY = "dedup_settings_json"
@@ -30,6 +35,10 @@ DEDUP_MODEL_PATH_ENV = "DEDUP_FINE_TUNED_MODEL_PATH"
 DEDUP_TOP_K = 30
 DEDUP_THRESHOLD_STRATEGY = "threshold_weighted_cost"
 DEDUP_THRESHOLD_SAME = 0.872321
+DEDUP_GRAPH_GROUPING_ALGORITHM = "leiden"
+DEDUP_GRAPH_COMMUNITY_RESOLUTION = 0.1
+DEDUP_GRAPH_COMMUNITY_SEED = 42
+DEDUP_GRAPH_EDGE_WEIGHT_COL = "score"
 DEDUP_CATEGORY_THRESHOLDS = {
     "sauces": 0.917444,
     "coconut_oil": 0.872321,
@@ -79,6 +88,10 @@ class DedupProfile:
     threshold_same: float = DEDUP_THRESHOLD_SAME
     category_thresholds: dict[str, float] = field(default_factory=lambda: dict(DEDUP_CATEGORY_THRESHOLDS))
     faiss_top_k: int = DEDUP_TOP_K
+    graph_grouping_algorithm: str = DEDUP_GRAPH_GROUPING_ALGORITHM
+    graph_community_resolution: float = DEDUP_GRAPH_COMMUNITY_RESOLUTION
+    graph_community_seed: int | None = DEDUP_GRAPH_COMMUNITY_SEED
+    graph_edge_weight_col: str = DEDUP_GRAPH_EDGE_WEIGHT_COL
     embedding_batch_size: int = 64
     cross_encoder_batch_size: int = 32
 
@@ -103,6 +116,19 @@ class DedupProfile:
                 minimum=1,
                 maximum=100,
             ),
+            graph_grouping_algorithm=normalize_graph_algorithm(
+                tracked.get("graph_grouping_algorithm") or DEDUP_GRAPH_GROUPING_ALGORITHM
+            ),
+            graph_community_resolution=_positive_float(
+                tracked.get("graph_community_resolution"),
+                default=DEDUP_GRAPH_COMMUNITY_RESOLUTION,
+            ),
+            graph_community_seed=_optional_int(
+                tracked.get("graph_community_seed"),
+                default=DEDUP_GRAPH_COMMUNITY_SEED,
+            ),
+            graph_edge_weight_col=str(tracked.get("graph_edge_weight_col") or DEDUP_GRAPH_EDGE_WEIGHT_COL).strip()
+            or DEDUP_GRAPH_EDGE_WEIGHT_COL,
             embedding_batch_size=max(1, int(payload.get("embedding_batch_size") or 64)),
             cross_encoder_batch_size=max(1, int(payload.get("cross_encoder_batch_size") or 32)),
         )
@@ -119,6 +145,10 @@ class DedupProfile:
             "threshold_same": self.threshold_same,
             "category_thresholds": dict(self.category_thresholds),
             "faiss_top_k": self.faiss_top_k,
+            "graph_grouping_algorithm": self.graph_grouping_algorithm,
+            "graph_community_resolution": self.graph_community_resolution,
+            "graph_community_seed": self.graph_community_seed,
+            "graph_edge_weight_col": self.graph_edge_weight_col,
             "embedding_batch_size": self.embedding_batch_size,
             "cross_encoder_batch_size": self.cross_encoder_batch_size,
         }
@@ -140,6 +170,14 @@ class DedupProfile:
         return replace(
             self,
             threshold_same=self.threshold_for_category(category_key=category_key, category_name=category_name),
+        )
+
+    def graph_config(self) -> GraphGroupingConfig:
+        return GraphGroupingConfig(
+            algorithm=self.graph_grouping_algorithm,
+            edge_weight_col=self.graph_edge_weight_col,
+            resolution=self.graph_community_resolution,
+            seed=self.graph_community_seed,
         )
 
 
@@ -221,6 +259,23 @@ def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> 
     except (TypeError, ValueError):
         number = int(default)
     return max(minimum, min(maximum, number))
+
+
+def _positive_float(value: object, *, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = float(default)
+    return number if math.isfinite(number) and number > 0 else float(default)
+
+
+def _optional_int(value: object, *, default: int | None = None) -> int | None:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _model_device(value: object) -> str:
@@ -324,26 +379,6 @@ def _next_sequence_id(prefix: str, existing_ids: set[str]) -> str:
         if candidate not in existing_ids:
             existing_ids.add(candidate)
             return candidate
-
-
-class _UnionFind:
-    def __init__(self, nodes: Sequence[str]) -> None:
-        self.parent = {node: node for node in nodes}
-
-    def find(self, node: str) -> str:
-        parent = self.parent.setdefault(node, node)
-        if parent != node:
-            self.parent[node] = self.find(parent)
-        return self.parent[node]
-
-    def union(self, left: str, right: str) -> None:
-        left_root = self.find(left)
-        right_root = self.find(right)
-        if left_root == right_root:
-            return
-        if right_root < left_root:
-            left_root, right_root = right_root, left_root
-        self.parent[right_root] = left_root
 
 
 class DedupService:
@@ -475,6 +510,10 @@ class DedupService:
                         "source_marketplaces": list(category.get("marketplaces") or []),
                         "runtime_profile": {
                             "model_device": profile.model_device,
+                            "graph_grouping_algorithm": profile.graph_grouping_algorithm,
+                            "graph_community_resolution": profile.graph_community_resolution,
+                            "graph_community_seed": profile.graph_community_seed,
+                            "graph_edge_weight_col": profile.graph_edge_weight_col,
                             "embedding_batch_size": profile.embedding_batch_size,
                             "cross_encoder_batch_size": profile.cross_encoder_batch_size,
                         },
@@ -587,6 +626,19 @@ class DedupService:
                 threshold_same=float(run.get("threshold_same") or DEDUP_THRESHOLD_SAME),
                 category_thresholds=DedupProfile.from_settings({}).category_thresholds,
                 faiss_top_k=int(run.get("faiss_top_k") or DEDUP_TOP_K),
+                graph_grouping_algorithm=normalize_graph_algorithm(
+                    runtime_profile.get("graph_grouping_algorithm") or DEDUP_GRAPH_GROUPING_ALGORITHM
+                ),
+                graph_community_resolution=_positive_float(
+                    runtime_profile.get("graph_community_resolution"),
+                    default=DEDUP_GRAPH_COMMUNITY_RESOLUTION,
+                ),
+                graph_community_seed=_optional_int(
+                    runtime_profile.get("graph_community_seed"),
+                    default=DEDUP_GRAPH_COMMUNITY_SEED,
+                ),
+                graph_edge_weight_col=str(runtime_profile.get("graph_edge_weight_col") or DEDUP_GRAPH_EDGE_WEIGHT_COL).strip()
+                or DEDUP_GRAPH_EDGE_WEIGHT_COL,
                 embedding_batch_size=max(1, int(runtime_profile.get("embedding_batch_size") or 64)),
                 cross_encoder_batch_size=max(1, int(runtime_profile.get("cross_encoder_batch_size") or 32)),
             )
@@ -632,7 +684,12 @@ class DedupService:
                     candidate_count=0,
                 )
                 self._load_cross_encoder(profile)
-                groups = self._build_groups(nodes, edges=pd.DataFrame(), manual_overrides=manual_overrides)
+                groups = self._build_groups(
+                    nodes,
+                    edges=pd.DataFrame(),
+                    graph_config=profile.graph_config(),
+                    manual_overrides=manual_overrides,
+                )
                 self._update_progress(
                     run_id,
                     run,
@@ -690,6 +747,10 @@ class DedupService:
                 hf_model_id=profile.hf_model_id.strip(),
                 embedding_model_name=profile.embedding_model_name,
                 faiss_top_k=profile.faiss_top_k,
+                graph_grouping_algorithm=profile.graph_grouping_algorithm,
+                graph_community_resolution=profile.graph_community_resolution,
+                graph_community_seed=profile.graph_community_seed,
+                graph_edge_weight_col=profile.graph_edge_weight_col,
                 activation=profile.activation.strip(),
                 threshold_strategy=profile.threshold_strategy,
                 threshold_same=profile.threshold_same,
@@ -842,6 +903,7 @@ class DedupService:
             groups = self._build_groups(
                 nodes,
                 edges,
+                graph_config=profile.graph_config(),
                 previous_assignments=previous_assignments,
                 manual_overrides=manual_overrides,
             )
@@ -868,6 +930,10 @@ class DedupService:
                 hf_model_id=profile.hf_model_id.strip(),
                 embedding_model_name=profile.embedding_model_name,
                 faiss_top_k=profile.faiss_top_k,
+                graph_grouping_algorithm=profile.graph_grouping_algorithm,
+                graph_community_resolution=profile.graph_community_resolution,
+                graph_community_seed=profile.graph_community_seed,
+                graph_edge_weight_col=profile.graph_edge_weight_col,
                 activation=profile.activation.strip(),
                 threshold_strategy=profile.threshold_strategy,
                 threshold_same=profile.threshold_same,
@@ -1413,6 +1479,7 @@ class DedupService:
         nodes: pd.DataFrame,
         edges: pd.DataFrame,
         *,
+        graph_config: GraphGroupingConfig,
         previous_assignments: dict[str, dict[str, Any]] | None = None,
         manual_overrides: list[dict[str, Any]] | None = None,
     ) -> pd.DataFrame:
@@ -1424,26 +1491,13 @@ class DedupService:
         }
         manual_singleton_nodes = set(manual_by_node)
         node_ids = [str(item) for item in nodes["node_id"].tolist()]
-        uf = _UnionFind(node_ids)
-        previous_family_members: dict[str, list[str]] = {}
-        for node_id in node_ids:
-            if node_id in manual_singleton_nodes:
-                continue
-            previous = previous_assignments.get(node_id)
-            family_id = _clean_text(previous.get("ml_family_id")) if previous else ""
-            if family_id:
-                previous_family_members.setdefault(family_id, []).append(node_id)
-        for members in previous_family_members.values():
-            for member in members[1:]:
-                uf.union(members[0], member)
-        if not edges.empty:
-            for row in edges[edges["predicted_binary"].astype(bool)].itertuples(index=False):
-                left = str(row.node_id_a)
-                right = str(row.node_id_b)
-                if left in manual_singleton_nodes or right in manual_singleton_nodes:
-                    continue
-                uf.union(left, right)
-        roots = {node_id: uf.find(node_id) for node_id in node_ids}
+        roots = build_family_components(
+            node_ids=node_ids,
+            edges=edges,
+            previous_assignments=previous_assignments,
+            manual_singleton_nodes=manual_singleton_nodes,
+            config=graph_config,
+        )
         root_members: dict[str, list[str]] = {}
         for node_id, root in roots.items():
             root_members.setdefault(root, []).append(node_id)
@@ -1714,6 +1768,10 @@ class DedupService:
             "faiss_top_k": profile.faiss_top_k,
             "runtime_profile": {
                 "model_device": profile.model_device,
+                "graph_grouping_algorithm": profile.graph_grouping_algorithm,
+                "graph_community_resolution": profile.graph_community_resolution,
+                "graph_community_seed": profile.graph_community_seed,
+                "graph_edge_weight_col": profile.graph_edge_weight_col,
                 "embedding_batch_size": profile.embedding_batch_size,
                 "cross_encoder_batch_size": profile.cross_encoder_batch_size,
             },

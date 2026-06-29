@@ -109,6 +109,10 @@ const defaultDedupSettings: DedupSettings = {
     soap: 0.930329
   },
   faiss_top_k: 30,
+  graph_grouping_algorithm: "leiden",
+  graph_community_resolution: 0.1,
+  graph_community_seed: 42,
+  graph_edge_weight_col: "score",
   embedding_batch_size: 64,
   cross_encoder_batch_size: 32,
   retrieval_cache_enabled: true,
@@ -3947,10 +3951,11 @@ function DedupWorkspace(props: {
       <div className="dedup-summary-row">
         <Metric label="Проект" value={props.projectName || "-"} />
         <Metric label="Категорий" value={formatNumber(props.categories.length)} />
-        <Metric label="Выбрано" value={formatNumber(selectedCount)} />
-        <Metric label="K FAISS" value={formatNumber(props.settings.faiss_top_k)} />
-        <Metric label="Fallback порог" value={String(props.settings.threshold_same)} />
-        <Metric label="Cache" value={dedupCacheStatus(latestRun)} />
+            <Metric label="Выбрано" value={formatNumber(selectedCount)} />
+            <Metric label="K FAISS" value={formatNumber(props.settings.faiss_top_k)} />
+            <Metric label="Граф" value={`${props.settings.graph_grouping_algorithm} · ${props.settings.graph_community_resolution}`} />
+            <Metric label="Fallback порог" value={String(props.settings.threshold_same)} />
+            <Metric label="Cache" value={dedupCacheStatus(latestRun)} />
       </div>
 
       <div className="dedup-settings">
@@ -4019,6 +4024,8 @@ function DedupWorkspace(props: {
             <span>{categoryThresholdSummary || `threshold_same=${props.settings.threshold_same}`}</span>
             <span>device={props.settings.model_device}</span>
             <span>faiss_top_k={props.settings.faiss_top_k}</span>
+            <span>graph={props.settings.graph_grouping_algorithm}</span>
+            <span>resolution={props.settings.graph_community_resolution}</span>
             <span>embedding_batch={props.settings.embedding_batch_size}</span>
             <span>scoring_batch={props.settings.cross_encoder_batch_size}</span>
           </div>

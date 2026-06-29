@@ -825,6 +825,44 @@ def _clean_dedup_level(level: str) -> str:
     return "expanded"
 
 
+def _safe_float(value: object, *, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if number == number else default
+
+
+def _safe_optional_int(value: object, *, default: int | None) -> int | None:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _dedup_run_graph_profile(manifest_json: object) -> dict[str, object]:
+    if isinstance(manifest_json, str):
+        try:
+            manifest = json.loads(manifest_json) if manifest_json.strip() else {}
+        except json.JSONDecodeError:
+            manifest = {}
+    elif isinstance(manifest_json, dict):
+        manifest = manifest_json
+    else:
+        manifest = {}
+    runtime_profile = manifest.get("runtime_profile") if isinstance(manifest, dict) else {}
+    if not isinstance(runtime_profile, dict):
+        runtime_profile = {}
+    return {
+        "graph_grouping_algorithm": str(runtime_profile.get("graph_grouping_algorithm") or "connected_components"),
+        "graph_community_resolution": _safe_float(runtime_profile.get("graph_community_resolution"), default=1.0),
+        "graph_community_seed": _safe_optional_int(runtime_profile.get("graph_community_seed"), default=42),
+        "graph_edge_weight_col": str(runtime_profile.get("graph_edge_weight_col") or "score"),
+    }
+
+
 _DEDUP_FAMILY_TOKEN_RE = re.compile(r"[0-9a-zа-я]+")
 
 
@@ -1590,6 +1628,10 @@ class DuckDbAppRepository:
         hf_model_id: str,
         embedding_model_name: str,
         faiss_top_k: int,
+        graph_grouping_algorithm: str,
+        graph_community_resolution: float,
+        graph_community_seed: int | None,
+        graph_edge_weight_col: str,
         activation: str,
         threshold_strategy: str,
         threshold_same: float,
@@ -1610,6 +1652,10 @@ class DuckDbAppRepository:
                 hf_model_id,
                 embedding_model_name,
                 faiss_top_k,
+                graph_grouping_algorithm,
+                graph_community_resolution,
+                graph_community_seed,
+                graph_edge_weight_col,
                 activation,
                 threshold_strategy,
                 threshold_same,
@@ -1630,6 +1676,10 @@ class DuckDbAppRepository:
               AND hf_model_id = ?
               AND embedding_model_name = ?
               AND faiss_top_k = ?
+              AND COALESCE(graph_grouping_algorithm, 'connected_components') = ?
+              AND COALESCE(graph_community_resolution, 1.0) = ?
+              AND graph_community_seed IS NOT DISTINCT FROM ?
+              AND COALESCE(graph_edge_weight_col, 'score') = ?
               AND activation = ?
               AND threshold_strategy = ?
               AND threshold_same = ?
@@ -1643,6 +1693,10 @@ class DuckDbAppRepository:
                 hf_model_id,
                 embedding_model_name,
                 int(faiss_top_k),
+                graph_grouping_algorithm,
+                float(graph_community_resolution),
+                graph_community_seed,
+                graph_edge_weight_col,
                 activation,
                 threshold_strategy,
                 float(threshold_same),
@@ -1662,6 +1716,10 @@ class DuckDbAppRepository:
         hf_model_id: str,
         embedding_model_name: str,
         faiss_top_k: int,
+        graph_grouping_algorithm: str,
+        graph_community_resolution: float,
+        graph_community_seed: int | None,
+        graph_edge_weight_col: str,
         activation: str,
         threshold_strategy: str,
         threshold_same: float,
@@ -1679,6 +1737,10 @@ class DuckDbAppRepository:
             "hf_model_id",
             "embedding_model_name",
             "faiss_top_k",
+            "graph_grouping_algorithm",
+            "graph_community_resolution",
+            "graph_community_seed",
+            "graph_edge_weight_col",
             "activation",
             "threshold_strategy",
             "threshold_same",
@@ -1701,6 +1763,10 @@ class DuckDbAppRepository:
                 hf_model_id,
                 embedding_model_name,
                 int(faiss_top_k),
+                graph_grouping_algorithm,
+                float(graph_community_resolution),
+                graph_community_seed,
+                graph_edge_weight_col,
                 activation,
                 threshold_strategy,
                 float(threshold_same),
@@ -1729,6 +1795,10 @@ class DuckDbAppRepository:
                     hf_model_id = EXCLUDED.hf_model_id,
                     embedding_model_name = EXCLUDED.embedding_model_name,
                     faiss_top_k = EXCLUDED.faiss_top_k,
+                    graph_grouping_algorithm = EXCLUDED.graph_grouping_algorithm,
+                    graph_community_resolution = EXCLUDED.graph_community_resolution,
+                    graph_community_seed = EXCLUDED.graph_community_seed,
+                    graph_edge_weight_col = EXCLUDED.graph_edge_weight_col,
                     activation = EXCLUDED.activation,
                     threshold_strategy = EXCLUDED.threshold_strategy,
                     threshold_same = EXCLUDED.threshold_same,
@@ -2191,7 +2261,8 @@ class DuckDbAppRepository:
                     faiss_top_k,
                     COALESCE(activation, '') AS activation,
                     threshold_strategy,
-                    threshold_same
+                    threshold_same,
+                    manifest_json
                 FROM dedup_runs
                 WHERE run_id = ? AND status = 'success'
                 """,
@@ -2199,6 +2270,7 @@ class DuckDbAppRepository:
             ).fetchone()
             if not run:
                 raise ValueError("Успешный dedup run не найден.")
+            graph_profile = _dedup_run_graph_profile(run[11])
             with duckdb_transaction(con):
                 con.execute(
                     """
@@ -2291,6 +2363,10 @@ class DuckDbAppRepository:
                       AND COALESCE(a.hf_model_id, '') = ?
                       AND COALESCE(a.embedding_model_name, '') = ?
                       AND a.faiss_top_k = ?
+                      AND COALESCE(a.graph_grouping_algorithm, 'connected_components') = ?
+                      AND COALESCE(a.graph_community_resolution, 1.0) = ?
+                      AND a.graph_community_seed IS NOT DISTINCT FROM ?
+                      AND COALESCE(a.graph_edge_weight_col, 'score') = ?
                       AND COALESCE(a.activation, '') = ?
                       AND a.threshold_strategy = ?
                       AND a.threshold_same = ?
@@ -2304,6 +2380,10 @@ class DuckDbAppRepository:
                         run[5],
                         run[6],
                         int(run[7]),
+                        graph_profile["graph_grouping_algorithm"],
+                        graph_profile["graph_community_resolution"],
+                        graph_profile["graph_community_seed"],
+                        graph_profile["graph_edge_weight_col"],
                         run[8],
                         run[9],
                         float(run[10]),

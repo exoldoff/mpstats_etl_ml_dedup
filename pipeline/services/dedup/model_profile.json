@@ -5,6 +5,10 @@
   "activation": "sigmoid",
   "threshold_strategy": "threshold_weighted_cost",
   "threshold_same": 0.872321,
+  "graph_grouping_algorithm": "leiden",
+  "graph_community_resolution": 0.1,
+  "graph_community_seed": 42,
+  "graph_edge_weight_col": "score",
   "category_thresholds": {
     "sauces": 0.917444,
     "coconut_oil": 0.872321,

@@ -13,6 +13,7 @@ from mpstats_app.repositories.duckdb_repository import DuckDbAppRepository
 from pipeline.repositories.file_repository import write_semicolon_csv
 from pipeline.repositories.sql_repository import connect
 from pipeline.services.dedup import DedupProfile, DedupRuntimeError, DedupService
+from pipeline.services.dedup.graph_grouping import GraphGroupingConfig
 
 
 def make_settings(root: Path) -> AppSettings:
@@ -196,6 +197,10 @@ def test_profile_locks_model_thresholds_but_allows_device_and_faiss_k() -> None:
     assert profile.threshold_for_category(category_key="soap", category_name="Мыло") == pytest.approx(0.930329)
     assert profile.threshold_for_category(category_key="unknown", category_name="Другая") == pytest.approx(0.872321)
     assert profile.faiss_top_k == 99
+    assert profile.graph_grouping_algorithm == "leiden"
+    assert profile.graph_community_resolution == pytest.approx(0.1)
+    assert profile.graph_community_seed == 42
+    assert profile.graph_edge_weight_col == "score"
 
 
 def test_profile_normalizes_invalid_device_and_bounds_faiss_k() -> None:
@@ -379,6 +384,51 @@ def test_faiss_candidate_retrieval_crosses_source_category_keys(tmp_path: Path) 
 
     assert len(candidates) == 1
     assert {candidates.iloc[0]["node_id_a"], candidates.iloc[0]["node_id_b"]} == {"sku_oz", "sku_wb"}
+
+
+def test_leiden_graph_grouping_splits_dense_communities_across_bridge(tmp_path: Path) -> None:
+    service, _, _, _ = make_service(tmp_path)
+    nodes = pd.DataFrame(
+        [
+            {
+                "run_id": "run-graph",
+                "node_id": f"sku_{index:02d}",
+                "sku": f"Товар {index}",
+                "unit_amount": 0.5,
+                "total_amount": 0.5,
+                "multipack_count": 1.0,
+                "sales_volume": 100 - index,
+                "revenue": 1000 - index,
+            }
+            for index in range(10)
+        ]
+    )
+    edge_rows: list[dict[str, object]] = []
+    for start in (0, 5):
+        for left in range(start, start + 5):
+            for right in range(left + 1, start + 5):
+                edge_rows.append(
+                    {
+                        "node_id_a": f"sku_{left:02d}",
+                        "node_id_b": f"sku_{right:02d}",
+                        "predicted_binary": True,
+                        "score": 0.99,
+                    }
+                )
+    edge_rows.append({"node_id_a": "sku_04", "node_id_b": "sku_05", "predicted_binary": True, "score": 0.92})
+
+    groups = service._build_groups(
+        nodes,
+        pd.DataFrame(edge_rows),
+        graph_config=GraphGroupingConfig(algorithm="leiden", resolution=0.1, seed=42),
+    )
+
+    family_sets = sorted(
+        sorted(group["node_id"].tolist())
+        for _, group in groups.groupby("ml_family_id", sort=False)
+    )
+    assert family_sets == [[f"sku_{index:02d}" for index in range(5)], [f"sku_{index:02d}" for index in range(5, 10)]]
+    assert set(groups["component_size"].tolist()) == {5}
 
 
 def test_run_fails_if_fine_tuned_model_unavailable(tmp_path: Path) -> None:
@@ -835,6 +885,62 @@ def test_identity_cache_hit_reuses_groups_without_model_encode(tmp_path: Path) -
     assert second["manifest_json"]["identity_hits"] == 3
     assert second["manifest_json"]["identity_misses"] == 0
     assert embedding_model.calls == 1
+
+
+def test_identity_cache_key_includes_graph_profile(tmp_path: Path) -> None:
+    _, repository, _, _ = make_service(tmp_path)
+    base_kwargs = {
+        "project_name": "unit",
+        "category_key": "dedupcat_sauces",
+        "model_method": "ft_bge_reranker_v2_m3",
+        "model_path": "",
+        "hf_model_id": "unit/model",
+        "embedding_model_name": "unit/embedding",
+        "faiss_top_k": 30,
+        "activation": "sigmoid",
+        "threshold_strategy": "threshold_weighted_cost",
+        "threshold_same": 0.9,
+    }
+    repository.upsert_dedup_identity_assignments(
+        **base_kwargs,
+        graph_grouping_algorithm="connected_components",
+        graph_community_resolution=1.0,
+        graph_community_seed=42,
+        graph_edge_weight_col="score",
+        run_id="old-run",
+        rows=[
+            {
+                "node_id": "sku_1",
+                "ml_family_id": "mlfam_000001",
+                "ml_pack_id": "mlpack_000001",
+                "canonical_node_id": "sku_1",
+                "canonical_sku": "Соус",
+                "ml_dedup_status": "singleton",
+                "confidence_score": None,
+                "component_size": 1,
+            }
+        ],
+    )
+
+    leiden_hits = repository.fetch_dedup_identity_assignments(
+        **base_kwargs,
+        graph_grouping_algorithm="leiden",
+        graph_community_resolution=0.1,
+        graph_community_seed=42,
+        graph_edge_weight_col="score",
+        node_ids=["sku_1"],
+    )
+    connected_hits = repository.fetch_dedup_identity_assignments(
+        **base_kwargs,
+        graph_grouping_algorithm="connected_components",
+        graph_community_resolution=1.0,
+        graph_community_seed=42,
+        graph_edge_weight_col="score",
+        node_ids=["sku_1"],
+    )
+
+    assert leiden_hits == []
+    assert [row["node_id"] for row in connected_hits] == ["sku_1"]
 
 
 def test_retrieval_cache_model_change_invalidates_embeddings(tmp_path: Path) -> None:
