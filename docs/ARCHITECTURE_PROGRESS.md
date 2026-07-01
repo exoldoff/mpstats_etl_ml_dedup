@@ -7,8 +7,9 @@
 
 Правило ведения: после каждого завершённого research-этапа добавлять новую
 запись сверху или обновлять текущий этап, если работа ещё относится к нему.
-Не переносить сюда production-решения до выбора технологии; `pipeline/` и
-`mpstats_app/` остаются вне scope research-журнала.
+После переноса выбранной технологии в основной pipeline здесь допустим краткий
+production-dedup статус и ссылки на runtime-контракт, но без дублирования
+кода из `pipeline/` и `mpstats_app/`.
 
 ## Текущий статус
 
@@ -474,8 +475,8 @@ rerankers.
 - Zero-shot reranker benchmark по умолчанию идёт full-run
   (`MY_RERANKER_MAX_PAIRS = 0`) по выбранному frozen score scope.
 - Добавлен отдельный notebook-блок fine-tuned моделей. Первый default —
-  локальная BGE из server backup:
-  `/Users/exoldoff/Desktop/mpstats_server_backup_20260630_041745/artifacts/models/dedup/bge_reranker_v2_m3_v1/final`.
+  fine-tuned BGE, который теперь задаётся переносимо через HF model id или
+  локальный repo-relative `model_path` в первой notebook-ячейке.
 - Для fine-tuned моделей notebook умеет либо прогнать `model_path`, либо
   подхватить готовый `score_path` CSV, чтобы новые модели можно было добавлять
   без переписывания ячеек.

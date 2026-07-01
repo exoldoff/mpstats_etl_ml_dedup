@@ -15,11 +15,14 @@
 
 ## Как запускать
 
-1. Установите research-зависимости:
+1. Установите общий список зависимостей:
 
 ```bash
-python3 -m pip install -r requirements-research.txt
+python3 -m pip install -r requirements.txt
 ```
+
+`requirements-research.txt` оставлен как compatibility alias и сейчас просто
+указывает на общий `requirements.txt`.
 
 2. Укажите путь к локальному DuckDB в первой code-ячейке нужного notebook
    через `MY_DUCKDB_PATH` или через `MPSTATS_DUCKDB_PATH`.

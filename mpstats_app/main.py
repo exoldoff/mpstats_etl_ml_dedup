@@ -73,6 +73,7 @@ def create_app(settings: AppSettings | None = None, *, start_workers: bool = Tru
     async def lifespan(app: FastAPI) -> Iterator[None]:
         repository.ensure_ready()
         catalog_service.ensure_seeded()
+        app.state.dedup_service.run_startup_maintenance()
         if start_workers:
             job_service.start()
             scheduler_service.start()

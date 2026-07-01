@@ -1412,6 +1412,8 @@ Research helpers автоматически читают `.env` при импо�
 `DEDUP_MODEL_CACHE_DIR`, `DEDUP_MODEL_LOCAL_ONLY` и настройки Telegram-бота.
 Category-run, DuckDB path, размеры выборок, FAISS/reranker-параметры и
 пороговые настройки меняйте в notebook, не в `.env`.
+Шаблон безопасных переменных лежит в `.env.example`; реальные cookie, токены
+и приватные локальные пути храните только в локальном `.env`.
 
 Если `MY_CATEGORY_RUN` не менять, используется `sauces`. Для `sauces`
 сохранены старые пути `research/dedup/data/*_sauces.csv` и
@@ -1941,16 +1943,18 @@ MY_FINE_TUNED_MODELS = [
     {
         "enabled": True,
         "method": "ft_bge_reranker_v2_m3",
-        "model_path": "/Users/exoldoff/Desktop/mpstats_server_backup_20260630_041745/artifacts/models/dedup/bge_reranker_v2_m3_v1/final",
+        "model_path": None,
+        "hf_model_id": "exoldoff/bge-reranker-v2-m3-cross-encoder-marketplaces-rus",
         "score_column": "ft_bge_reranker_v2_m3",
         "activation": "sigmoid",
     },
 ]
 ```
 
-Для новых fine-tuned моделей можно добавить ещё один dict с `model_path`.
-Если score уже посчитан training script-ом, вместо `model_path` укажите
-`score_path` и `score_column`: notebook подхватит CSV без повторного inference.
+Для новых fine-tuned моделей можно добавить ещё один dict с repo-relative
+`model_path` или HF `hf_model_id`. Если score уже посчитан training script-ом,
+вместо `model_path` укажите `score_path` и `score_column`: notebook подхватит
+CSV без повторного inference.
 
 Cost-параметры и weighted-join тоже задаются в первой code-ячейке:
 
@@ -2095,11 +2099,10 @@ links, примеры "same family, different pack" и 3D-карту components.
 Результат показывается как дерево: Level 1 — каноничный SKU с агрегатами
 продаж/выручки всей группы, Level 2 — реальные SKU, входящие в эту группу.
 По умолчанию cross-encoder в demo — `ft_bge_reranker_v2_m3`: это fine-tuned
-BGE из server backup, поэтому его путь задаётся в первой ячейке в
-`MY_FINE_TUNED_CROSS_ENCODER_MODELS`, а не в общем `model_registry`. Если
-backup лежит в другом месте, поменяйте только `model_path`; для временного
-zero-shot запуска можно поставить `MY_CROSS_ENCODER_MODEL` равным
-`"cross_encoder_mmarco"`.
+BGE, который можно загрузить по `hf_model_id` или подменить локальным
+repo-relative `model_path` в первой ячейке в
+`MY_FINE_TUNED_CROSS_ENCODER_MODELS`. Для временного zero-shot запуска можно
+поставить `MY_CROSS_ENCODER_MODEL` равным `"cross_encoder_mmarco"`.
 Имя таблицы в `05` не является пользовательской настройкой: demo читает
 фиксированную таблицу `mpstats_products`. Лимиты demo-среза, FAISS и
 cross-encoder меняются только в первой code-ячейке через `MY_*`; скрытых

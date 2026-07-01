@@ -293,22 +293,24 @@ def test_service_marks_stale_dedup_runs_failed_on_start(tmp_path: Path) -> None:
         }
     )
 
-    DedupService(
+    service = DedupService(
         settings=settings,
         repository=repository,
         embedding_model_factory=lambda _: FakeEmbeddingModel(),
         cross_encoder_factory=lambda _: FakeCrossEncoder(),
         faiss_module=FakeFaissModule(),
     )
+    maintenance = service.run_startup_maintenance()
 
     run = repository.get_dedup_run("stale-run")
     assert run
+    assert maintenance["stale_failed"] == 1
     assert run["status"] == "failed"
     assert "backend restarted" in str(run["error"])
     assert run["finished_at"] is not None
 
 
-def test_service_prunes_repeated_failed_dedup_runs_on_start(tmp_path: Path) -> None:
+def test_service_prunes_repeated_failed_dedup_runs_on_startup_maintenance(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     repository = DuckDbAppRepository(settings)
     repository.ensure_ready()
@@ -325,15 +327,17 @@ def test_service_prunes_repeated_failed_dedup_runs_on_start(tmp_path: Path) -> N
             }
         )
 
-    DedupService(
+    service = DedupService(
         settings=settings,
         repository=repository,
         embedding_model_factory=lambda _: FakeEmbeddingModel(),
         cross_encoder_factory=lambda _: FakeCrossEncoder(),
         faiss_module=FakeFaissModule(),
     )
+    maintenance = service.run_startup_maintenance()
 
     runs = repository.list_dedup_runs(project_name="unit", limit=10)
+    assert maintenance["failed_pruned"] == 2
     assert len(runs) == 1
     assert runs[0]["status"] == "failed"
     assert runs[0]["category_name"] == "Кокосовое масло"

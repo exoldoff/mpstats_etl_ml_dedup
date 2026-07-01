@@ -25,6 +25,7 @@ Thumbs.db
 artifacts/
 data/
 output/
+outputs/
 temp/
 mpstats.duckdb
 *.duckdb

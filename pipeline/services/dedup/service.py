@@ -399,8 +399,13 @@ class DedupService:
         self._retrieval_cache = RetrievalEmbeddingCache(project_root=settings.project_root)
         self._lock = RLock()
         self._threads: dict[str, Thread] = {}
-        self.repository.fail_stale_dedup_runs()
-        self.repository.prune_failed_dedup_runs()
+
+    def run_startup_maintenance(self) -> dict[str, int]:
+        """Mark interrupted runs failed and keep only the latest failed retry."""
+        with self._lock:
+            stale_failed = self.repository.fail_stale_dedup_runs()
+            failed_pruned = self.repository.prune_failed_dedup_runs()
+        return {"stale_failed": stale_failed, "failed_pruned": failed_pruned}
 
     def get_settings(self) -> dict[str, Any]:
         raw = self.repository.get_setting(DEDUP_SETTINGS_KEY)

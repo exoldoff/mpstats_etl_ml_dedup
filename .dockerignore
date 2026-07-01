@@ -13,6 +13,7 @@ web/node_modules/
 artifacts/
 data/
 output/
+outputs/
 temp/
 research/dedup/data/
 research/dedup/models/

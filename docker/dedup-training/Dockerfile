@@ -31,7 +31,7 @@ RUN python3 -m pip install --upgrade pip setuptools wheel \
         torchvision==${TORCHVISION_VERSION} \
         torchaudio==${TORCHAUDIO_VERSION}
 
-COPY pyproject.toml requirements-research.txt ./
+COPY pyproject.toml requirements.txt requirements-research.txt ./
 RUN python3 -m pip install \
         "duckdb>=1.0" \
         "fastapi>=0.115" \
