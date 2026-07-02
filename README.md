@@ -109,7 +109,8 @@ DuckDB, настройки, справочник, правила классиф�
 
 Текущий production-профиль: `ft_bge_reranker_v2_m3`, `threshold_weighted_cost`, FAISS `K=30`, графовая группировка Leiden.
 
-В отчётной safe-конфигурации fine-tuned BGE на test-срезе даёт 0 ложных склеек:
+В отчётной safe-конфигурации fine-tuned BGE на server `positive_record_holdout`
+benchmark (`test=165`: 48 negative + 117 positive) даёт 0 ложных склеек:
 
 | Метод | Precision | Recall | F1 | False merges | False splits | Weighted cost |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |

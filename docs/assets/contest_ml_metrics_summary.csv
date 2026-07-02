@@ -1,2 +1,2 @@
-run_type,method,threshold_strategy,threshold_same,precision,recall,f1,false_merge_count,false_split_count,weighted_total_cost,source_file
-fine_tuned,ft_bge_reranker_v2_m3,threshold_weighted_cost,0.826871,1.0,0.794872,0.885714,0,24,131.337621,ft_bge_reranker_v2_m3_binary_threshold_summary.csv
+run_type,method,benchmark_splitter,test_rows,test_negative_rows,test_positive_rows,threshold_strategy,threshold_same,precision,recall,f1,false_merge_count,false_split_count,weighted_total_cost,source_file
+fine_tuned,ft_bge_reranker_v2_m3,positive_record_holdout,165,48,117,threshold_weighted_cost,0.826871,1.0,0.794872,0.885714,0,24,131.337621,ft_bge_reranker_v2_m3_binary_threshold_summary.csv
