@@ -36,14 +36,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt pyproject.toml ./
-RUN python -m pip install --upgrade pip \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential curl libgomp1 \
+    && python -m pip install --upgrade pip \
     && python -m pip install --index-url "$TORCH_CPU_INDEX_URL" "torch>=2.3,<3" \
-    && python -m pip install -r requirements.txt
+    && python -m pip install -r requirements.txt \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY . .
 COPY --from=web-build /app/web/dist ./web/dist
