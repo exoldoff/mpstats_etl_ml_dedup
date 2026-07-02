@@ -107,13 +107,15 @@ DuckDB, настройки, справочник, правила классиф�
 
 ## ML-результаты
 
-Текущий production-профиль: `ft_bge_reranker_v2_m3`, `threshold_weighted_cost`, FAISS `K=30`, графовая группировка Leiden. На frozen multi-category benchmark fine-tuned BGE показывает:
+Текущий production-профиль: `ft_bge_reranker_v2_m3`, `threshold_weighted_cost`, FAISS `K=30`, графовая группировка Leiden.
+
+В отчётной safe-конфигурации fine-tuned BGE на test-срезе даёт 0 ложных склеек:
 
 | Метод | Precision | Recall | F1 | False merges | False splits | Weighted cost |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `ft_bge_reranker_v2_m3` | 95.4% | 84.6% | 89.7% | 5 | 19 | 261.2 |
+| `ft_bge_reranker_v2_m3` | 100.0% | 79.5% | 88.6% | 0 | 24 | 131.3 |
 
-Короткая tracked-сводка лежит в `docs/assets/contest_ml_metrics_summary.csv`. Полные benchmark CSV и model cache являются локальными ignored artifacts и не входят в публичный git-архив.
+Короткая tracked-сводка лежит в `docs/assets/contest_ml_metrics_summary.csv`. Полные benchmark CSV, server-run artifacts и model cache являются локальными ignored artifacts и не входят в публичный git-архив.
 
 ## Структура проекта
 

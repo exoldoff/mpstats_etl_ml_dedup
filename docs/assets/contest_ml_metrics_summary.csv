@@ -1,6 +1,2 @@
-rank,method,family,threshold_strategy,threshold_same,precision,recall,f1,accuracy,false_merge_count,false_split_count,weighted_f1,weighted_total_cost,weight_source
-1,ft_bge_reranker_v2_m3,fine-tuned,threshold_weighted_cost,0.8723211288452148,0.9541284403669725,0.8455284552845529,0.896551724137931,0.9349593495934959,5,19,0.8698650001289476,261.21379484595445,"sales_volume:sales_volume_a,sales_volume_b"
-2,reranker_bge_v2_m3,zero-shot reranker,threshold_weighted_cost,0.901035,0.9310344827586207,0.21951219512195122,0.3552631578947368,0.7344173441734417,2,96,0.35176529757670943,499.1383427135285,"sales_volume:sales_volume_a,sales_volume_b"
-3,bi_encoder_zero_shot,zero-shot,threshold_weighted_cost,0.988377,0.9375,0.12195121951219512,0.21582733812949637,0.7046070460704607,1,108,0.21201652260442685,517.6973278370449,"sales_volume:sales_volume_a,sales_volume_b"
-4,rule_based_fuzzy,baseline,threshold_weighted_cost,0.922222,0.9032258064516129,0.22764227642276422,0.3636363636363636,0.7344173441734417,3,95,0.3318352689274563,537.1055990338364,"sales_volume:sales_volume_a,sales_volume_b"
-5,cross_encoder_zero_shot,zero-shot,threshold_weighted_cost,10.92879,0.0,0.0,0.0,0.6612466124661247,2,123,0.0,635.270693592921,"sales_volume:sales_volume_a,sales_volume_b"
+run_type,method,threshold_strategy,threshold_same,precision,recall,f1,false_merge_count,false_split_count,weighted_total_cost,source_file
+fine_tuned,ft_bge_reranker_v2_m3,threshold_weighted_cost,0.826871,1.0,0.794872,0.885714,0,24,131.337621,ft_bge_reranker_v2_m3_binary_threshold_summary.csv
