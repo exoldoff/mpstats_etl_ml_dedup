@@ -56,18 +56,18 @@ docker compose up
 
 После старта откройте `http://127.0.0.1:8055`. Compose хранит локальную
 DuckDB, настройки, справочник, правила классификатора и cache моделей в
-именованном volume `mpstats-runtime`, поэтому секреты и рабочие данные не
-попадают в git и не запекаются в образ. Остановить контейнер можно через
+именованном volume `mpstats-runtime`; образ остаётся переносимым и не зависит
+от локальных рабочих файлов. Остановить контейнер можно через
 `Ctrl+C`, затем `docker compose down`.
 
 После запуска откроется локальное приложение в браузере. Дальше всё делается через интерфейс: вставьте MPStats cookie, выберите проект, период, категории, создайте план и нажмите запуск.
 
 Другие пользовательские способы запуска не поддерживаются: работа с проектом сосредоточена в web-интерфейсе.
 
-### Clean start
+### Быстрый старт с чистого окружения
 
 1. Установите Python 3.10+ и, для macOS-режима, Node.js 20+.
-2. Скопируйте `.env.example` в `.env`, только если нужны API/model/cache-переменные. Реальные cookie, токены и приватные пути не коммитьте.
+2. Скопируйте `.env.example` в `.env`, только если нужны API/model/cache-переменные.
 3. Запустите web-app через `.command`, `.bat` или Docker.
 4. В интерфейсе задайте MPStats cookie, при необходимости MPStats API token, проект, категории и период.
 5. Если локальный справочник категорий или правила классификатора отсутствуют, создайте их через вкладки `Категории` и `Классификатор`.
@@ -116,7 +116,7 @@ benchmark (`test=165`: 48 negative + 117 positive) даёт 0 ложных ск�
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `ft_bge_reranker_v2_m3` | 100.0% | 79.5% | 88.6% | 0 | 24 | 131.3 |
 
-Короткая tracked-сводка лежит в `docs/assets/contest_ml_metrics_summary.csv`. Полные benchmark CSV, server-run artifacts и model cache являются локальными ignored artifacts и не входят в публичный git-архив.
+Короткая сводка лежит в `docs/assets/contest_ml_metrics_summary.csv`.
 
 ## Структура проекта
 
@@ -127,42 +127,24 @@ benchmark (`test=165`: 48 negative + 117 positive) даёт 0 ложных ск�
 - `research/dedup/` — research-only код для candidate generation, scoring, clustering и training helpers.
 - `notebooks/` — конкурсная research-история `00`-`05` по SKU-дедупликации.
 - `tests/` — regression/smoke tests для app, pipeline и dedup.
-- `docs/` — пользовательская инструкция, архитектура и agent-facing навигация.
+- `docs/` — пользовательская инструкция, архитектура и описание ML-методологии.
 
-## Важно про доступы и данные
+## Данные и локальное состояние
 
-MPStats cookie хранится только локально. Локальная база `mpstats.duckdb`, папка `data/`, `.env`, выгрузки CSV/XLSX, `artifacts/` и `research/dedup/models/` не должны попадать в публичный репозиторий.
+Репозиторий поставляется без пользовательской DuckDB, MPStats cookie, рабочих
+CSV/XLSX, model cache и локальных `.env`-настроек. Эти файлы создаются при
+запуске приложения или подключаются из рабочего окружения.
 
-Файлы `Справочник категорий MP STATS.csv`, `classifiers/rules.csv` и `classifiers/manual_overrides.csv` являются runtime-настройками. В рабочей разработческой папке они могут существовать локально, но в чистом репозитории их можно создать через web UI или импортировать из приватного рабочего набора.
+Файлы `Справочник категорий MP STATS.csv`, `classifiers/rules.csv` и
+`classifiers/manual_overrides.csv` являются runtime-настройками: их можно
+создать через web UI или импортировать из рабочего набора.
 
 ## Документация
 
-- `AGENTS.md` — правила работы агентов и границы изменений.
-- `docs/AI_INDEX.md` — быстрый индекс проекта для агентов и разработки.
-- `docs/AGENT_NAVIGATION.md` — система навигации по трекам проекта для агентов.
 - `docs/ARCHITECTURE.md` — архитектура research-направления SKU deduplication.
 - `docs/ARCHITECTURE_PROGRESS.md` — текущий журнал research/production-dedup этапов и технических заметок.
 - `docs/USER_GUIDE.md` — подробная пользовательская инструкция.
 - `notebooks/README.md` — порядок research-ноутбуков по SKU-дедупликации.
-
-## Инженерные проверки перед защитой
-
-Минимальный набор команд, который демонстрирует Git/Docker/runtime-гигиену:
-
-```bash
-git status --short
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest tests/test_app_config.py tests/test_web_api.py
-docker compose config
-```
-
-`docker compose build` дополнительно проверяет полную сборку образа: frontend
-собирается через `npm ci && npm run build`, backend ставит зависимости из
-`requirements.txt`, а контейнер стартует через healthcheck `/api/health`.
-
-Быстрый маршрут перед защитой: сначала показать web-app как основной продукт,
-затем `notebooks/README.md` и ноутбуки `00`-`05` как исследовательскую историю
-SKU-дедупликации, после этого открыть `docs/ARCHITECTURE.md` для методологии и
-`docs/ARCHITECTURE_PROGRESS.md` для фактически реализованных этапов.
 
 ## License
 
