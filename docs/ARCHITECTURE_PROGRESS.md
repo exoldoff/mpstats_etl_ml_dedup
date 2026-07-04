@@ -101,6 +101,35 @@ production-dedup статус и ссылки на runtime-контракт, н�
   держит `MY_SKIP_CROSS_ENCODER=True`; для Mac first-run cross-encoder нужно
   включать явно с CPU device, маленьким batch и небольшим лимитом пар.
 
+## 2026-07-05 — Notebook 04 graph diagnostics cleanup
+
+### Зачем
+
+Свежий output `04_fusion_pack_grouping.ipynb` выглядел подозрительно:
+многие строки comparison grid показывали одинаковые метрики, широкие таблицы
+обрезались, а 3D-визуализация брала только маленький фрагмент графа и не
+показывала общую структуру компонент.
+
+### Что сделано
+
+- В comparison grid добавлены явные признаки отличия от
+  `connected_components`: `pairs_changed_vs_connected`,
+  `pair_change_rate_vs_connected`, delta по positive pairs/components и
+  короткий `diagnosis`. Теперь одинаковые precision/recall/F0.5 можно
+  отличить от бага: если `pairs_changed_vs_connected = 0`, алгоритм просто
+  дал те же pair-level решения на выбранном split.
+- Широкие таблицы notebook выводятся через scroll-container, чтобы pandas не
+  прятал важные колонки и длинные titles.
+- 3D-карта теперь строит обзор всех выбранных graph components:
+  default `MY_3D_CATEGORY_RUN="all"`, `MY_3D_INCLUDE_SINGLETONS=True`,
+  `MY_3D_MAX_COMPONENTS=None`, `MY_3D_MAX_NODES=5000`. Категории разнесены в
+  пространстве, component nodes раскладываются отдельными маленькими кругами,
+  а positive edges остаются линиями между узлами.
+
+### Проверки
+
+См. финальный ответ текущего изменения.
+
 ## 2026-07-04 — Graph evaluation expansion for notebook 04
 
 ### Зачем
