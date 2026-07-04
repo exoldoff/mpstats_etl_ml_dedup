@@ -85,7 +85,10 @@ production-dedup статус и ссылки на runtime-контракт, н�
   frozen/fine-tuning benchmark `04` запускается один раз на
   `sauces,coconut_oil,soap`: читает общий `artifacts/reports/fine_tuning/`,
   восстанавливает `category_run` через frozen split, строит отдельные графы
-  по категориям и показывает graph-quality диагностику плюс 3D components.
+  по категориям и показывает graph-quality диагностику: comparison grid для
+  connected components / Leiden / Louvain / label propagation, modularity,
+  F0.5, weighted false merge / false split, частичный B-cubed, 2D-карту
+  проблемной компоненты и обзорную 3D-карту components.
   Старый connected-components результат сохраняется рядом как audit-baseline
   `connected_family_id` / `connected_pack_id`.
 - Для демонстрации результата на реальных строках DuckDB теперь используется
@@ -97,6 +100,38 @@ production-dedup статус и ссылки на runtime-контракт, н�
   метод не является alias-ом общего `model_registry`, но безопасный default
   держит `MY_SKIP_CROSS_ENCODER=True`; для Mac first-run cross-encoder нужно
   включать явно с CPU device, маленьким batch и небольшим лимитом пар.
+
+## 2026-07-04 — Graph evaluation expansion for notebook 04
+
+### Зачем
+
+Notebook 04 показывал итоговую группировку слишком сжато: был один выбранный
+алгоритм, несколько таблиц ошибок и 3D-граф без понятной связи с качеством.
+Для экспериментов с graph grouping нужна отдельная панель сравнения, чтобы
+видеть trade-off между false merge и false split, а 3D оставить обзорной
+визуализацией структуры.
+
+### Что сделано
+
+- В `research.dedup.clustering` добавлены research-baselines Louvain и label
+  propagation поверх того же positive-edge графа, а также helper
+  `graph_modularity()` для weighted modularity выбранного partition.
+- `04_fusion_pack_grouping.ipynb` теперь строит comparison grid для
+  connected components, Leiden resolution grid, Louvain resolution grid и
+  label propagation. В таблице и графиках есть precision/recall/F0.5,
+  weighted false merge / false split, modularity, component counts и
+  частичный B-cubed по pair-level labels.
+- Добавлены risk tables для false family links, рискованных predicted
+  families, missed links и positive-рёбер, которые выбранный graph algorithm
+  разрезал.
+- Добавлена компактная 2D-карта проблемной компоненты; 3D-карта переименована
+  в обзорную визуализацию, а не метрику качества.
+
+### Проверки
+
+- `python3 -m pytest research/dedup/tests/test_clustering.py`
+- AST-проверка всех code-cells `notebooks/04_fusion_pack_grouping.ipynb`
+- `nbformat.validate` и smoke execution через `nbclient` для notebook 04
 
 ## 2026-07-01 — Safe cross-encoder mode for notebook 05
 

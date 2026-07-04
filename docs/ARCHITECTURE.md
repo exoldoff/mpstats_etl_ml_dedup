@@ -183,7 +183,9 @@ binary benchmark с `pair_weight = 1`.
   Leiden community detection по weighted-рёбрам (`score`) с фиксированным
   seed, чтобы слабый bridge-edge не обязательно склеивал всю connected
   component. Старый режим connected components остаётся доступен как baseline
-  и сохраняется в audit-колонках.
+  и сохраняется в audit-колонках. Для research-сравнения notebook 04 также
+  считает Louvain, label propagation, modularity, F0.5 и weighted false
+  merge / false split; production v1 от этого не меняется.
 - Level 2: внутри выбранной family группировка по deterministic pack signature из
   готовых weight/multipack колонок → финальная pack-группа.
 - Research v1 делает это отдельным шагом после `03_matching_comparison.ipynb`:
@@ -195,7 +197,8 @@ binary benchmark с `pair_weight = 1`.
   split и строит отдельные family/pack графы внутри каждой категории.
   `fusion_family_id` / `fusion_pack_id` остаются финальным результатом
   graph grouping, а `connected_family_id` / `connected_pack_id` нужны для
-  сравнения с прежним connected-components поведением.
+  сравнения с прежним connected-components поведением. 3D-граф в notebook 04
+  используется как обзорная визуализация структуры, а не как метрика качества.
 - Текущий threshold benchmark не создаёт `manual_review` / triage-зону.
 
 ## 6.1 Организация кода: research и production v1

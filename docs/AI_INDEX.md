@@ -124,7 +124,7 @@ Research-код остаётся независимым: `research/dedup/` не 
 | `notebooks/01_candidate_generation.ipynb` | FAISS embedding blocking + supplemental training coverage pairs, генерация `candidates_<suffix>.csv` |
 | `notebooks/02_labeling_dataset.ipynb` | генерация `labeling_<suffix>.csv` для одного run или multi-category labeling CSV для fine-tuning reranker |
 | `notebooks/03_matching_comparison.ipynb` | сравнение baseline/reranker methods на размеченном gold-set выбранного run |
-| `notebooks/04_fusion_pack_grouping.ipynb` | post-03 fusion для одного или нескольких category-runs, family/pack grouping, graph-quality диагностика, 3D components и CSV `fusion_*_<suffix>.csv` |
+| `notebooks/04_fusion_pack_grouping.ipynb` | post-03 fusion для одного или нескольких category-runs, family/pack grouping, сравнение graph algorithms/metrics, 2D/3D diagnostics и CSV `fusion_*_<suffix>.csv` |
 | `notebooks/05_grouped_sku_demo.ipynb` | demo-flow дедупликатора: DuckDB-кандидаты -> bi-encoder/FAISS -> cross-encoder -> группы SKU |
 | `docs/assets/` | вспомогательные картинки/CSV для документов; не runtime-артефакты pipeline |
 
@@ -245,8 +245,10 @@ fine-tuning outputs и report paths смотри в `docs/ARCHITECTURE_PROGRESS.
   `artifacts/reports/fine_tuning/`, восстановить `category_run` через frozen
   split, разложить пары по `sauces` / `coconut_oil` / `soap`, сохранить
   `fusion_components_<suffix>.csv` плюс `fusion_pair_eval_<suffix>.csv` в
-  data-папку каждого category-run и показать graph-quality diagnostics,
-  false/missed links и 3D component visualization.
+  data-папку каждого category-run и показать graph-quality diagnostics:
+  connected components / Leiden / Louvain / label propagation comparison,
+  modularity, F0.5, weighted false merge / false split, false/missed links,
+  2D component map и обзорную 3D component visualization.
 - `notebooks/05_grouped_sku_demo.ipynb` показывает интерактивную demo-линию
   дедупликатора: берёт небольшой срез похожих SKU из `mpstats_products`,
   строит bi-encoder embeddings, ищет соседей через FAISS, rerank-ит пары

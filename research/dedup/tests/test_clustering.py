@@ -11,6 +11,7 @@ from research.dedup.clustering import (
     build_components,
     build_graph_groups,
     component_size_summary,
+    graph_modularity,
     same_pack_signature_mask,
 )
 
@@ -162,6 +163,49 @@ def test_leiden_splits_dense_groups_connected_by_weak_bridge() -> None:
     assert leiden_by_node["a"] == leiden_by_node["b"] == leiden_by_node["c"]
     assert leiden_by_node["d"] == leiden_by_node["e"] == leiden_by_node["f"]
     assert leiden_by_node["a"] != leiden_by_node["d"]
+
+
+def test_louvain_and_label_propagation_return_all_nodes() -> None:
+    config = ComponentConfig(left_id_col="left", right_id_col="right", label_col="label")
+    pairs = _weak_bridge_pairs()
+
+    for algorithm in ["louvain", "label_propagation"]:
+        components = build_graph_groups(
+            pairs,
+            edge_labels=FAMILY_EDGE_LABELS,
+            config=config,
+            grouping_config=GraphGroupingConfig(
+                algorithm=algorithm,
+                edge_weight_col="score",
+                resolution=1.0,
+                seed=42,
+            ),
+        )
+
+        assert set(components["node_id"].tolist()) == {"a", "b", "c", "d", "e", "f"}
+        assert "component_id" in components.columns
+
+
+def test_graph_modularity_scores_component_partition() -> None:
+    config = ComponentConfig(left_id_col="left", right_id_col="right", label_col="label")
+    pairs = _weak_bridge_pairs()
+    components = build_graph_groups(
+        pairs,
+        edge_labels=FAMILY_EDGE_LABELS,
+        config=config,
+        grouping_config=GraphGroupingConfig(algorithm="leiden", edge_weight_col="score", seed=42),
+    )
+
+    score = graph_modularity(
+        pairs,
+        components,
+        edge_labels=FAMILY_EDGE_LABELS,
+        config=config,
+        grouping_config=GraphGroupingConfig(edge_weight_col="score", resolution=1.0),
+    )
+
+    assert score is not None
+    assert 0 < score <= 1
 
 
 def test_pack_groups_do_not_cross_final_family_groups() -> None:

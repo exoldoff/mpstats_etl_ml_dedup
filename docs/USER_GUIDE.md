@@ -2052,14 +2052,15 @@ run. Если нужно вернуться к старому per-category ре�
 - `MY_FUSION_EVAL_SPLIT = "test"` — смотреть честную диагностику на test.
   Можно поставить `"dev"` для просмотра калибровочного среза или `"all"` для
   просмотра всех пар вместе.
-- `MY_REQUIRE_ALL_CATEGORY_RUNS = False` — пропускать категории, которых нет в
-  текущем smoke-output из `03`. Для финального полного прогона можно поставить
-  `True`.
-- `MY_GRAPH_GROUPING_ALGORITHM = "leiden"` — рекомендуемый финальный способ
-  построить `fusion_family_id`: Leiden community detection по positive-рёбрам
+- `MY_REQUIRE_ALL_CATEGORY_RUNS = True` — требовать все категории из
+  `MY_CATEGORY_RUNS`. Для smoke-output из `03`, где часть категорий может
+  отсутствовать, можно временно поставить `False`.
+- `MY_GRAPH_GROUPING_ALGORITHM = "leiden"` — выбранный способ построить
+  финальные `fusion_family_id`: Leiden community detection по positive-рёбрам
   с весом из `score`. Он помогает разрезать большие chained components, где
   одна слабая связь склеивает разные товары. Для старого поведения поставьте
-  `"connected_components"`.
+  `"connected_components"`; для экспериментов доступны `"louvain"` и
+  `"label_propagation"`.
 - `MY_COMMUNITY_RESOLUTION = 0.7` — разрешение Leiden: значения выше `1`
   обычно дробят family мельче, ниже `1` делают группы крупнее.
 - `MY_COMMUNITY_RANDOM_SEED = 42` — фиксирует воспроизводимый Leiden-разрез.
@@ -2067,9 +2068,21 @@ run. Если нужно вернуться к старому per-category ре�
   все positive-рёбра считаются с весом `1`.
 - `MY_COMPARE_CONNECTED_COMPONENTS = True` — сохраняет рядом старый
   connected-components baseline в audit-колонках.
+- `MY_GRAPH_ALGORITHM_GRID` — список алгоритмов для research-сравнения:
+  connected components, Leiden, Louvain и label propagation.
+- `MY_LEIDEN_RESOLUTION_GRID`, `MY_LOUVAIN_RESOLUTION_GRID` — сетки
+  resolution для сравнения Leiden/Louvain. Эти сетки не меняют финальные
+  `fusion_family_id`, пока вы отдельно не поменяли `MY_GRAPH_GROUPING_ALGORITHM`
+  и `MY_COMMUNITY_RESOLUTION`.
+- `MY_RISK_TOP_N` — сколько самых рискованных false/missed связей показывать
+  в диагностических таблицах.
+- `MY_2D_CATEGORY_RUN = "auto"`, `MY_2D_GRAPH = "family"` — компактная
+  2D-карта одной проблемной компоненты: зелёные линии — верные связи,
+  красные — false merge, пунктир — missed link.
 - `MY_3D_CATEGORY_RUN = "auto"`, `MY_3D_GRAPH = "family"` — 3D-визуализация
-  крупнейших graph components. Если установлен `plotly`, граф интерактивный;
-  иначе используется статичный matplotlib fallback.
+  крупнейших graph components. Это обзорная картинка структуры, а не метрика
+  качества. Если установлен `plotly`, граф интерактивный; иначе используется
+  статичный matplotlib fallback.
 
 Окружение/env не используется как скрытый override для `04`: что написано в
 `MY_*`, то и применяется.
@@ -2089,8 +2102,13 @@ run. Если нужно вернуться к старому per-category ре�
 `fusion_community_resolution`, `fusion_community_seed` и
 `fusion_community_edge_weight_col`.
 
-`04` также показывает основную graph-quality диагностику, false links / missed
-links, примеры "same family, different pack" и 3D-карту components.
+`04` также показывает основную graph-quality диагностику: precision/recall/F0.5,
+weighted false merge / false split по `pair_weight`, modularity по positive
+graph, частичный B-cubed по имеющимся pair-labels, false links / missed links,
+рискованные predicted families, 2D-карту проблемной компоненты, примеры
+"same family, different pack" и обзорную 3D-карту components. Частичный B-cubed
+нужен как подсказка, а не как финальная cluster-метрика: для честной оценки
+кластеров нужна ручная разметка целых компонент, а не только отдельных пар.
 
 `05_grouped_sku_demo.ipynb` показывает demo-flow дедупликатора уже на
 реальных товарах: берёт небольшой срез похожих SKU из `mpstats_products`,

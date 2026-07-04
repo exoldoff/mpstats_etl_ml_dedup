@@ -35,6 +35,7 @@ from .clustering import (
     build_components,
     build_graph_groups,
     component_size_summary,
+    graph_modularity,
     same_pack_signature_mask,
 )
 from .embedding_candidates import (
@@ -191,6 +192,7 @@ __all__ = [
     "generate_candidate_pairs",
     "get_model_cache_dir",
     "get_polza_base_url",
+    "graph_modularity",
     "list_model_specs",
     "load_research_dotenv",
     "labeling_score_strata_masks",

@@ -185,6 +185,62 @@ def _weighted_edges(
     return edges
 
 
+def _positive_graph_inputs(
+    pairs: pd.DataFrame,
+    *,
+    edge_labels: Iterable[str],
+    config: ComponentConfig,
+    grouping_config: GraphGroupingConfig,
+    edge_mask: pd.Series | None,
+) -> tuple[list[str], dict[tuple[str, str], float]]:
+    labels = set(edge_labels)
+    left = pairs[config.left_id_col].astype("string")
+    right = pairs[config.right_id_col].astype("string")
+    nodes = sorted(set(left.dropna()) | set(right.dropna()))
+    edge_rows = _edge_rows(pairs, labels=labels, cfg=config, edge_mask=edge_mask)
+    weighted_edges = _weighted_edges(edge_rows, cfg=config, grouping_cfg=grouping_config)
+    return nodes, weighted_edges
+
+
+def _require_igraph(algorithm: str):
+    try:
+        import igraph as ig
+    except ImportError as exc:
+        raise RuntimeError(
+            f"python-igraph is required for graph grouping algorithm={algorithm!r}. "
+            "Install research dependencies from requirements-research.txt."
+        ) from exc
+    return ig
+
+
+def _build_igraph_graph(
+    nodes: list[str],
+    weighted_edges: dict[tuple[str, str], float],
+    *,
+    algorithm: str,
+):
+    ig = _require_igraph(algorithm)
+    node_to_index = {node: index for index, node in enumerate(nodes)}
+    edge_pairs = [(node_to_index[left_node], node_to_index[right_node]) for left_node, right_node in weighted_edges]
+    weights = [weighted_edges[edge] for edge in weighted_edges]
+    graph = ig.Graph(n=len(nodes), edges=edge_pairs, directed=False)
+    graph.es["weight"] = weights
+    return graph, weights
+
+
+def _component_records_from_partition(
+    nodes: list[str],
+    partition: Iterable[Iterable[int]],
+    *,
+    component_col: str,
+) -> pd.DataFrame:
+    communities = [{nodes[index] for index in community} for community in partition]
+    covered = set().union(*(set(community) for community in communities)) if communities else set()
+    missing_nodes = [node for node in nodes if node not in covered]
+    groups = list(communities) + [{node} for node in missing_nodes]
+    return _component_records_from_groups(groups, component_col=component_col)
+
+
 def _leiden_components(
     pairs: pd.DataFrame,
     *,
@@ -197,7 +253,6 @@ def _leiden_components(
         raise ValueError("Leiden resolution must be a positive finite number")
 
     try:
-        import igraph as ig
         import leidenalg
     except ImportError as exc:
         raise RuntimeError(
@@ -205,20 +260,17 @@ def _leiden_components(
             "Install research dependencies from requirements-research.txt."
         ) from exc
 
-    labels = set(edge_labels)
-    left = pairs[config.left_id_col].astype("string")
-    right = pairs[config.right_id_col].astype("string")
-    nodes = sorted(set(left.dropna()) | set(right.dropna()))
-    edge_rows = _edge_rows(pairs, labels=labels, cfg=config, edge_mask=edge_mask)
-    weighted_edges = _weighted_edges(edge_rows, cfg=config, grouping_cfg=grouping_config)
-
+    nodes, weighted_edges = _positive_graph_inputs(
+        pairs,
+        edge_labels=edge_labels,
+        config=config,
+        grouping_config=grouping_config,
+        edge_mask=edge_mask,
+    )
     if not weighted_edges:
         return _component_records_from_groups(({node} for node in nodes), component_col=config.component_col)
 
-    node_to_index = {node: index for index, node in enumerate(nodes)}
-    edge_pairs = [(node_to_index[left_node], node_to_index[right_node]) for left_node, right_node in weighted_edges]
-    weights = [weighted_edges[edge] for edge in weighted_edges]
-    graph = ig.Graph(n=len(nodes), edges=edge_pairs, directed=False)
+    graph, weights = _build_igraph_graph(nodes, weighted_edges, algorithm="leiden")
     partition = leidenalg.find_partition(
         graph,
         leidenalg.RBConfigurationVertexPartition,
@@ -227,11 +279,56 @@ def _leiden_components(
         n_iterations=-1,
         seed=grouping_config.seed,
     )
-    communities = [{nodes[index] for index in community} for community in partition]
-    covered = set().union(*(set(community) for community in communities)) if communities else set()
-    missing_nodes = [node for node in nodes if node not in covered]
-    groups = list(communities) + [{node} for node in missing_nodes]
-    return _component_records_from_groups(groups, component_col=config.component_col)
+    return _component_records_from_partition(nodes, partition, component_col=config.component_col)
+
+
+def _louvain_components(
+    pairs: pd.DataFrame,
+    *,
+    edge_labels: Iterable[str],
+    config: ComponentConfig,
+    grouping_config: GraphGroupingConfig,
+    edge_mask: pd.Series | None,
+) -> pd.DataFrame:
+    if not math.isfinite(grouping_config.resolution) or grouping_config.resolution <= 0:
+        raise ValueError("Louvain resolution must be a positive finite number")
+
+    nodes, weighted_edges = _positive_graph_inputs(
+        pairs,
+        edge_labels=edge_labels,
+        config=config,
+        grouping_config=grouping_config,
+        edge_mask=edge_mask,
+    )
+    if not weighted_edges:
+        return _component_records_from_groups(({node} for node in nodes), component_col=config.component_col)
+
+    graph, _ = _build_igraph_graph(nodes, weighted_edges, algorithm="louvain")
+    partition = graph.community_multilevel(weights="weight", resolution=grouping_config.resolution)
+    return _component_records_from_partition(nodes, partition, component_col=config.component_col)
+
+
+def _label_propagation_components(
+    pairs: pd.DataFrame,
+    *,
+    edge_labels: Iterable[str],
+    config: ComponentConfig,
+    grouping_config: GraphGroupingConfig,
+    edge_mask: pd.Series | None,
+) -> pd.DataFrame:
+    nodes, weighted_edges = _positive_graph_inputs(
+        pairs,
+        edge_labels=edge_labels,
+        config=config,
+        grouping_config=grouping_config,
+        edge_mask=edge_mask,
+    )
+    if not weighted_edges:
+        return _component_records_from_groups(({node} for node in nodes), component_col=config.component_col)
+
+    graph, _ = _build_igraph_graph(nodes, weighted_edges, algorithm="label_propagation")
+    partition = graph.community_label_propagation(weights="weight")
+    return _component_records_from_partition(nodes, partition, component_col=config.component_col)
 
 
 def build_graph_groups(
@@ -246,6 +343,8 @@ def build_graph_groups(
 
     ``connected_components`` preserves the historical union-find behavior.
     ``leiden`` can split a chained positive component into denser communities.
+    ``louvain`` and ``label_propagation`` are experimental baselines for
+    notebook diagnostics.
     """
     cfg = config or ComponentConfig()
     graph_cfg = grouping_config or GraphGroupingConfig()
@@ -265,7 +364,64 @@ def build_graph_groups(
             grouping_config=graph_cfg,
             edge_mask=edge_mask,
         )
+    if algorithm in {"louvain", "multilevel"}:
+        return _louvain_components(
+            pairs,
+            edge_labels=edge_labels,
+            config=cfg,
+            grouping_config=graph_cfg,
+            edge_mask=edge_mask,
+        )
+    if algorithm in {"label_propagation", "lpa"}:
+        return _label_propagation_components(
+            pairs,
+            edge_labels=edge_labels,
+            config=cfg,
+            grouping_config=graph_cfg,
+            edge_mask=edge_mask,
+        )
     raise ValueError(f"Unknown graph grouping algorithm: {graph_cfg.algorithm!r}")
+
+
+def graph_modularity(
+    pairs: pd.DataFrame,
+    components: pd.DataFrame,
+    *,
+    edge_labels: Iterable[str],
+    config: ComponentConfig | None = None,
+    grouping_config: GraphGroupingConfig | None = None,
+    edge_mask: pd.Series | None = None,
+) -> float | None:
+    """Compute weighted modularity for a grouping on the positive-edge graph."""
+    cfg = config or ComponentConfig()
+    graph_cfg = grouping_config or GraphGroupingConfig()
+    if "node_id" not in components.columns or cfg.component_col not in components.columns:
+        raise ValueError("components must contain node_id and the configured component column")
+    required = {cfg.left_id_col, cfg.right_id_col, cfg.label_col}
+    missing = sorted(required - set(pairs.columns))
+    if missing:
+        raise ValueError(f"Missing columns for graph modularity: {missing}")
+
+    nodes, weighted_edges = _positive_graph_inputs(
+        pairs,
+        edge_labels=edge_labels,
+        config=cfg,
+        grouping_config=graph_cfg,
+        edge_mask=edge_mask,
+    )
+    if not nodes or not weighted_edges:
+        return None
+
+    graph, _ = _build_igraph_graph(nodes, weighted_edges, algorithm="modularity")
+    component_by_node = components.set_index("node_id")[cfg.component_col].to_dict()
+    component_to_id: dict[object, int] = {}
+    membership: list[int] = []
+    for node in nodes:
+        component = component_by_node.get(node, node)
+        if component not in component_to_id:
+            component_to_id[component] = len(component_to_id)
+        membership.append(component_to_id[component])
+    return float(graph.modularity(membership, weights="weight", resolution=graph_cfg.resolution, directed=False))
 
 
 def _numbers_close(left: float | None, right: float | None, *, abs_tol: float, rel_tol: float) -> bool:
