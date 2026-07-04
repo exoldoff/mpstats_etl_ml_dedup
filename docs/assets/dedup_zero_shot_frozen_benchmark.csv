@@ -1,4 +1,8 @@
 model,method,type,precision,recall,f1,false_merge,false_split,weighted_cost,run_type,conclusion
 BGE reranker ZS*,zs_bge_reranker_v2_m3,Zero-shot*,0.927273,0.435897,0.593023,4,66,477.833531,zero_shot_current_split,baseline для FT
+Qwen 4B ZS,reranker_qwen3_4b,Zero-shot,0.878788,0.491525,0.630435,4,30,188.375734,baseline_zero_shot,лучший F1
+Jina v3 ZS,reranker_jina_v3,Zero-shot,1.000000,0.220339,0.361111,0,46,178.610411,baseline_zero_shot,0 false merge
+E5 bi-encoder ZS,bi_encoder_zero_shot,Zero-shot,1.000000,0.084746,0.156250,0,54,212.425913,baseline_zero_shot,низкий recall
+Rule-based fuzzy,rule_based_fuzzy,Baseline,0.809524,0.288136,0.425000,4,42,245.434619,baseline_zero_shot,без ML
 Qwen 0.6B ZS*,zs_qwen3_reranker_0_6b,Zero-shot*,0.892857,0.213675,0.344828,3,92,561.604930,zero_shot_current_split,ниже BGE
 mMARCO ZS*,zs_mmarco,Zero-shot*,0.878049,0.307692,0.455696,5,81,598.783246,zero_shot_current_split,ниже BGE
