@@ -47,6 +47,7 @@ import {
   ClassifierRule,
   CubeItem,
   DedupCategory,
+  DedupGraphReport,
   DedupProductLevel,
   DedupProductRow,
   DedupRun,
@@ -602,6 +603,7 @@ export function App() {
   const [dedupCategories, setDedupCategories] = useState<DedupCategory[]>([]);
   const [selectedDedupCategoryKeys, setSelectedDedupCategoryKeys] = useState<Set<string>>(new Set());
   const [dedupRuns, setDedupRuns] = useState<DedupRun[]>([]);
+  const [dedupGraphReport, setDedupGraphReport] = useState<DedupGraphReport | null>(null);
   const [dedupArtifactRows, setDedupArtifactRows] = useState<Record<string, unknown>[]>([]);
   const [dedupArtifactTitle, setDedupArtifactTitle] = useState("");
   const [dedupProductRows, setDedupProductRows] = useState<DedupProductRow[]>([]);
@@ -1705,6 +1707,17 @@ export function App() {
     setDedupSettings({ ...defaultDedupSettings, ...settingsResponse });
     setDedupCategories(eligibleResponse.categories);
     setDedupRuns(runsResponse.runs);
+    const latestSuccess = dedupGraphReportCandidateRun(runsResponse.runs);
+    if (latestSuccess) {
+      try {
+        await loadDedupGraphReport(latestSuccess.run_id);
+      } catch (exc) {
+        setDedupGraphReport(null);
+        setError(`Графовый отчёт ML-дедупа: ${errorText(exc)}`);
+      }
+    } else {
+      setDedupGraphReport(null);
+    }
     setSelectedDedupCategoryKeys((prev) => {
       const available = new Set(eligibleResponse.categories.map((item) => item.category_key));
       const kept = new Set([...prev].filter((key) => available.has(key)));
@@ -1780,6 +1793,31 @@ export function App() {
       return [...existing.values()].sort((left, right) => String(right.created_at ?? "").localeCompare(String(left.created_at ?? "")));
     });
     window.setTimeout(() => void loadDedupWorkspace().catch((exc) => setError(`ML-дедуп: ${errorText(exc)}`)), 1500);
+    return response;
+  }
+
+  async function rebuildDedupGraphRuns() {
+    const categoryKeys = [...selectedDedupCategoryKeys];
+    if (!categoryKeys.length) throw new Error("Выбери хотя бы одну категорию.");
+    await api.saveDedupSettings(dedupSettings);
+    const response = await api.rebuildDedupGraphRuns({ project_name: projectName, category_keys: categoryKeys });
+    setDedupRuns((prev) => {
+      const existing = new Map(prev.map((item) => [item.run_id, item]));
+      for (const run of response.runs) existing.set(run.run_id, run);
+      return [...existing.values()].sort((left, right) => String(right.created_at ?? "").localeCompare(String(left.created_at ?? "")));
+    });
+    window.setTimeout(() => void loadDedupWorkspace().catch((exc) => setError(`ML-дедуп: ${errorText(exc)}`)), 1200);
+    return response;
+  }
+
+  async function loadDedupGraphReport(runId?: string) {
+    const targetRunId = runId || dedupGraphReportCandidateRun(dedupRuns)?.run_id;
+    if (!targetRunId) {
+      setDedupGraphReport(null);
+      return null;
+    }
+    const response = await api.getDedupGraphReport(targetRunId);
+    setDedupGraphReport(response);
     return response;
   }
 
@@ -2590,6 +2628,7 @@ export function App() {
               runs={dedupRuns}
               artifactTitle={dedupArtifactTitle}
               artifactRows={dedupArtifactRows}
+              graphReport={dedupGraphReport}
               productRows={dedupProductRows}
               productTotal={dedupProductTotal}
               productLevel={dedupProductLevel}
@@ -2601,6 +2640,7 @@ export function App() {
               onReload={() => void runAction("Обновление ML-дедупа", loadDedupWorkspace)}
               onSaveSettings={() => void runAction("Сохранение настроек ML-дедупа", saveDedupSettings)}
               onStart={() => void runAction("Запуск ML-дедупа", startDedupRuns)}
+              onRebuildGraph={() => void runAction("Пересборка графа ML-дедупа", rebuildDedupGraphRuns)}
               onProductLevelChange={(level) => {
                 setDedupProductLevel(level);
                 void runAction("Загрузка браузера ML-дедупа", () => loadDedupProducts(dedupProductCategoryKey, level, dedupProductQuery));
@@ -2612,6 +2652,7 @@ export function App() {
               onProductQueryChange={setDedupProductQuery}
               onProductSearch={() => void runAction("Поиск в ML-дедупе", () => loadDedupProducts(dedupProductCategoryKey, dedupProductLevel, dedupProductQuery))}
               onLoadArtifact={(runId, artifact) => void runAction("Загрузка артефакта ML-дедупа", () => loadDedupArtifact(runId, artifact))}
+              onLoadGraphReport={(runId) => void runAction("Графовый отчёт ML-дедупа", () => loadDedupGraphReport(runId))}
               onSplitProduct={(row) => void runAction("Ручная правка ML-дедупа", () => splitDedupProduct(row))}
             />
           ) : null}
@@ -3873,6 +3914,7 @@ function DedupWorkspace(props: {
   runs: DedupRun[];
   artifactTitle: string;
   artifactRows: Record<string, unknown>[];
+  graphReport: DedupGraphReport | null;
   productRows: DedupProductRow[];
   productTotal: number;
   productLevel: DedupProductLevel;
@@ -3884,11 +3926,13 @@ function DedupWorkspace(props: {
   onReload: () => void;
   onSaveSettings: () => void;
   onStart: () => void;
+  onRebuildGraph: () => void;
   onProductLevelChange: (level: DedupProductLevel) => void;
   onProductCategoryChange: (categoryKey: string) => void;
   onProductQueryChange: (value: string) => void;
   onProductSearch: () => void;
   onLoadArtifact: (runId: string, artifact: "groups" | "edges") => void;
+  onLoadGraphReport: (runId: string) => void;
   onSplitProduct: (row: DedupProductRow) => void;
 }) {
   const selectedCount = props.categories.filter((category) => props.selectedCategoryKeys.has(category.category_key)).length;
@@ -3967,6 +4011,37 @@ function DedupWorkspace(props: {
               />
             </label>
             <label>
+              <FieldLabel text="Граф" hint="Leiden делит граф на плотные группы; connected components склеивает всю цепочку positive-связей." />
+              <select
+                value={props.settings.graph_grouping_algorithm}
+                onChange={(event) => props.onSettingChange("graph_grouping_algorithm", event.target.value)}
+              >
+                <option value="leiden">leiden</option>
+                <option value="connected_components">connected components</option>
+              </select>
+            </label>
+            <label>
+              <FieldLabel text="Resolution" hint="Параметр Leiden community detection. Больше значение обычно дробит граф сильнее, меньше — склеивает крупнее." />
+              <input
+                type="number"
+                min={0.001}
+                step={0.05}
+                value={props.settings.graph_community_resolution}
+                onChange={(event) => props.onSettingChange("graph_community_resolution", Number(event.target.value))}
+              />
+            </label>
+            <label>
+              <FieldLabel text="Seed" hint="Фиксирует повторяемость Leiden. Пустое значение оставляет seed не заданным." />
+              <input
+                type="number"
+                value={props.settings.graph_community_seed ?? ""}
+                onChange={(event) => {
+                  const value = event.target.value.trim();
+                  props.onSettingChange("graph_community_seed", value ? Number(value) : null);
+                }}
+              />
+            </label>
+            <label>
               <FieldLabel text="Batch embeddings" hint="Размер батча для embedding-модели перед FAISS." />
               <input
                 type="number"
@@ -4003,6 +4078,7 @@ function DedupWorkspace(props: {
           <div className="toolbar wrap">
             <button className="ghost-button" disabled={props.busy} onClick={props.onReload}><RefreshCcw size={17} />Обновить</button>
             <button className="ghost-button" disabled={props.busy} onClick={props.onSaveSettings}><Save size={17} />Сохранить настройки</button>
+            <button className="ghost-button" disabled={props.busy || !selectedCount} onClick={props.onRebuildGraph}><RefreshCcw size={17} />Только граф</button>
             <button className="primary-inline-button" disabled={props.busy || !selectedCount} onClick={props.onStart}><Play size={17} />Запустить</button>
           </div>
         </div>
@@ -4047,6 +4123,8 @@ function DedupWorkspace(props: {
         onSplitProduct={props.onSplitProduct}
       />
 
+      <DedupGraphReportPanel report={props.graphReport} />
+
       <div className="dedup-runs-panel">
         <h3>Запуски</h3>
         {latestRun ? (
@@ -4089,6 +4167,7 @@ function DedupWorkspace(props: {
               value: (run) => run.run_id,
               render: (run) => (
                 <div className="table-actions">
+                  <button className="tiny-button" disabled={run.status !== "success"} onClick={() => props.onLoadGraphReport(run.run_id)}>graph</button>
                   <button className="tiny-button" disabled={run.status !== "success"} onClick={() => props.onLoadArtifact(run.run_id, "groups")}>groups</button>
                   <button className="tiny-button" disabled={run.status !== "success"} onClick={() => props.onLoadArtifact(run.run_id, "edges")}>edges</button>
                 </div>
@@ -4114,6 +4193,175 @@ function DedupWorkspace(props: {
         </div>
       ) : null}
     </section>
+  );
+}
+
+const dedupGraphColors = ["#1f6f68", "#7b5ea7", "#c06c3b", "#2f6bb2", "#8b5b2b", "#5f7f3a", "#b4475d", "#2d7f86"];
+
+function DedupGraphReportPanel(props: { report: DedupGraphReport | null }) {
+  const report = props.report;
+  if (!report) {
+    return (
+      <div className="dedup-graph-panel">
+        <div className="dedup-graph-head">
+          <div>
+            <h3>Графовый отчёт</h3>
+            <small>Нет успешного run</small>
+          </div>
+        </div>
+        <Empty text="После успешного ML-дедупа здесь появятся цифры и 2D-карта групп." />
+      </div>
+    );
+  }
+  const summary = report.summary;
+  const clusterPreview = report.clusters.slice(0, 8);
+  return (
+    <div className="dedup-graph-panel">
+      <div className="dedup-graph-head">
+        <div>
+          <h3>Графовый отчёт</h3>
+          <small>run {report.run_id.slice(0, 10)}{report.truncated ? " · sample" : ""}</small>
+        </div>
+        <Badge value="success" />
+      </div>
+      <div className="dedup-graph-metrics">
+        <Metric label="SKU-node" value={formatNumber(summary.node_count)} />
+        <Metric label="Кластеров" value={formatNumber(summary.cluster_count)} />
+        <Metric label="Групп с дублями" value={formatNumber(summary.non_singleton_cluster_count)} />
+        <Metric label="SKU в группах" value={formatNumber(summary.grouped_node_count)} />
+        <Metric label="Средний размер" value={String(summary.avg_cluster_size)} />
+        <Metric label="Средний дубль-кластер" value={String(summary.avg_non_singleton_cluster_size)} />
+        <Metric label="Макс. кластер" value={formatNumber(summary.max_cluster_size)} />
+        <Metric label="Positive-рёбер" value={formatNumber(summary.positive_edge_count)} />
+      </div>
+      <div className="dedup-graph-body">
+        <DedupGraphMap nodes={report.nodes} edges={report.edges} />
+        <div className="dedup-cluster-list">
+          <h4>Крупные группы</h4>
+          {clusterPreview.map((cluster, index) => {
+            const familyId = String(cluster.ml_family_id ?? "-");
+            return (
+              <div className="dedup-cluster-item" key={familyId}>
+                <span style={{ background: dedupGraphColors[index % dedupGraphColors.length] }} />
+                <strong>{familyId}</strong>
+                <small>
+                  {formatNumber(Number(cluster.sku_count ?? 0))} SKU · {formatNumber(Number(cluster.brand_count ?? 0))} брендов
+                </small>
+              </div>
+            );
+          })}
+          {!clusterPreview.length ? <Empty text="Группы ещё не записаны." /> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DedupGraphMap(props: { nodes: DedupGraphReport["nodes"]; edges: DedupGraphReport["edges"] }) {
+  const graph = useMemo(() => {
+    const families = new Map<string, DedupGraphReport["nodes"]>();
+    props.nodes.forEach((node) => {
+      const familyId = node.ml_family_id || "singleton";
+      const current = families.get(familyId) ?? [];
+      current.push(node);
+      families.set(familyId, current);
+    });
+    const familyEntries = [...families.entries()].sort((left, right) => right[1].length - left[1].length || left[0].localeCompare(right[0]));
+    const width = 760;
+    const height = 380;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const orbit = Math.min(148, Math.max(42, 58 + familyEntries.length * 5));
+    const rawPositions = new Map<string, { x: number; y: number; radius: number; color: string; familyId: string; title: string }>();
+    familyEntries.forEach(([familyId, members], familyIndex) => {
+      const angle = familyEntries.length <= 1 ? 0 : (Math.PI * 2 * familyIndex) / familyEntries.length - Math.PI / 2;
+      const familyX = familyEntries.length <= 1 ? centerX : centerX + Math.cos(angle) * orbit;
+      const familyY = familyEntries.length <= 1 ? centerY : centerY + Math.sin(angle) * orbit * 0.72;
+      const localRadius = members.length <= 1 ? 0 : Math.min(48, Math.max(14, 8 + members.length * 2.2));
+      const color = dedupGraphColors[familyIndex % dedupGraphColors.length];
+      members.forEach((node, nodeIndex) => {
+        const nodeAngle = members.length <= 1 ? 0 : (Math.PI * 2 * nodeIndex) / members.length - Math.PI / 2;
+        const x = familyX + Math.cos(nodeAngle) * localRadius;
+        const y = familyY + Math.sin(nodeAngle) * localRadius;
+        rawPositions.set(node.node_id, {
+          x,
+          y,
+          radius: Math.max(4, Math.min(8, 3 + Math.sqrt(Number(node.sales_volume || 0)) / 5)),
+          color,
+          familyId,
+          title: `${node.sku || node.article || node.node_id} · ${familyId}`
+        });
+      });
+    });
+    const rawPoints = [...rawPositions.values()];
+    const minX = Math.min(...rawPoints.map((point) => point.x));
+    const maxX = Math.max(...rawPoints.map((point) => point.x));
+    const minY = Math.min(...rawPoints.map((point) => point.y));
+    const maxY = Math.max(...rawPoints.map((point) => point.y));
+    const spanX = Math.max(1, maxX - minX);
+    const spanY = Math.max(1, maxY - minY);
+    const scale = rawPoints.length ? Math.min(7.2, Math.max(1, Math.min((width - 96) / spanX, (height - 84) / spanY))) : 1;
+    const rawCenterX = (minX + maxX) / 2;
+    const rawCenterY = (minY + maxY) / 2;
+    const radiusScale = Math.min(1.8, Math.sqrt(scale));
+    const positions = new Map(
+      [...rawPositions.entries()].map(([nodeId, point]) => [
+        nodeId,
+        {
+          ...point,
+          x: (point.x - rawCenterX) * scale + centerX,
+          y: (point.y - rawCenterY) * scale + centerY,
+          radius: point.radius * radiusScale
+        }
+      ])
+    );
+    const lines = props.edges
+      .map((edge) => {
+        const source = positions.get(edge.source);
+        const target = positions.get(edge.target);
+        if (!source || !target) return null;
+        return { source, target, score: Number(edge.score || 0) };
+      })
+      .filter(Boolean) as Array<{ source: { x: number; y: number }; target: { x: number; y: number }; score: number }>;
+    return { positions: [...positions.entries()], lines, familyEntries };
+  }, [props.edges, props.nodes]);
+
+  if (!props.nodes.length) {
+    return <div className="dedup-graph-empty"><Empty text="Для карты нет узлов." /></div>;
+  }
+
+  return (
+    <div className="dedup-graph-viz">
+      <svg className="dedup-graph-svg" viewBox="0 0 760 380" role="img" aria-label="2D граф ML-дедупа">
+        <rect x="0" y="0" width="760" height="380" rx="8" />
+        {graph.lines.map((line, index) => (
+          <line
+            key={`edge-${index}`}
+            x1={line.source.x}
+            y1={line.source.y}
+            x2={line.target.x}
+            y2={line.target.y}
+            strokeOpacity={Math.max(0.18, Math.min(0.78, line.score || 0.4))}
+          />
+        ))}
+        {graph.positions.map(([nodeId, point]) => (
+          <circle key={nodeId} cx={point.x} cy={point.y} r={point.radius} fill={point.color}>
+            <title>{point.title}</title>
+          </circle>
+        ))}
+        {graph.familyEntries.slice(0, 10).map(([familyId, members], index) => {
+          const familyPoints = members.map((node) => graph.positions.find(([nodeId]) => nodeId === node.node_id)?.[1]).filter(Boolean) as Array<{ x: number; y: number }>;
+          if (!familyPoints.length) return null;
+          const x = familyPoints.reduce((sum, point) => sum + point.x, 0) / familyPoints.length;
+          const y = familyPoints.reduce((sum, point) => sum + point.y, 0) / familyPoints.length;
+          return (
+            <text key={familyId} x={x + 8} y={y - 8} fill={dedupGraphColors[index % dedupGraphColors.length]}>
+              {members.length}
+            </text>
+          );
+        })}
+      </svg>
+    </div>
   );
 }
 
@@ -4373,6 +4621,10 @@ function dedupProductRowKey(row: DedupProductRow, level: DedupProductLevel, inde
     row.node_id || row.canonical_node_id || index,
     row.sort_order
   ].join("::");
+}
+
+function dedupGraphReportCandidateRun(runs: DedupRun[]) {
+  return runs.find((run) => run.status === "success" && Number(run.edge_count || 0) > 0) ?? runs.find((run) => run.status === "success") ?? null;
 }
 
 function formatNumber(value: number | null | undefined) {

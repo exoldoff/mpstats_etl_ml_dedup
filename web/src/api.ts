@@ -176,6 +176,56 @@ export type DedupCategory = {
   latest_successful_run?: DedupRun | null;
 };
 
+export type DedupGraphSummary = {
+  node_count: number;
+  cluster_count: number;
+  non_singleton_cluster_count: number;
+  singleton_cluster_count: number;
+  grouped_node_count: number;
+  positive_edge_count: number;
+  edge_count: number;
+  avg_cluster_size: number;
+  avg_non_singleton_cluster_size: number;
+  max_cluster_size: number;
+};
+
+export type DedupGraphNode = {
+  node_id: string;
+  ml_family_id: string;
+  ml_pack_id?: string | null;
+  canonical_node_id?: string | null;
+  canonical_sku?: string | null;
+  ml_dedup_status?: string | null;
+  confidence_score?: number | null;
+  component_size?: number | null;
+  sku?: string | null;
+  brand?: string | null;
+  marketplace?: string | null;
+  marketplace_code?: string | null;
+  article?: string | null;
+  subcategory?: string | null;
+  sales_volume?: number | null;
+  revenue?: number | null;
+};
+
+export type DedupGraphEdge = {
+  source: string;
+  target: string;
+  score?: number | null;
+  candidate_source?: string | null;
+  blocking_scope?: string | null;
+  same_pack_signature?: boolean | null;
+};
+
+export type DedupGraphReport = {
+  run_id: string;
+  summary: DedupGraphSummary;
+  clusters: Record<string, unknown>[];
+  nodes: DedupGraphNode[];
+  edges: DedupGraphEdge[];
+  truncated: boolean;
+};
+
 export type DedupProductRow = {
   run_id: string;
   project_name: string;
@@ -696,12 +746,16 @@ export const api = {
   },
   startDedupRuns: (payload: { project_name: string; category_keys: string[]; wait?: boolean }) =>
     request<{ runs: DedupRun[] }>("/api/dedup/runs", { method: "POST", body: JSON.stringify(payload) }),
+  rebuildDedupGraphRuns: (payload: { project_name: string; category_keys: string[]; wait?: boolean }) =>
+    request<{ runs: DedupRun[] }>("/api/dedup/runs/rebuild-graph", { method: "POST", body: JSON.stringify(payload) }),
   splitDedupProduct: (payload: { run_id: string; node_id: string; note?: string }) =>
     request<{ run_id: string; node_id: string; override: Record<string, unknown>; materialized_rows: number }>(
       "/api/dedup/products/split",
       { method: "POST", body: JSON.stringify(payload) }
     ),
   getDedupRun: (runId: string) => request<DedupRun>(`/api/dedup/runs/${encodeURIComponent(runId)}`),
+  getDedupGraphReport: (runId: string) =>
+    request<DedupGraphReport>(`/api/dedup/runs/${encodeURIComponent(runId)}/graph`),
   exportDedupArtifact: (runId: string, artifact: "groups" | "edges") =>
     request<{ run_id: string; artifact: string; rows: Record<string, unknown>[] }>(
       `/api/dedup/runs/${encodeURIComponent(runId)}/export?artifact=${encodeURIComponent(artifact)}`

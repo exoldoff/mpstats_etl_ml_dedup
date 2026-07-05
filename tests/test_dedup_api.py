@@ -171,6 +171,9 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
                 "threshold_strategy": "threshold_cost_sensitive",
                 "threshold_same": 0.1,
                 "faiss_top_k": 99,
+                "graph_grouping_algorithm": "connected_components",
+                "graph_community_resolution": 0.3,
+                "graph_community_seed": 7,
             },
         )
         assert saved_response.status_code == 200
@@ -180,6 +183,9 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         assert saved_payload["category_thresholds"]["sauces"] == pytest.approx(0.917444)
         assert saved_payload["faiss_top_k"] == 99
         assert saved_payload["model_device"] == "mps"
+        assert saved_payload["graph_grouping_algorithm"] == "connected_components"
+        assert saved_payload["graph_community_resolution"] == pytest.approx(0.3)
+        assert saved_payload["graph_community_seed"] == 7
 
         eligible_response = client.get("/api/dedup/eligible-categories", params={"project_name": "unit"})
         assert eligible_response.status_code == 200
@@ -198,11 +204,46 @@ def test_dedup_api_settings_lifecycle_and_export(tmp_path: Path) -> None:
         assert run["threshold_same"] == pytest.approx(0.917444)
         assert run["faiss_top_k"] == 99
         assert run["manifest_json"]["runtime_profile"]["model_device"] == "mps"
+        assert run["manifest_json"]["runtime_profile"]["graph_grouping_algorithm"] == "connected_components"
         assert run["manifest_json"]["retrieval_cache_status"] == "rebuilt"
         assert run["manifest_json"]["retrieval_cache_key"]
         assert run["manifest_json"]["embedding_shape"] == [2, 2]
         assert run["manifest_json"]["progress_percent"] == 100
         assert run["manifest_json"]["progress_stage"] == "success"
+
+        graph_report_response = client.get(f"/api/dedup/runs/{run['run_id']}/graph")
+        assert graph_report_response.status_code == 200
+        graph_report = graph_report_response.json()
+        assert graph_report["summary"]["node_count"] == 2
+        assert graph_report["summary"]["cluster_count"] >= 1
+        assert graph_report["nodes"]
+
+        graph_settings_response = client.put(
+            "/api/dedup/settings",
+            json={
+                "model_path": "",
+                "hf_model_id": "exoldoff/bge-reranker-v2-m3-cross-encoder-marketplaces-rus",
+                "embedding_model_name": "intfloat/multilingual-e5-small",
+                "model_device": "mps",
+                "faiss_top_k": 99,
+                "graph_grouping_algorithm": "leiden",
+                "graph_community_resolution": 0.2,
+                "graph_community_seed": 42,
+            },
+        )
+        assert graph_settings_response.status_code == 200
+        graph_run_response = client.post(
+            "/api/dedup/runs/rebuild-graph",
+            json={"project_name": "unit", "category_keys": ["dedupcat_sauces"], "wait": True},
+        )
+        assert graph_run_response.status_code == 200
+        graph_run = graph_run_response.json()["runs"][0]
+        assert graph_run["status"] == "success"
+        assert graph_run["manifest_json"]["run_mode"] == "graph_only"
+        assert graph_run["manifest_json"]["source_run_id"] == run["run_id"]
+        assert graph_run["manifest_json"]["runtime_profile"]["graph_community_resolution"] == pytest.approx(0.2)
+        assert graph_run["edge_count"] == run["edge_count"]
+        run = graph_run
 
         groups_response = client.get(f"/api/dedup/runs/{run['run_id']}/export", params={"artifact": "groups"})
         assert groups_response.status_code == 200

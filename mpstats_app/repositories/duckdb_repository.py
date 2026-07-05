@@ -1618,6 +1618,121 @@ class DuckDbAppRepository:
             rows=rows,
         )
 
+    def copy_dedup_scoring_artifacts(self, *, source_run_id: str, target_run_id: str) -> dict[str, int]:
+        clean_source_run_id = str(source_run_id).strip()
+        clean_target_run_id = str(target_run_id).strip()
+        if not clean_source_run_id or not clean_target_run_id:
+            raise ValueError("source_run_id и target_run_id обязательны.")
+        with self._lock, connect(self.settings.db_path, temp_directory=self._duckdb_temp_directory()) as con:
+            apply_migrations(con)
+            with duckdb_transaction(con):
+                for table_name in ("dedup_sku_groups", "dedup_sku_edges", "dedup_sku_nodes"):
+                    con.execute(f"DELETE FROM {table_name} WHERE run_id = ?", [clean_target_run_id])
+                con.execute(
+                    """
+                    INSERT INTO dedup_sku_nodes (
+                        run_id, node_id, project_name, category_key, category_name,
+                        marketplace_code, marketplace, article, sku, brand, subcategory,
+                        unit_amount, total_amount, multipack_count, sales_volume, revenue,
+                        row_count, source_row_hashes_json, embedding_text
+                    )
+                    SELECT
+                        ?, node_id, project_name, category_key, category_name,
+                        marketplace_code, marketplace, article, sku, brand, subcategory,
+                        unit_amount, total_amount, multipack_count, sales_volume, revenue,
+                        row_count, source_row_hashes_json, embedding_text
+                    FROM dedup_sku_nodes
+                    WHERE run_id = ?
+                    """,
+                    [clean_target_run_id, clean_source_run_id],
+                )
+                con.execute(
+                    """
+                    INSERT INTO dedup_sku_edges (
+                        run_id, edge_id, node_id_a, node_id_b, score,
+                        threshold_strategy, threshold_same, predicted_binary, predicted_label,
+                        candidate_rank, candidate_source, blocking_scope, same_pack_signature
+                    )
+                    SELECT
+                        ?, edge_id, node_id_a, node_id_b, score,
+                        threshold_strategy, threshold_same, predicted_binary, predicted_label,
+                        candidate_rank, candidate_source, blocking_scope, same_pack_signature
+                    FROM dedup_sku_edges
+                    WHERE run_id = ?
+                    """,
+                    [clean_target_run_id, clean_source_run_id],
+                )
+                node_row = con.execute(
+                    "SELECT COUNT(*) AS count FROM dedup_sku_nodes WHERE run_id = ?",
+                    [clean_target_run_id],
+                ).fetchone()
+                edge_row = con.execute(
+                    "SELECT COUNT(*) AS count FROM dedup_sku_edges WHERE run_id = ?",
+                    [clean_target_run_id],
+                ).fetchone()
+        return {
+            "node_count": int(node_row[0]) if node_row else 0,
+            "edge_count": int(edge_row[0]) if edge_row else 0,
+        }
+
+    def fetch_dedup_nodes_for_run(self, *, run_id: str) -> list[dict[str, Any]]:
+        return self._fetch_records(
+            """
+            SELECT
+                run_id,
+                node_id,
+                project_name,
+                category_key,
+                category_name,
+                marketplace_code,
+                marketplace,
+                article,
+                sku,
+                brand,
+                subcategory,
+                unit_amount,
+                total_amount,
+                multipack_count,
+                sales_volume,
+                revenue,
+                row_count,
+                source_row_hashes_json,
+                embedding_text
+            FROM dedup_sku_nodes
+            WHERE run_id = ?
+            ORDER BY category_key, marketplace_code, article, node_id
+            """,
+            [run_id],
+            read_only=True,
+            temp_directory=self._duckdb_temp_directory(),
+        )
+
+    def fetch_dedup_positive_edges_for_run(self, *, run_id: str) -> list[dict[str, Any]]:
+        return self._fetch_records(
+            """
+            SELECT
+                run_id,
+                edge_id,
+                node_id_a,
+                node_id_b,
+                score,
+                threshold_strategy,
+                threshold_same,
+                predicted_binary,
+                predicted_label,
+                candidate_rank,
+                candidate_source,
+                blocking_scope,
+                same_pack_signature
+            FROM dedup_sku_edges
+            WHERE run_id = ? AND predicted_binary
+            ORDER BY score DESC NULLS LAST, edge_id
+            """,
+            [run_id],
+            read_only=True,
+            temp_directory=self._duckdb_temp_directory(),
+        )
+
     def fetch_dedup_identity_assignments(
         self,
         *,
@@ -2114,6 +2229,153 @@ class DuckDbAppRepository:
                 temp_directory=self._duckdb_temp_directory(),
             )
         raise ValueError("artifact должен быть groups или edges.")
+
+    def fetch_dedup_graph_report(self, *, run_id: str, max_nodes: int = 240, max_edges: int = 600) -> dict[str, Any]:
+        clean_run_id = str(run_id).strip()
+        if not clean_run_id:
+            raise ValueError("run_id обязателен.")
+        cluster_rows = self._fetch_records(
+            """
+            SELECT
+                g.ml_family_id,
+                COUNT(*) AS sku_count,
+                COUNT(DISTINCT NULLIF(n.brand, '')) AS brand_count,
+                COUNT(DISTINCT NULLIF(n.subcategory, '')) AS subcategory_count,
+                COALESCE(SUM(n.sales_volume), 0) AS sales_volume,
+                COALESCE(SUM(n.revenue), 0) AS revenue,
+                MAX(g.confidence_score) AS max_score
+            FROM dedup_sku_groups AS g
+            LEFT JOIN dedup_sku_nodes AS n
+              ON n.run_id = g.run_id AND n.node_id = g.node_id
+            WHERE g.run_id = ?
+            GROUP BY g.ml_family_id
+            ORDER BY sku_count DESC, revenue DESC NULLS LAST, g.ml_family_id
+            """,
+            [clean_run_id],
+            read_only=True,
+            temp_directory=self._duckdb_temp_directory(),
+        )
+        sizes = [int(row.get("sku_count") or 0) for row in cluster_rows]
+        node_count = sum(sizes)
+        cluster_count = len(cluster_rows)
+        non_singleton_sizes = [size for size in sizes if size > 1]
+        positive_edge_row = self._fetch_one(
+            """
+            SELECT COUNT(*) AS positive_edges
+            FROM dedup_sku_edges
+            WHERE run_id = ? AND predicted_binary
+            """,
+            [clean_run_id],
+            read_only=True,
+            temp_directory=self._duckdb_temp_directory(),
+        )
+        all_edge_row = self._fetch_one(
+            """
+            SELECT COUNT(*) AS all_edges
+            FROM dedup_sku_edges
+            WHERE run_id = ?
+            """,
+            [clean_run_id],
+            read_only=True,
+            temp_directory=self._duckdb_temp_directory(),
+        )
+        selected_family_ids: list[str] = []
+        sampled_nodes_count = 0
+        safe_max_nodes = max(20, min(int(max_nodes), 800))
+        for row in cluster_rows:
+            family_id = str(row.get("ml_family_id") or "").strip()
+            size = int(row.get("sku_count") or 0)
+            if not family_id:
+                continue
+            if selected_family_ids and sampled_nodes_count + size > safe_max_nodes:
+                continue
+            selected_family_ids.append(family_id)
+            sampled_nodes_count += size
+            if sampled_nodes_count >= safe_max_nodes:
+                break
+        if not selected_family_ids and cluster_rows:
+            selected_family_ids.append(str(cluster_rows[0].get("ml_family_id")))
+
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        if selected_family_ids:
+            placeholders = ", ".join("?" for _ in selected_family_ids)
+            nodes = self._fetch_records(
+                f"""
+                SELECT
+                    g.node_id,
+                    g.ml_family_id,
+                    g.ml_pack_id,
+                    g.canonical_node_id,
+                    g.canonical_sku,
+                    g.ml_dedup_status,
+                    g.confidence_score,
+                    g.component_size,
+                    n.sku,
+                    n.brand,
+                    n.marketplace,
+                    n.marketplace_code,
+                    n.article,
+                    n.subcategory,
+                    n.sales_volume,
+                    n.revenue
+                FROM dedup_sku_groups AS g
+                LEFT JOIN dedup_sku_nodes AS n
+                  ON n.run_id = g.run_id AND n.node_id = g.node_id
+                WHERE g.run_id = ? AND g.ml_family_id IN ({placeholders})
+                ORDER BY g.component_size DESC, g.ml_family_id, n.revenue DESC NULLS LAST, n.sku NULLS LAST
+                LIMIT ?
+                """,
+                [clean_run_id, *selected_family_ids, safe_max_nodes],
+                read_only=True,
+                temp_directory=self._duckdb_temp_directory(),
+            )
+            sampled_node_ids = [str(row.get("node_id")) for row in nodes if str(row.get("node_id") or "").strip()]
+            if sampled_node_ids:
+                node_placeholders = ", ".join("?" for _ in sampled_node_ids)
+                safe_max_edges = max(20, min(int(max_edges), 2_000))
+                edges = self._fetch_records(
+                    f"""
+                    SELECT
+                        node_id_a AS source,
+                        node_id_b AS target,
+                        score,
+                        candidate_source,
+                        blocking_scope,
+                        same_pack_signature
+                    FROM dedup_sku_edges
+                    WHERE run_id = ?
+                      AND predicted_binary
+                      AND node_id_a IN ({node_placeholders})
+                      AND node_id_b IN ({node_placeholders})
+                    ORDER BY score DESC NULLS LAST, edge_id
+                    LIMIT ?
+                    """,
+                    [clean_run_id, *sampled_node_ids, *sampled_node_ids, safe_max_edges],
+                    read_only=True,
+                    temp_directory=self._duckdb_temp_directory(),
+                )
+
+        summary = {
+            "node_count": node_count,
+            "cluster_count": cluster_count,
+            "non_singleton_cluster_count": len(non_singleton_sizes),
+            "singleton_cluster_count": cluster_count - len(non_singleton_sizes),
+            "grouped_node_count": sum(non_singleton_sizes),
+            "positive_edge_count": int(positive_edge_row["positive_edges"]) if positive_edge_row else 0,
+            "edge_count": int(all_edge_row["all_edges"]) if all_edge_row else 0,
+            "avg_cluster_size": round(node_count / cluster_count, 3) if cluster_count else 0,
+            "avg_non_singleton_cluster_size": round(sum(non_singleton_sizes) / len(non_singleton_sizes), 3) if non_singleton_sizes else 0,
+            "max_cluster_size": max(sizes) if sizes else 0,
+        }
+        return {
+            "run_id": clean_run_id,
+            "summary": summary,
+            "clusters": cluster_rows[:100],
+            "nodes": nodes,
+            "edges": edges,
+            "truncated": len(nodes) >= safe_max_nodes or len(edges) >= max(20, min(int(max_edges), 2_000)),
+        }
 
     def fetch_dedup_manual_overrides(
         self,

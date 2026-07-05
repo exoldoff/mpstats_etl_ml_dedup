@@ -193,11 +193,20 @@ class DedupSettingsPayload(BaseModel):
     embedding_model_name: str = "intfloat/multilingual-e5-small"
     model_device: str = Field(default="auto", pattern="^(auto|cpu|mps|cuda)$")
     faiss_top_k: int = Field(default=30, ge=1, le=100)
+    graph_grouping_algorithm: str = Field(default="leiden", pattern="^(leiden|connected_components)$")
+    graph_community_resolution: float = Field(default=0.1, gt=0)
+    graph_community_seed: int | None = 42
+    graph_edge_weight_col: str = "score"
     embedding_batch_size: int = Field(default=64, ge=1, le=512)
     cross_encoder_batch_size: int = Field(default=32, ge=1, le=256)
 
 
 class DedupRunPayload(ProjectPayload):
+    category_keys: list[str]
+    wait: bool = False
+
+
+class DedupGraphRunPayload(ProjectPayload):
     category_keys: list[str]
     wait: bool = False
 

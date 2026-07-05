@@ -117,17 +117,27 @@ class DedupProfile:
                 maximum=100,
             ),
             graph_grouping_algorithm=normalize_graph_algorithm(
-                tracked.get("graph_grouping_algorithm") or DEDUP_GRAPH_GROUPING_ALGORITHM
+                payload.get("graph_grouping_algorithm")
+                if "graph_grouping_algorithm" in payload
+                else tracked.get("graph_grouping_algorithm") or DEDUP_GRAPH_GROUPING_ALGORITHM
             ),
             graph_community_resolution=_positive_float(
-                tracked.get("graph_community_resolution"),
+                payload.get("graph_community_resolution")
+                if "graph_community_resolution" in payload
+                else tracked.get("graph_community_resolution"),
                 default=DEDUP_GRAPH_COMMUNITY_RESOLUTION,
             ),
             graph_community_seed=_optional_int(
-                tracked.get("graph_community_seed"),
+                payload.get("graph_community_seed")
+                if "graph_community_seed" in payload
+                else tracked.get("graph_community_seed"),
                 default=DEDUP_GRAPH_COMMUNITY_SEED,
             ),
-            graph_edge_weight_col=str(tracked.get("graph_edge_weight_col") or DEDUP_GRAPH_EDGE_WEIGHT_COL).strip()
+            graph_edge_weight_col=str(
+                payload.get("graph_edge_weight_col")
+                if "graph_edge_weight_col" in payload
+                else tracked.get("graph_edge_weight_col") or DEDUP_GRAPH_EDGE_WEIGHT_COL
+            ).strip()
             or DEDUP_GRAPH_EDGE_WEIGHT_COL,
             embedding_batch_size=max(1, int(payload.get("embedding_batch_size") or 64)),
             cross_encoder_batch_size=max(1, int(payload.get("cross_encoder_batch_size") or 32)),
@@ -538,6 +548,94 @@ class DedupService:
                 thread.start()
         return {"runs": [self._normalize_run(self.repository.get_dedup_run(str(run["run_id"])) or run) for run in runs]}
 
+    def rebuild_graph_runs(self, *, project_name: str, category_keys: list[str], wait: bool = False) -> dict[str, Any]:
+        eligible_rows = self.repository.list_dedup_eligible_categories(project_name=project_name)
+        eligible: dict[str, dict[str, Any]] = {}
+        for row in eligible_rows:
+            category_key = str(row["category_key"])
+            eligible[category_key] = row
+            for source_category_key in row.get("source_category_keys") or []:
+                clean_source_key = str(source_category_key).strip()
+                if clean_source_key:
+                    eligible[clean_source_key] = row
+        clean_keys = [str(key) for key in category_keys if str(key).strip()]
+        if not clean_keys:
+            raise ValueError("Выбери хотя бы одну категорию для пересборки графа.")
+        unknown = [key for key in clean_keys if key not in eligible]
+        if unknown:
+            raise ValueError("ML-дедуп v1 доступен только для Соус/Соусы, Кокосовое масло и Мыло: " + ", ".join(unknown))
+
+        base_profile = DedupProfile.from_settings(self.get_settings())
+        runs: list[dict[str, Any]] = []
+        seen_category_keys: set[str] = set()
+        for requested_key in clean_keys:
+            category = eligible[requested_key]
+            category_key = str(category["category_key"])
+            if category_key in seen_category_keys:
+                continue
+            seen_category_keys.add(category_key)
+            existing_runs = [
+                self._normalize_run(run) or run
+                for run in self.repository.list_dedup_runs(
+                    project_name=project_name,
+                    category_key=category_key,
+                    limit=10,
+                )
+            ]
+            active_run = next(
+                (run for run in existing_runs if str(run.get("status") or "") in DEDUP_ACTIVE_STATUSES),
+                None,
+            )
+            if active_run is not None:
+                runs.append(active_run)
+                continue
+            source_run = self._latest_graph_rebuild_source_run(project_name=project_name, category_key=category_key)
+            if not source_run:
+                raise ValueError(f"Для {category.get('category_name') or category_key} ещё нет успешного ML-дедуп run.")
+            profile = self._graph_rebuild_profile(source_run, base_profile.for_category(
+                category_key=category_key,
+                category_name=category.get("category_name"),
+            ))
+            run_id = uuid4().hex
+            run = self.repository.create_dedup_run(
+                {
+                    "run_id": run_id,
+                    "project_name": project_name,
+                    "category_key": category_key,
+                    "category_name": category.get("category_name"),
+                    "status": "queued",
+                    **profile.to_dict(),
+                    "manifest": {
+                        "requested_at": datetime.now().isoformat(timespec="seconds"),
+                        "run_mode": "graph_only",
+                        "source_run_id": source_run["run_id"],
+                        "source_category_keys": self._source_category_keys_from_run(source_run),
+                        "source_marketplaces": list(category.get("marketplaces") or []),
+                        "runtime_profile": {
+                            "model_device": profile.model_device,
+                            "graph_grouping_algorithm": profile.graph_grouping_algorithm,
+                            "graph_community_resolution": profile.graph_community_resolution,
+                            "graph_community_seed": profile.graph_community_seed,
+                            "graph_edge_weight_col": profile.graph_edge_weight_col,
+                            "embedding_batch_size": profile.embedding_batch_size,
+                            "cross_encoder_batch_size": profile.cross_encoder_batch_size,
+                        },
+                        "progress_percent": 0,
+                        "progress_stage": "queued",
+                        "progress_message": "Ожидает пересборки графа",
+                    },
+                }
+            )
+            runs.append(run)
+            if wait:
+                self._execute_graph_rebuild_run(run_id)
+            else:
+                thread = Thread(target=self._execute_graph_rebuild_run, args=(run_id,), daemon=True)
+                with self._lock:
+                    self._threads[run_id] = thread
+                thread.start()
+        return {"runs": [self._normalize_run(self.repository.get_dedup_run(str(run["run_id"])) or run) for run in runs]}
+
     def get_run(self, run_id: str) -> dict[str, Any]:
         run = self.repository.get_dedup_run(run_id)
         if not run:
@@ -555,6 +653,15 @@ class DedupService:
     def export_artifact(self, *, run_id: str, artifact: str) -> dict[str, Any]:
         self.get_run(run_id)
         return {"run_id": run_id, "artifact": artifact, "rows": self.repository.fetch_dedup_artifact(run_id=run_id, artifact=artifact)}
+
+    def graph_report(self, *, run_id: str) -> dict[str, Any]:
+        self.get_run(run_id)
+        return self.repository.fetch_dedup_graph_report(run_id=run_id)
+
+    def _latest_graph_rebuild_source_run(self, *, project_name: str, category_key: str) -> dict[str, Any] | None:
+        runs = self.repository.list_dedup_runs(project_name=project_name, category_key=category_key, limit=50)
+        successful = [run for run in runs if str(run.get("status") or "") == "success"]
+        return next((run for run in successful if int(run.get("edge_count") or 0) > 0), successful[0] if successful else None)
 
     def products_browser(
         self,
@@ -975,6 +1082,225 @@ class DedupService:
                         progress_stage="success",
                         progress_message=f"Готово: {materialized_rows:,} строк в mpstats_products_dedup".replace(",", " "),
                     ),
+                    "finished_at": datetime.now(),
+                },
+            )
+        except Exception as exc:
+            try:
+                self._update_progress(
+                    run_id,
+                    run,
+                    percent=100,
+                    stage="failed",
+                    message=f"Ошибка: {type(exc).__name__}",
+                )
+            except Exception:
+                pass
+            self.repository.update_dedup_run(
+                run_id,
+                {
+                    "status": "failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "finished_at": datetime.now(),
+                },
+            )
+
+    @staticmethod
+    def _graph_rebuild_profile(source_run: dict[str, Any], graph_profile: DedupProfile) -> DedupProfile:
+        threshold_same = _to_float(source_run.get("threshold_same"))
+        return DedupProfile(
+            model_method=str(source_run.get("model_method") or graph_profile.model_method).strip(),
+            model_path=str(source_run.get("model_path") or graph_profile.model_path).strip(),
+            hf_model_id=str(source_run.get("hf_model_id") or graph_profile.hf_model_id).strip(),
+            embedding_model_name=str(source_run.get("embedding_model_name") or graph_profile.embedding_model_name).strip(),
+            model_device=graph_profile.model_device,
+            activation=str(source_run.get("activation") or graph_profile.activation).strip(),
+            threshold_strategy=str(source_run.get("threshold_strategy") or graph_profile.threshold_strategy).strip(),
+            threshold_same=float(threshold_same if threshold_same is not None else graph_profile.threshold_same),
+            category_thresholds=dict(graph_profile.category_thresholds),
+            faiss_top_k=_bounded_int(
+                source_run.get("faiss_top_k"),
+                default=graph_profile.faiss_top_k,
+                minimum=1,
+                maximum=100,
+            ),
+            graph_grouping_algorithm=graph_profile.graph_grouping_algorithm,
+            graph_community_resolution=graph_profile.graph_community_resolution,
+            graph_community_seed=graph_profile.graph_community_seed,
+            graph_edge_weight_col=graph_profile.graph_edge_weight_col,
+            embedding_batch_size=graph_profile.embedding_batch_size,
+            cross_encoder_batch_size=graph_profile.cross_encoder_batch_size,
+        )
+
+    def _execute_graph_rebuild_run(self, run_id: str) -> None:
+        run = self.repository.get_dedup_run(run_id)
+        if not run:
+            return
+        started = datetime.now()
+        self.repository.update_dedup_run(run_id, {"status": "running", "started_at": started, "error": None})
+        self._update_progress(
+            run_id,
+            run,
+            percent=8,
+            stage="copy_scoring",
+            message="Копирую готовые SKU-node и модельные пары",
+        )
+        try:
+            manifest = self._manifest_from_run(run)
+            source_run_id = str(manifest.get("source_run_id") or "").strip()
+            if not source_run_id:
+                raise DedupRuntimeError("Для graph-only run не найден source_run_id.")
+            source_run = self.repository.get_dedup_run(source_run_id)
+            if not source_run:
+                raise DedupRuntimeError("Исходный ML-дедуп run для пересборки графа не найден.")
+            if str(source_run.get("status") or "") != "success":
+                raise DedupRuntimeError("Граф можно пересобрать только из успешного ML-дедуп run.")
+
+            runtime_profile = self._runtime_profile_from_run(run)
+            profile = DedupProfile(
+                model_method=str(run.get("model_method") or DEDUP_METHOD),
+                model_path=str(run.get("model_path") or ""),
+                hf_model_id=str(run.get("hf_model_id") or DEDUP_HF_MODEL_ID),
+                embedding_model_name=str(run.get("embedding_model_name") or DEDUP_EMBEDDING_MODEL),
+                model_device=_model_device(runtime_profile.get("model_device") or DEDUP_MODEL_DEVICE),
+                activation=str(run.get("activation") or DEDUP_ACTIVATION),
+                threshold_strategy=str(run.get("threshold_strategy") or DEDUP_THRESHOLD_STRATEGY),
+                threshold_same=float(run.get("threshold_same") or DEDUP_THRESHOLD_SAME),
+                category_thresholds=DedupProfile.from_settings({}).category_thresholds,
+                faiss_top_k=int(run.get("faiss_top_k") or DEDUP_TOP_K),
+                graph_grouping_algorithm=normalize_graph_algorithm(
+                    runtime_profile.get("graph_grouping_algorithm") or DEDUP_GRAPH_GROUPING_ALGORITHM
+                ),
+                graph_community_resolution=_positive_float(
+                    runtime_profile.get("graph_community_resolution"),
+                    default=DEDUP_GRAPH_COMMUNITY_RESOLUTION,
+                ),
+                graph_community_seed=_optional_int(
+                    runtime_profile.get("graph_community_seed"),
+                    default=DEDUP_GRAPH_COMMUNITY_SEED,
+                ),
+                graph_edge_weight_col=str(runtime_profile.get("graph_edge_weight_col") or DEDUP_GRAPH_EDGE_WEIGHT_COL).strip()
+                or DEDUP_GRAPH_EDGE_WEIGHT_COL,
+                embedding_batch_size=max(1, int(runtime_profile.get("embedding_batch_size") or 64)),
+                cross_encoder_batch_size=max(1, int(runtime_profile.get("cross_encoder_batch_size") or 32)),
+            )
+
+            copy_counts = self.repository.copy_dedup_scoring_artifacts(
+                source_run_id=source_run_id,
+                target_run_id=run_id,
+            )
+            nodes = pd.DataFrame(self.repository.fetch_dedup_nodes_for_run(run_id=run_id))
+            if nodes.empty:
+                raise DedupRuntimeError("В исходном run нет SKU-node для пересборки графа.")
+            positive_edges = pd.DataFrame(self.repository.fetch_dedup_positive_edges_for_run(run_id=run_id))
+            node_ids = [str(item) for item in nodes["node_id"].tolist()]
+            manual_overrides = self.repository.fetch_dedup_manual_overrides(
+                project_name=str(run["project_name"]),
+                category_key=str(run["category_key"]),
+                node_ids=node_ids,
+            )
+            self._update_progress(
+                run_id,
+                run,
+                percent=60,
+                stage="build_groups",
+                message=f"Positive-рёбер: {len(positive_edges):,}, пересобираю граф".replace(",", " "),
+                node_count=len(nodes),
+                candidate_count=int(source_run.get("candidate_count") or copy_counts.get("edge_count") or 0),
+                edge_count=copy_counts.get("edge_count", 0),
+            )
+            groups = self._build_groups(
+                nodes,
+                positive_edges,
+                graph_config=profile.graph_config(),
+                manual_overrides=manual_overrides,
+            )
+            self._update_progress(
+                run_id,
+                run,
+                percent=86,
+                stage="materialize",
+                message=f"Групп: {len(groups):,}, записываю результат".replace(",", " "),
+                node_count=len(nodes),
+                candidate_count=int(source_run.get("candidate_count") or copy_counts.get("edge_count") or 0),
+                edge_count=copy_counts.get("edge_count", 0),
+                group_count=len(groups),
+            )
+            self.repository.replace_dedup_groups(run_id, groups.to_dict(orient="records"))
+            self.repository.upsert_dedup_identity_assignments(
+                project_name=str(run["project_name"]),
+                category_key=str(run["category_key"]),
+                model_method=profile.model_method,
+                model_path=profile.model_path.strip(),
+                hf_model_id=profile.hf_model_id.strip(),
+                embedding_model_name=profile.embedding_model_name,
+                faiss_top_k=profile.faiss_top_k,
+                graph_grouping_algorithm=profile.graph_grouping_algorithm,
+                graph_community_resolution=profile.graph_community_resolution,
+                graph_community_seed=profile.graph_community_seed,
+                graph_edge_weight_col=profile.graph_edge_weight_col,
+                activation=profile.activation.strip(),
+                threshold_strategy=profile.threshold_strategy,
+                threshold_same=profile.threshold_same,
+                run_id=run_id,
+                rows=groups.to_dict(orient="records"),
+            )
+            materialized_rows = self.repository.refresh_dedup_products_table(run_id=run_id)
+            edge_count_frame = pd.DataFrame(index=range(int(copy_counts.get("edge_count") or len(positive_edges))))
+            cache_metadata = {
+                "status": "graph_only",
+                "schema_version": RETRIEVAL_CACHE_SCHEMA_VERSION,
+                "cache_key": None,
+                "cache_path": f"duckdb:dedup_sku_edges:{source_run_id}",
+                "embedding_shape": [0, 0],
+                "cache_rebuild_reason": "graph_profile_changed",
+                "identity_hits": 0,
+                "identity_misses": len(node_ids),
+                "embedding_cache_hits": 0,
+                "embedding_cache_misses": 0,
+                "score_cache_hits": copy_counts.get("edge_count", 0),
+                "score_cache_misses": 0,
+            }
+            manifest_path = self._write_manifest(
+                run_id,
+                run,
+                profile,
+                nodes,
+                edge_count_frame,
+                groups,
+                retrieval_cache=cache_metadata,
+                materialized_rows=materialized_rows,
+            )
+            graph_report = self.repository.fetch_dedup_graph_report(run_id=run_id)
+            manifest_json = self._run_manifest_json(
+                manifest_path=manifest_path,
+                profile=profile,
+                retrieval_cache=cache_metadata,
+                materialized_rows=materialized_rows,
+                source_category_keys=self._source_category_keys_from_run(source_run),
+                progress_percent=100,
+                progress_stage="success",
+                progress_message=f"Граф пересобран: {materialized_rows:,} строк в mpstats_products_dedup".replace(",", " "),
+            )
+            manifest_json.update(
+                {
+                    "run_mode": "graph_only",
+                    "source_run_id": source_run_id,
+                    "source_edge_count": copy_counts.get("edge_count", 0),
+                    "positive_edge_count": graph_report["summary"].get("positive_edge_count"),
+                    "graph_report": graph_report["summary"],
+                }
+            )
+            self.repository.update_dedup_run(
+                run_id,
+                {
+                    "status": "success",
+                    "node_count": len(nodes),
+                    "candidate_count": int(source_run.get("candidate_count") or copy_counts.get("edge_count") or 0),
+                    "edge_count": copy_counts.get("edge_count", 0),
+                    "group_count": len(groups),
+                    "manifest_path": str(manifest_path),
+                    "manifest_json": manifest_json,
                     "finished_at": datetime.now(),
                 },
             )

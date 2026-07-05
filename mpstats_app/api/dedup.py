@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from mpstats_app.api.dependencies import get_dedup_service
-from mpstats_app.schemas import DedupProductSplitPayload, DedupRunPayload, DedupSettingsPayload
+from mpstats_app.schemas import DedupGraphRunPayload, DedupProductSplitPayload, DedupRunPayload, DedupSettingsPayload
 from pipeline.services.dedup import DedupService
 
 
@@ -101,9 +101,28 @@ def start_runs(
     )
 
 
+@router.post("/runs/rebuild-graph")
+def rebuild_graph_runs(
+    payload: DedupGraphRunPayload,
+    service: DedupService = Depends(get_dedup_service),
+) -> dict[str, object]:
+    return _handle(
+        lambda: service.rebuild_graph_runs(
+            project_name=payload.project_name,
+            category_keys=payload.category_keys,
+            wait=payload.wait,
+        )
+    )
+
+
 @router.get("/runs/{run_id}")
 def get_run(run_id: str, service: DedupService = Depends(get_dedup_service)) -> dict[str, object]:
     return _handle(lambda: service.get_run(run_id))
+
+
+@router.get("/runs/{run_id}/graph")
+def graph_report(run_id: str, service: DedupService = Depends(get_dedup_service)) -> dict[str, object]:
+    return _handle(lambda: service.graph_report(run_id=run_id))
 
 
 @router.get("/runs/{run_id}/export")

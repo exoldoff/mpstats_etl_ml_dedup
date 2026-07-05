@@ -562,6 +562,52 @@ def test_success_run_writes_identity_tables_and_export_join_preserves_rows(tmp_p
     assert after_count == before_count
 
 
+def test_graph_only_run_reuses_scored_edges_and_writes_report(tmp_path: Path) -> None:
+    cross_encoder = FakeCrossEncoder()
+    service, repository, _, settings = make_service(tmp_path, cross_encoder_factory=lambda _: cross_encoder)
+    seed_dedup_cube(repository, settings, tmp_path, rows_count=3)
+
+    first_run = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    assert first_run["status"] == "success"
+    assert cross_encoder.calls == 1
+    identity_run = service.start_runs(project_name="unit", category_keys=["sauce"], wait=True)["runs"][0]
+    assert identity_run["status"] == "success"
+    assert identity_run["edge_count"] == 0
+    assert identity_run["manifest_json"]["retrieval_cache_status"] == "identity_hit"
+    assert cross_encoder.calls == 1
+
+    saved_settings = service.save_settings(
+        {
+            "graph_grouping_algorithm": "leiden",
+            "graph_community_resolution": 0.2,
+            "graph_community_seed": 7,
+        }
+    )
+    assert saved_settings["graph_community_resolution"] == pytest.approx(0.2)
+    result = service.rebuild_graph_runs(project_name="unit", category_keys=["dedupcat_sauces"], wait=True)
+    graph_run = result["runs"][0]
+
+    assert graph_run["status"] == "success"
+    assert graph_run["run_id"] != first_run["run_id"]
+    assert graph_run["node_count"] == first_run["node_count"]
+    assert graph_run["edge_count"] == first_run["edge_count"]
+    assert graph_run["manifest_json"]["run_mode"] == "graph_only"
+    assert graph_run["manifest_json"]["source_run_id"] == first_run["run_id"]
+    assert graph_run["manifest_json"]["source_run_id"] != identity_run["run_id"]
+    assert graph_run["manifest_json"]["runtime_profile"]["graph_community_resolution"] == pytest.approx(0.2)
+    assert graph_run["manifest_json"]["runtime_profile"]["graph_community_seed"] == 7
+    assert graph_run["manifest_json"]["graph_report"]["cluster_count"] >= 1
+    assert cross_encoder.calls == 1
+
+    report = service.graph_report(run_id=graph_run["run_id"])
+    assert report["summary"]["node_count"] == first_run["node_count"]
+    assert report["summary"]["edge_count"] == first_run["edge_count"]
+    assert report["summary"]["cluster_count"] >= 1
+    assert report["nodes"]
+    browser = repository.fetch_dedup_products(project_name="unit", category_key="dedupcat_sauces", level="expanded", limit=20)
+    assert {row["run_id"] for row in browser["rows"]} == {graph_run["run_id"]}
+
+
 def test_manual_split_override_removes_sku_from_family_and_persists(tmp_path: Path) -> None:
     service, repository, _, settings = make_service(tmp_path)
     seed_dedup_cube(repository, settings, tmp_path, rows_count=3)
