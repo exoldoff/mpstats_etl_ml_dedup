@@ -643,7 +643,7 @@ export function App() {
   const [exportPeriodTo, setExportPeriodTo] = useState("");
   const [exportOutputDir, setExportOutputDir] = useState("");
   const [exportSplitByCategory, setExportSplitByCategory] = useState(false);
-  const [exportDedupEnabled, setExportDedupEnabled] = useState(false);
+  const [exportDedupEnabled, setExportDedupEnabled] = useState(true);
   const [exportFormat, setExportFormat] = useState<ExportFormat>("xlsx");
   const [exportExcludedRows, setExportExcludedRows] = useState<Set<string>>(new Set());
   const [exportSortColumn, setExportSortColumn] = useState<string | null>(null);
@@ -2544,8 +2544,6 @@ export function App() {
               templates={exportTemplates}
               templateName={exportTemplateName}
               confirmLarge={exportConfirmLarge}
-              dedupCategories={dedupCategories}
-              dedupCategoryKey={dedupProductCategoryKey}
               busy={Boolean(busy)}
               onTemplateNameChange={setExportTemplateName}
               onSaveTemplate={() => void runAction("Сохранение шаблона выгрузки", saveExportTemplate)}
@@ -2571,10 +2569,6 @@ export function App() {
               onDedupEnabledChange={changeExportDedupEnabled}
               onExportFormatChange={changeExportFormat}
               onConfirmLargeChange={setExportConfirmLarge}
-              onDedupCategoryChange={setDedupProductCategoryKey}
-              onDedupExport={(level) => {
-                window.open(api.dedupProductsExportUrl(projectName || "mpstats", level, dedupProductCategoryKey || undefined), "_blank", "noopener,noreferrer");
-              }}
               onSort={toggleExportSort}
               onClearSort={() => {
                 setExportSortColumn(null);
@@ -3554,8 +3548,6 @@ function ExportWorkspace(props: {
   templates: ExportTemplate[];
   templateName: string;
   confirmLarge: boolean;
-  dedupCategories: DedupCategory[];
-  dedupCategoryKey: string;
   busy: boolean;
   onTemplateNameChange: (value: string) => void;
   onSaveTemplate: () => void;
@@ -3577,8 +3569,6 @@ function ExportWorkspace(props: {
   onDedupEnabledChange: (value: boolean) => void;
   onExportFormatChange: (value: ExportFormat) => void;
   onConfirmLargeChange: (value: boolean) => void;
-  onDedupCategoryChange: (categoryKey: string) => void;
-  onDedupExport: (level: "expanded" | "canonical") => void;
   onSort: (column: string, direction?: SortDirection) => void;
   onClearSort: () => void;
   onExcludeRow: (rowHash: string) => void;
@@ -3617,7 +3607,7 @@ function ExportWorkspace(props: {
               <div className="template-row" key={template.id}>
                 <span>
                   <strong>{template.name}</strong>
-                  <small>{(template.export_format ?? "xlsx").toUpperCase()} · dedup {template.dedup_enabled ? "on" : "off"} · {template.category_keys.length} категорий · {template.selected_columns.length} колонок · {template.period_from || "с начала"} - {template.period_to || "по последний"}</small>
+                  <small>{(template.export_format ?? "xlsx").toUpperCase()} · {template.dedup_enabled ? "после дедупа" : "до дедупа"} · {template.category_keys.length} категорий · {template.selected_columns.length} колонок · {template.period_from || "с начала"} - {template.period_to || "по последний"}</small>
                 </span>
                 <div className="table-actions">
                   <button className="tiny-button" disabled={props.busy} onClick={() => props.onApplyTemplate(template)}>Применить</button>
@@ -3628,27 +3618,6 @@ function ExportWorkspace(props: {
             ))}
           </div>
         ) : <span className="muted">Шаблонов пока нет. Настрой выгрузку и сохрани её здесь.</span>}
-      </div>
-
-      <div className="dedup-export-panel">
-        <div>
-          <strong>ML-дедуп CSV</strong>
-          <small>Каноны или оба уровня строк после ML-дедупликации.</small>
-        </div>
-        <select value={props.dedupCategoryKey} onChange={(event) => props.onDedupCategoryChange(event.target.value)}>
-          <option value="">Все eligible-категории</option>
-          {props.dedupCategories.map((category) => (
-            <option key={category.category_key} value={category.category_key}>{category.category_name || category.category_key}</option>
-          ))}
-        </select>
-        <button className="ghost-button" disabled={props.busy || !props.dedupCategories.length} onClick={() => props.onDedupExport("expanded")}>
-          <Download size={17} />
-          CSV 2 уровня
-        </button>
-        <button className="ghost-button" disabled={props.busy || !props.dedupCategories.length} onClick={() => props.onDedupExport("canonical")}>
-          <Download size={17} />
-          CSV каноны
-        </button>
       </div>
 
       <div className="export-settings">
@@ -3669,12 +3638,13 @@ function ExportWorkspace(props: {
           </label>
           <div className="export-mode-row">
             <Toggle label="Разными файлами по категориям" checked={props.splitByCategory} onChange={props.onSplitByCategoryChange} />
-            <Toggle
-              label={props.dedupEnabled ? "Дедупликация ON" : "Дедупликация OFF"}
-              hint="ON заменяет SKU на нормализованное название базового товара. Вес и фасовка остаются в отдельных колонках. OFF выгружает исходный SKU из куба."
-              checked={props.dedupEnabled}
-              onChange={props.onDedupEnabledChange}
-            />
+            <label className="export-dedup-mode">
+              <FieldLabel text="SKU в выгрузке" hint="После дедупа заменяет SKU на нормализованное название базового товара из последнего успешного ML-дедуп run. До дедупа оставляет исходный SKU из куба." />
+              <select value={props.dedupEnabled ? "dedup" : "raw"} onChange={(event) => props.onDedupEnabledChange(event.target.value === "dedup")}>
+                <option value="dedup">После дедупа</option>
+                <option value="raw">До дедупа</option>
+              </select>
+            </label>
             <div className="format-switch" aria-label="Формат выгрузки">
               <button className={props.exportFormat === "xlsx" ? "active" : ""} type="button" onClick={() => props.onExportFormatChange("xlsx")}>XLSX</button>
               <button className={props.exportFormat === "csv" ? "active" : ""} type="button" onClick={() => props.onExportFormatChange("csv")}>CSV</button>

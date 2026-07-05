@@ -2183,39 +2183,6 @@ a.ghost-button {
   min-width: 0;
 }
 
-.dedup-export-panel {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
-  gap: 10px;
-  align-items: end;
-  padding: 12px;
-  border: 1px solid #d8e1e4;
-  border-radius: 8px;
-  background: #fbfcfc;
-}
-
-.dedup-export-panel > div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.dedup-export-panel strong,
-.dedup-export-panel small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.dedup-export-panel small {
-  color: #627176;
-  font-weight: 700;
-}
-
-.dedup-export-panel select,
-.dedup-export-panel button {
-  width: 100%;
-}
-
 .export-settings {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
@@ -2552,6 +2519,14 @@ a.ghost-button {
 .format-switch button.active {
   color: #123432;
   background: #e4f1ef;
+}
+
+.export-dedup-mode {
+  min-width: 190px;
+}
+
+.export-dedup-mode select {
+  min-height: 38px;
 }
 
 .export-progress {
@@ -3429,7 +3404,6 @@ th {
   .manual-override-layout,
   .export-settings,
   .dedup-settings,
-  .dedup-export-panel,
   .export-selectors,
   .reports-overview,
   .reports-settings,
