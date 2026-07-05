@@ -2303,6 +2303,20 @@ a.ghost-button {
   align-items: stretch;
 }
 
+.dedup-graph-chart {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.dedup-graph-chart h4 {
+  margin: 0;
+  color: #1d2a33;
+  font-size: 15px;
+  font-weight: 800;
+}
+
 .dedup-graph-viz,
 .dedup-graph-empty {
   min-height: 300px;

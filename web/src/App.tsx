@@ -4235,7 +4235,10 @@ function DedupGraphReportPanel(props: { report: DedupGraphReport | null }) {
         <Metric label="Positive-рёбер" value={formatNumber(summary.positive_edge_count)} />
       </div>
       <div className="dedup-graph-body">
-        <DedupGraphMap nodes={report.nodes} edges={report.edges} />
+        <div className="dedup-graph-chart">
+          <h4>Крупнейшие обнаруженные кластеры</h4>
+          <DedupGraphMap nodes={report.nodes} edges={report.edges} />
+        </div>
         <div className="dedup-cluster-list">
           <h4>Крупные группы</h4>
           {clusterPreview.map((cluster, index) => {
@@ -4332,7 +4335,7 @@ function DedupGraphMap(props: { nodes: DedupGraphReport["nodes"]; edges: DedupGr
 
   return (
     <div className="dedup-graph-viz">
-      <svg className="dedup-graph-svg" viewBox="0 0 760 380" role="img" aria-label="2D граф ML-дедупа">
+      <svg className="dedup-graph-svg" viewBox="0 0 760 380" role="img" aria-label="Крупнейшие обнаруженные кластеры ML-дедупа">
         <rect x="0" y="0" width="760" height="380" rx="8" />
         {graph.lines.map((line, index) => (
           <line
