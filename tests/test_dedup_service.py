@@ -98,11 +98,13 @@ class FakeEmbeddingModel:
     def __init__(self) -> None:
         self.calls = 0
         self.encoded_lengths: list[int] = []
+        self.text_batches: list[list[str]] = []
         self.dimension: int | None = None
 
     def encode(self, texts: list[str], **_: object) -> np.ndarray:
         self.calls += 1
         self.encoded_lengths.append(len(texts))
+        self.text_batches.append(list(texts))
         if self.dimension is None:
             self.dimension = len(texts)
         output = np.zeros((len(texts), self.dimension), dtype="float32")
@@ -210,6 +212,49 @@ def test_profile_normalizes_invalid_device_and_bounds_faiss_k() -> None:
     assert low_profile.model_device == "auto"
     assert low_profile.faiss_top_k == 1
     assert high_profile.faiss_top_k == 100
+
+
+def test_retrieval_embeddings_omit_parsed_weight_fields(tmp_path: Path) -> None:
+    embedding_model = FakeEmbeddingModel()
+    service, _, _, _ = make_service(tmp_path, embedding_model=embedding_model)
+    source = pd.DataFrame(
+        [
+            {
+                "project_name": "unit",
+                "category_key": "sauce",
+                "category_name": "Соус",
+                "marketplace_code": "oz",
+                "marketplace": "Ozon",
+                "article": "SKU-1",
+                "sku": "Томатный соус 200 г",
+                "brand": "DedupBrand",
+                "subcategory": "Томатные соусы",
+                "unit_amount": 0.2,
+                "total_amount": 0.6,
+                "sales_volume": 20,
+                "revenue": 1000,
+                "row_hash": "row-1",
+            }
+        ]
+    )
+
+    nodes = service._build_nodes(source, run_id="run-test")
+    service._encode_nodes(nodes, DedupProfile())
+
+    node = nodes.iloc[0]
+    assert "вес единицы кг" in node["embedding_text"]
+    assert "общий вес кг" in node["embedding_text"]
+    assert "штук в упаковке" in node["embedding_text"]
+    assert "вес единицы кг" not in node["retrieval_text"]
+    assert "общий вес кг" not in node["retrieval_text"]
+    assert "штук в упаковке" not in node["retrieval_text"]
+
+    encoded_text = embedding_model.text_batches[0][0]
+    assert encoded_text.startswith("query: ")
+    assert "название: Томатный соус 200 г" in encoded_text
+    assert "вес единицы кг" not in encoded_text
+    assert "общий вес кг" not in encoded_text
+    assert "штук в упаковке" not in encoded_text
 
 
 def test_eligible_categories_collapse_source_keys_by_business_category(tmp_path: Path) -> None:

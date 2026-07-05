@@ -319,7 +319,7 @@ def _embedding_input_text(value: object) -> str:
     return E5_TEXT_PREFIX + _clean_text(value)
 
 
-def _embedding_text_hash(value: object) -> str:
+def _retrieval_text_hash(value: object) -> str:
     return _sha256_text(_embedding_input_text(value))
 
 
@@ -372,6 +372,15 @@ def _format_model_text(row: pd.Series) -> str:
         f"вес единицы кг: {row.get('unit_amount')}" if _to_float(row.get("unit_amount")) is not None else "",
         f"общий вес кг: {row.get('total_amount')}" if _to_float(row.get("total_amount")) is not None else "",
         f"штук в упаковке: {row.get('multipack_count')}" if _to_float(row.get("multipack_count")) is not None else "",
+    ]
+    return " | ".join(part for part in parts if part)
+
+
+def _format_retrieval_text(row: pd.Series) -> str:
+    parts = [
+        f"бренд: {_clean_text(row.get('brand'))}" if _clean_text(row.get("brand")) else "",
+        f"подкатегория: {_clean_text(row.get('subcategory'))}" if _clean_text(row.get("subcategory")) else "",
+        f"название: {_clean_text(row.get('sku'))}",
     ]
     return " | ".join(part for part in parts if part)
 
@@ -1360,7 +1369,9 @@ class DedupService:
                 "row_count": int(len(group)),
                 "source_row_hashes_json": json.dumps(sorted({_clean_text(item) for item in group["row_hash"] if _clean_text(item)}), ensure_ascii=False),
             }
-            node["embedding_text"] = _format_model_text(pd.Series(node))
+            node_series = pd.Series(node)
+            node["embedding_text"] = _format_model_text(node_series)
+            node["retrieval_text"] = _format_retrieval_text(node_series)
             rows.append(node)
         return pd.DataFrame(rows).sort_values(["category_key", "marketplace_code", "article"]).reset_index(drop=True)
 
@@ -1418,7 +1429,7 @@ class DedupService:
 
     def _encode_nodes(self, nodes: pd.DataFrame, profile: DedupProfile) -> np.ndarray:
         model = self._load_embedding_model(profile)
-        texts = [_embedding_input_text(text) for text in nodes["embedding_text"].tolist()]
+        texts = [_embedding_input_text(text) for text in nodes["retrieval_text"].tolist()]
         vectors = model.encode(
             texts,
             batch_size=profile.embedding_batch_size,
@@ -1441,7 +1452,7 @@ class DedupService:
         entries = [
             {
                 "node_id": str(row.node_id),
-                "embedding_text_hash": _embedding_text_hash(row.embedding_text),
+                "embedding_text_hash": _retrieval_text_hash(row.retrieval_text),
             }
             for row in nodes.itertuples(index=False)
         ]
@@ -1470,7 +1481,7 @@ class DedupService:
 
         if missing_rows:
             model = self._load_embedding_model(profile)
-            texts = [_embedding_input_text(row.embedding_text) for _, row in missing_rows]
+            texts = [_embedding_input_text(row.retrieval_text) for _, row in missing_rows]
             encoded = model.encode(
                 texts,
                 batch_size=profile.embedding_batch_size,
@@ -1489,7 +1500,7 @@ class DedupService:
                 cache_rows.append(
                     {
                         "node_id": node_id,
-                        "embedding_text_hash": _embedding_text_hash(row.embedding_text),
+                        "embedding_text_hash": _retrieval_text_hash(row.retrieval_text),
                         "embedding_dimension": dimension,
                         "embedding_blob": vector.tobytes(),
                     }

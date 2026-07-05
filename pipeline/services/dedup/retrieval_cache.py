@@ -15,7 +15,7 @@ import pandas as pd
 
 
 RETRIEVAL_CACHE_SCHEMA_VERSION = "dedup_retrieval_cache_v1"
-RETRIEVAL_TEXT_BUILDER_VERSION = "dedup_model_text_v1"
+RETRIEVAL_TEXT_BUILDER_VERSION = "dedup_retrieval_text_v2"
 RETRIEVAL_NORMALIZE_EMBEDDINGS = True
 
 
@@ -311,9 +311,7 @@ def _fallback_node_source(row: dict[str, object]) -> dict[str, object]:
         "sku": row.get("sku"),
         "brand": row.get("brand"),
         "subcategory": row.get("subcategory"),
-        "unit_amount": row.get("unit_amount"),
-        "total_amount": row.get("total_amount"),
-        "embedding_text": row.get("embedding_text"),
+        "retrieval_text": row.get("retrieval_text"),
     }
 
 

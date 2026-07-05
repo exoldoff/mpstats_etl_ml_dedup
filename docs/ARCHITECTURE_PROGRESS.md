@@ -24,6 +24,10 @@ production-dedup статус и ссылки на runtime-контракт, н�
   manifest в `data/projects/<project>/dedup_cache/<category>/<cache_key>/`;
   повторные run читают `embeddings.npy` через `np.load(..., mmap_mode="r")`,
   а `IndexFlatIP` пересобирается в памяти.
+- Production retrieval text для FAISS теперь recall-first: в bi-encoder
+  embeddings идут бренд, подкатегория и название SKU; распарсенные вес,
+  общий вес и наборность остаются для scorer/post-processing, но не
+  дублируются в embedding-тексте.
 - Главная ветка работ: кандидаты -> ручная разметка gold-set -> сравнение
   matching engines -> кластеризация.
 - `sauces` сохраняет legacy-пути `research/dedup/data/*_sauces.csv` и
@@ -311,6 +315,29 @@ in-memory rebuild `IndexFlatIP`. Persisted FAISS mmap/IVF index отложен �
   precision floor, max component size / brand diversity без review;
 - quarantine/review status для рискованных компонент;
 - component-level metrics отдельно от pairwise metrics.
+
+## 2026-07-05 — Production retrieval text без распарсенных весов
+
+### Зачем
+
+FAISS retrieval должен быть recall-first: на первом этапе важнее не потерять
+похожий SKU-кандидат, чем заранее наказывать пары за разные pack/total-weight
+поля. Вес и наборность уже часто присутствуют прямо в названии SKU, поэтому
+дублирование распарсенных числовых полей в bi-encoder text могло переусилить
+фасовку и сузить top-k.
+
+### Что сделано
+
+- В production ML-dedup добавлен отдельный `retrieval_text` для bi-encoder:
+  `brand + subcategory + sku title`.
+- `embedding_text` сохранён как rich-текст для cross-encoder scorer и debug,
+  поэтому score-cache/пара остаются на прежнем контракте.
+- `RETRIEVAL_TEXT_BUILDER_VERSION` поднят до `dedup_retrieval_text_v2`, чтобы
+  старые retrieval embeddings не переиспользовались с новым текстом.
+
+### Проверки
+
+См. финальный ответ текущего изменения.
 
 ## 2026-06-30 — Production retrieval embeddings cache
 
