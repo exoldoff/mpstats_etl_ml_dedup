@@ -8,6 +8,8 @@ MPstats-FMCG-ETL — локальное web-приложение для выгр
 
 ## Pipeline
 
+![ML-дедуп MPStats: от embeddings до вывода](docs/assets/ml_dedup_pipeline_flow.svg)
+
 ```text
 MPStats API / CSV
   -> raw CSV
@@ -117,6 +119,16 @@ benchmark (`test=165`: 48 negative + 117 positive) даёт 0 ложных ск�
 | `ft_bge_reranker_v2_m3` | 100.0% | 79.5% | 88.6% | 0 | 24 | 131.3 |
 
 Короткая сводка лежит в `docs/assets/contest_ml_metrics_summary.csv`.
+
+Оценка разделена на три уровня, чтобы не смешивать разные ошибки:
+
+- retrieval: попала ли настоящая пара дублей в FAISS top-k кандидатов;
+- pairwise matching: правильно ли модель решила конкретную пару SKU;
+- graph grouping: не склеил ли итоговый граф разные товары в одну группу.
+
+Мини-тест retrieval лежит в `docs/assets/embedding_recall_mini_tests.csv`, а
+подробная методология описана в `docs/ARCHITECTURE.md` и конкурсных
+ноутбуках `03`-`04`.
 
 ## Структура проекта
 

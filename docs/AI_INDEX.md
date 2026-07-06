@@ -130,9 +130,9 @@ Research-код остаётся независимым: `research/dedup/` не 
 
 Локальные CSV/backup/model artifacts — рабочие данные, они не коммитятся и
 могут отличаться между машинами. Текущий research-state, frozen split,
-fine-tuning outputs и report paths смотри в `docs/ARCHITECTURE_PROGRESS.md`
-и узких `docs/DEDUP_*.md`; если пользователь просит выводы по CSV/DB,
-сначала инспектируй конкретные указанные artifacts.
+fine-tuning outputs и report paths смотри в `docs/ARCHITECTURE_PROGRESS.md`;
+если пользователь просит выводы по CSV/DB, сначала инспектируй конкретные
+указанные artifacts.
 
 Для новых category-runs пути изолированы:
 

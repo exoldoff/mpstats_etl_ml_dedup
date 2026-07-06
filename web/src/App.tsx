@@ -914,11 +914,10 @@ export function App() {
     }
   }
 
-  async function loadProjects() {
+  async function loadProjects(): Promise<void> {
     try {
       const response = await api.listProjects();
       setProjects(response.projects);
-      return response;
     } catch (exc) {
       setError(`Проекты: ${errorText(exc)}`);
       throw exc;

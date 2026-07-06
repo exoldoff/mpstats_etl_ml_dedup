@@ -13,6 +13,17 @@
 | `04_fusion_pack_grouping.ipynb` | Превращение pairwise решений в `family` и `pack` graph groups. |
 | `05_grouped_sku_demo.ipynb` | Наглядное demo: DuckDB slice -> candidates -> FAISS -> cross-encoder -> дерево SKU. |
 
+## Маршрут для жюри
+
+| Шаг | Что доказывает | Что смотреть |
+| --- | --- | --- |
+| `00` | Данные пригодны для SKU-дедупа: есть brand, вес, фасовка, title-сигналы. | Таблицы качества данных, распределения веса/pack, примеры сложных названий. |
+| `01` | Полный перебор пар заменён retrieval-этапом: embeddings + FAISS дают короткий список кандидатов. | Recall@k, источники candidate pairs, cross-marketplace пары. |
+| `02` | Разметка не случайная, а сбалансированная по сложным случаям. | Страты, сохранение старых labels, CSV для ручной проверки. |
+| `03` | ML-вклад измеряется отдельно от правил: сравниваются baseline, bi-encoder и reranker. | Precision/recall/F1, false merges, false splits, dev/test threshold. |
+| `04` | Pairwise-решения превращаются в стабильные группы товара и фасовки. | Graph metrics, ошибки склейки/разделения, 2D/3D diagnostics. |
+| `05` | Выбранная логика переносится в понятный end-to-end сценарий на данных куба. | Дерево canonical SKU -> входящие SKU и итоговые агрегаты. |
+
 ## Как запускать
 
 1. Установите общий список зависимостей:
