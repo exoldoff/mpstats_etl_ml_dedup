@@ -8,7 +8,7 @@ MPstats-FMCG-ETL — локальное web-приложение для выгр
 
 ## Pipeline
 
-![ML-дедуп MPStats: от embeddings до вывода](docs/assets/ml_dedup_pipeline_flow.svg)
+![Pipeline MPStats ETL и ML-дедупликации](docs/assets/ml_dedup_pipeline_flow.png)
 
 ```text
 MPStats API / CSV
