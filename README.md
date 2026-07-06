@@ -118,7 +118,7 @@ benchmark (`test=165`: 48 negative + 117 positive) даёт 0 ложных ск�
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `ft_bge_reranker_v2_m3` | 100.0% | 79.5% | 88.6% | 0 | 24 | 131.3 |
 
-Короткая сводка лежит в `docs/assets/contest_ml_metrics_summary.csv`.
+Короткая сводка по метрикам приведена в таблице выше.
 
 Оценка разделена на три уровня, чтобы не смешивать разные ошибки:
 
@@ -127,8 +127,7 @@ benchmark (`test=165`: 48 negative + 117 positive) даёт 0 ложных ск�
 - graph grouping: не склеил ли итоговый граф разные товары в одну группу.
 
 Мини-тест retrieval лежит в `docs/assets/embedding_recall_mini_tests.csv`, а
-подробная методология описана в `docs/ARCHITECTURE.md` и конкурсных
-ноутбуках `03`-`04`.
+подробная методология описана в `docs/ARCHITECTURE.md` и ноутбуках `03`-`04`.
 
 ## Структура проекта
 
@@ -137,7 +136,7 @@ benchmark (`test=165`: 48 negative + 117 positive) даёт 0 ложных ск�
 - `pipeline/` — ETL-сервисы, repositories, DuckDB migrations и production ML-дедуп.
 - `classifiers/` — локальные CSV правил и движок классификации.
 - `research/dedup/` — research-only код для candidate generation, scoring, clustering и training helpers.
-- `notebooks/` — конкурсная research-история `00`-`05` по SKU-дедупликации.
+- `notebooks/` — research-история `00`-`05` по SKU-дедупликации.
 - `tests/` — regression/smoke tests для app, pipeline и dedup.
 - `docs/` — пользовательская инструкция, архитектура и описание ML-методологии.
 
